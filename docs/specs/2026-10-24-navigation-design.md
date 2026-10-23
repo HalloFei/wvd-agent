@@ -99,6 +99,35 @@ existed (`research-map-parser.md`). What it settled:
 - **The 自动移动 banner** sits at x 1223–1402, y 533–567 (centre 1313, 550); double-click the text centre,
   not the arrow tips.
 
+## 3c. What the live build contradicted, 2026-10-24 evening
+
+The party was driven from the title screen into 第四区 by the engine itself (world map → 北穿幽冥城 →
+Dungeon Select → 第四区-城内2F深处- → minimap). That run falsified three things §3a asserts, so §3a is
+now history, not procedure:
+
+- **A tile click does nothing in the default mode.** The 自动移动 element only appears after pressing
+  **R (切换指针模式)**. Any navigation step that clicks a tile first must press R first.
+- **The element does not appear beside the clicked tile.** It appeared at the **top-left of the map**,
+  and it did not activate with a single click, a 2×60 ms engine double-click, a 12 ms native
+  double-click, or Enter. The party did not move. **The activation gesture is unknown.**
+- **The right-hand list is a key legend, not buttons**: 移动至宝箱 L, 标记 Q, 出口 F, 目的地 G,
+  指针 R. Keys do reach the game (G opened and closed the map, Q/E zoomed the world map), but **L did
+  nothing** on the dungeon map — it may require a discovered chest or a different mode.
+
+Two hazards for the loop:
+
+- The **3D-view bottom bar is HUD, not map commands.** One of its icons opened the **altar
+  teleporter** (移动 → 第一区 / 第二区 / 第三区 / 归还 / 什么也不做). It was dismissed with
+  什么也不做 and no zone changed. A blind click there can move the party to another floor, which would
+  invalidate the route silently.
+- The engine's own input leg, measured during that run: single taps 62–90 ms, double taps ~220 ms.
+  That is the number a QTE planner must add, not an assumption.
+
+Consequence: **Task 5 cannot be implemented from §3a.** It needs one recorded instance of the
+automove gesture succeeding — performed by the operator, or driven with explicit authorisation and
+recorded — before its detector and activation can be written. Until then the route stops at "standing
+on the map".
+
 ## 4. What this means for the route policy
 
 - A chest run is: G, find the nearest reachable chest icon, click its tile, double-click automove,
