@@ -9,3 +9,6 @@ build/
 testdata/frames/*.bmp
 testdata/chest/session-*/
 testdata/nav-*/*.mp4
+
+# SDD worktrees
+.worktrees/
