@@ -3,13 +3,17 @@
  * (contracts §2 `dungeon`) — the party walking, the HUD up, no map open.
  *
  * It answers one question and refuses everything else. The 3-D view has a HUD (a minimap panel and a
- * command grid in the frame's top-right corner); a black, uniform or faded frame has nothing, and a
- * frame that still shows the **map's structure** belongs to the map perceiver, not here. So:
+ * 2×2 command grid in the frame's top-right corner); a black or uniform frame has nothing, a frame
+ * that still shows the **map's structure** belongs to the map perceiver, and a frame without the
+ * HUD's *structure* is not the walking view. So:
  *
+ * - a black or uniform frame is `unknown` (contracts §2);
  * - the map gate must be **absent**: the readout's eight glyph runs (the decisive test — 0 of 198
- *   non-map frames produced eight), no white map ink at the map panel's density, and no 36-px wall
- *   lattice;
- * - the HUD anchor must be **present**: bright low-saturation ink inside the minimap box.
+ *   non-map frames produced eight), no white map ink at the map panel's density, no 36-px lattice;
+ * - the **HUD structure** must be present, not merely bright ink in the right place: the bright ink
+ *   must be a bounded minority of the minimap box (a filled block or a mostly-bright panel is not
+ *   line work), and the 2×2 command grid beneath it must carry its four glyphs. Both are measured
+ *   from `minimap-and-hud.jpg`.
  *
  * Everything is measured from `testdata/nav-1024-0213/` and recorded in
  * `.superpowers/sdd/2026-10-24-wvd-world-v1/research-map-parser.md` (cited as "research §n"). The
@@ -19,13 +23,13 @@
  * Two rules shape the code:
  *
  * - **Slice before thresholding, and pay for the cheap test first.** A whole-frame pass costs ~85 ms
- *   on this machine (contracts §0.7 is a 50 ms half-tick), so the common 3-D frame only ever reads
- *   three small rects (the readout band, the map panel at a stride, the minimap box) and the answer
- *   is returned at the first one that decides. The lattice rect is read only when the panel's ink
- *   says a map could be there.
- * - **Refusal is a first-class answer.** Every non-dungeon frame — another size, a uniform frame, a
- *   decode failure, a frame showing any map structure — is `unknown` with confidence 0 (contracts
- *   §2/§3). No path throws into the loop (contracts §0.6).
+ *   on this machine (contracts §0.7 is a 50 ms half-tick), so the uniformity gate samples every
+ *   fourth pixel (~130 k reads instead of 2 M) and the common 3-D frame then reads three small rects
+ *   (the readout band, the map panel at a stride, the HUD area). The lattice rect is read only when
+ *   the panel's ink says a map could be there.
+ * - **Refusal is a first-class answer.** Every non-dungeon frame — another size, a uniform or black
+ *   frame, a decode failure, a frame showing any map structure, a frame without HUD structure — is
+ *   `unknown` with confidence 0 (contracts §2/§3). No path throws into the loop (contracts §0.6).
  *
  * Geometry is 1920×1080 device pixels. Contracts §0.5: another size is unsupported, not re-scaled.
  */
@@ -40,12 +44,30 @@ const REFERENCE_WIDTH = 1920;
 const REFERENCE_HEIGHT = 1080;
 
 /**
+ * A uniform or black frame is `unknown` with confidence 0 (contracts §2). Measured the way the map
+ * parser measures it (research §1, §10 step 0): mean and standard deviation over every fourth pixel
+ * on both axes — the research's full pass is ~85 ms, this is the same answer for a flat frame and
+ * stays inside the half-tick. A flat field is refused *before* the map gate, so a uniform frame at a
+ * luma above the HUD's ink threshold cannot be read as a minimap.
+ */
+const UNIFORM_SAMPLE_STRIDE = 4;
+const UNIFORM_STD = 6;
+const UNIFORM_MEAN = 8;
+
+/**
  * G1 — the coordinate readout `X: n  Y: n`, the map's decisive structural gate (research §3).
  *
  * The same measured fact the map parser uses, declared here instead of imported (contracts §0.1: a
  * module imports contracts and its own files). It is a *structure* test, not a brightness test: the
  * HUD frame has bright pixels inside this rect (the 3-D scene shows through) yet only two runs; the
  * map has eight, at these fixed x positions. 0 of 198 non-map frames produced eight.
+ *
+ * The map parser also checks the four digit runs' widths (3–10 px) before it *reads* them; this gate
+ * deliberately does not. For a recogniser whose job is to hand the map's frame to the map perceiver,
+ * the weaker gate is the safe direction: it can only add frames to `unknown` (a wait), never turn a
+ * frame into `dungeon` (a click), whereas a stricter gate could miss a real map and let the route
+ * press the map key on the map screen. The run count and the two label anchors are the structural
+ * core; the digit widths validate glyphs this gate never reads.
  */
 const READOUT_X = 1010;
 const READOUT_Y = 898;
@@ -67,12 +89,16 @@ const READOUT_LABEL_MAX_W = 13;
 const RUN_MIN_COLUMNS = 2;
 
 /**
- * G3 — white map ink in the panel: 15 000 … 200 000 px over 26 map frames against 198 non-map frames
+ * G3 — white map ink in the panel: from 15 000 px up over 26 map frames against 198 non-map frames
  * (research §1). Read at a stride: the count is an estimate, scaled back by the stride squared. The
- * HUD fixture is far below the floor (≈1 200 against ≈35 000 for the map), so the estimate's noise
- * cannot move the decision. The **upper** bound is the other end of the same measured fact: the
- * busiest map frame is 164 905, and the captured desktop screens the research saw reach 869 655 — a
- * panel with far more white than any map is not a map panel, so the lattice is not even read.
+ * HUD fixture is three orders of magnitude below the floor (≈1 200 against ≈35 000 for the map), so
+ * the estimate's noise cannot move the decision.
+ *
+ * Only the floor is used here. The map parser's 200 000-px ceiling rejects desktop captures, but a
+ * recogniser for the *walking* view must not refuse a legitimately bright 3-D scene: with the HUD
+ * structure required below, a flash or a washed-out frame is already refused, and a bright frame that
+ * still carries the HUD is the 3-D view. "Not stricter than the parser" cuts both ways; this is the
+ * direction where a wrong answer costs a wait instead of a click.
  */
 const MAP_INK_X = 480;
 const MAP_INK_Y = 150;
@@ -81,16 +107,18 @@ const MAP_INK_H = 750;
 const MAP_INK_LUMA = 185;
 const MAP_INK_SAT = 60;
 const MAP_INK_MIN = 15_000;
-const MAP_INK_MAX = 200_000;
 const MAP_INK_STRIDE = 4;
 
 /**
- * G6 — the floor's 36.0-px wall lattice: at least eight long white lines on a 36-px pitch, rms
- * ≤ 3.5 px (research §5, §8 item 5). The pitch is the measured constant (three independent
- * measurements agree on 36.0), so only the phase is fitted per frame — the canvas scrolls, the pitch
- * does not (research §5). The profiles are sampled at a stride; the research's 100-lit-px line floor
- * is therefore halved. This check runs only when G3 is in the map panel's range, i.e. almost never
- * on a 3-D frame.
+ * G6 — the floor's 36-px wall lattice: at least eight long white lines, best fit within the map
+ * parser's pitch range (35.5–36.5 px, step 0.05) and rms ≤ 3.5 px (research §5, §8 item 5).
+ *
+ * The pitch is *searched*, not pinned at the measured 36.0, and this is deliberate: a recogniser
+ * whose job is refusing maps must not be stricter than the parser that reads them, or a map whose
+ * best fit sits away from 36.0 would be called the 3-D view and the route would press the map key on
+ * the map screen. Only the phase is a per-frame unknown (the canvas scrolls, research §5). The
+ * profiles are sampled at a stride; the research's 100-lit-px line floor is therefore halved. This
+ * check runs only when G3 is at map-panel density, i.e. almost never on a 3-D frame.
  */
 const LATTICE_X = 474;
 const LATTICE_Y = 160;
@@ -102,20 +130,29 @@ const LATTICE_STRIDE = 2;
 /** The research's 100-lit-px line, read over every sampled row/column. */
 const LATTICE_LINE_MIN_INK = 50;
 const LATTICE_MIN_LINES = 8;
-const TILE_PX = 36;
-const LATTICE_PHASE_STEP = 0.5;
+const PITCH_MIN = 35.5;
+const PITCH_MAX = 36.5;
+const PITCH_STEP = 0.05;
+const LATTICE_PHASE_STEP = 0.1;
 const LATTICE_RMS_MAX = 3.5;
 
 /**
- * The HUD anchor — **one sample**: the minimap box at x 1761–1901, y 18–168, measured on
- * `minimap-and-hud.png` and cross-checked against `navigation-design.md` §3a (the `↻` resume control
- * at (1824, 196), which agrees with §3a's (1825, 195)). The panel is opaque: the 3-D scene does not
- * show through it, which is what makes "bright ink here" mean "HUD", not "bright scene".
+ * The HUD anchor — **one sample**: the minimap box at x 1761–1901, y 18–168 and the 2×2 command grid
+ * at x 1761–1901, y 185–255, measured on `minimap-and-hud.png` and cross-checked against
+ * `navigation-design.md` §3a (the `↻` resume control at (1824, 196), which agrees with §3a's
+ * (1825, 195)). The panel is opaque: the 3-D scene does not show through it, which is what makes ink
+ * inside it mean "HUD", not "bright scene".
  *
- * The box holds 2 629 bright low-saturation pixels in the JPEG fixture, and its own border lines
- * alone account for ≈320 of them (the panel's top edge is three 104–108-px runs). The floor is set
- * at the border level so a sparse minimap — one with little explored, not one with no HUD — still
- * passes; 1 200 is half the sample, the level at which the panel is unmistakably drawn.
+ * Brightness alone is not the evidence, because a bright rectangle in this box would satisfy it. Two
+ * measurements make it structural instead:
+ *
+ * - **ink density.** The box is a dark surface carrying line work: 78.7 % of it is dark (L < 100) and
+ *   only 12.5 % is bright ink (L > 150 ∧ sat < 60), drawn across every row. A filled block is ~100 %
+ *   ink and a mostly-bright panel is above a third; both are refused by the density bound. The bright
+ *   shapes are the floor plan's walls, not a chrome border — there is no bright border in the sample,
+ *   so "the border runs" is not a structure this fixture offers.
+ * - **the 2×2 command grid** beneath the panel: four cells whose glyphs measure 82 / 107 / 157 / 157
+ *   bright px. A stray bright shape in the box has nothing there.
  */
 const HUD_X = 1761;
 const HUD_Y = 18;
@@ -123,15 +160,27 @@ const HUD_W = 140;
 const HUD_H = 150;
 const HUD_INK_LUMA = 150;
 const HUD_INK_SAT = 60;
+/** The panel is a dark surface with a minority of ink: 0.125 measured; a filled block is 1.0. */
+const HUD_INK_FRACTION_MAX = 0.35;
+/** Brightness pre-filter: without any ink there is no HUD (the panel's own border is ≈320 px). */
 const HUD_INK_FLOOR = 300;
+/** The level at which the panel is unmistakably drawn: half the sample's 2 629 ink. */
 const HUD_INK_STRONG = 1_200;
 
+/** The 2×2 command grid below the minimap: its four cells, each carrying a glyph (one sample). */
+const GRID_X = 1761;
+const GRID_Y = 185;
+const GRID_W = 140;
+const GRID_H = 70;
+/** Measured cells: 82 / 107 / 157 / 157 bright px; 40 requires half of the weakest. One sample. */
+const GRID_QUADRANT_MIN_INK = 40;
+
 /**
- * Confidence is evidence strength, and it is deliberately compressed into [0.8, 1] once the HUD is
- * present: below the floor there is no HUD, and at the measured panel level the anchor is as strong
- * as this perceiver can make it. The calibration is this module's own choice — unlike the map
- * parser's floors, it is not a measured fact — so it is named here and reported. Every dungeon
- * observation therefore clears the route's 0.5 act floor (contracts §6, §2).
+ * Confidence is evidence strength, and it is deliberately compressed into [0.8, 1] once the HUD
+ * structure is there: below the ink floor there is no HUD, and at the measured panel level the
+ * evidence is as strong as this perceiver can make it. The calibration is this module's own choice —
+ * unlike the map parser's floors, it is not a measured fact — so it is named here and reported.
+ * Every dungeon observation therefore clears the route's 0.5 act floor (contracts §6, §2).
  */
 const HUD_CONFIDENCE_MIN = 0.8;
 
@@ -141,11 +190,11 @@ const HUD_CONFIDENCE_MIN = 0.8;
 
 /**
  * Names the 3-D exploration view. `unknown` (confidence 0) is its refusal: another frame size, a
- * uniform or over-bright frame, a decode failure, a frame without the HUD, or any frame that still
+ * uniform or black frame, a decode failure, a frame without HUD structure, or any frame that still
  * shows the map — that frame is the map perceiver's business.
  *
- * The steps are the research's refusal order, each one reading a small rect and answering early:
- * size, the readout structure, the panel's ink mass, the wall lattice, then the HUD anchor.
+ * The steps are the research's refusal order, each one reading the smallest rect that can answer:
+ * size, uniformity, the readout structure, the panel's ink mass, the wall lattice, then the HUD.
  */
 export class HudPerceiver implements Perceiver {
   async observe(frame: Frame): Promise<Observation> {
@@ -159,24 +208,26 @@ export class HudPerceiver implements Perceiver {
       return unknown;
     }
 
-    // 0. Size (contracts §0.5) -----------------------------------------------------------------
-    if (image.width !== REFERENCE_WIDTH || image.height !== REFERENCE_HEIGHT) return unknown;
+    // 0. Size, from the frame's declared dimensions (contracts §0.5) ----------------------------
+    if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) return unknown;
+    // The rects are indexed against the decoded pixels, so they must be the frame the contract
+    // describes; a source that hands back another size is unsupported, not re-scaled.
+    const { data, width, height } = image;
+    if (width !== frame.width || height !== frame.height) return unknown;
 
-    // 1. G1: the readout's eight runs — the map's decisive structure, and the map's frame. ------
+    // 1. A black or uniform frame is `unknown`, never a minimap (contracts §2). -----------------
+    if (isUniform(data, width, height)) return unknown;
+
+    // 2. G1: the readout's eight runs — the map's decisive structure, and the map's frame. ------
     if (readoutPresent(image)) return unknown;
 
-    // 2. G3: the panel's white ink, which decides both whether the lattice is worth reading and
-    //    whether this is too bright to be the walking view at all. -------------------------------
-    const ink = panelInk(image);
-    // Whiter than any map frame and 25× whiter than any measured 3-D frame (≤ 8 000, research §1):
-    // a combat flash, a desktop capture, or a screen this perceiver cannot name. Refuse it.
-    if (ink > MAP_INK_MAX) return unknown;
-    // G6: the floor's 36-px wall lattice, read only when the ink is map-scale. ------------------
-    if (ink >= MAP_INK_MIN && latticePresent(image)) return unknown;
+    // 3. G3 + G6: the map panel's white ink and, at map density, its wall lattice. --------------
+    const panelInkPx = panelInk(image);
+    if (panelInkPx >= MAP_INK_MIN && latticePresent(image)) return unknown;
 
-    // 3. The HUD anchor must be present — a scene is not a screen (contracts §2). --------------
+    // 4. The HUD's structure must be there — a scene, or a bright rectangle, is not a screen. ---
     const hudInk = minimapInk(image);
-    if (hudInk < HUD_INK_FLOOR) return unknown;
+    if (!hudStructure(hudInk, image)) return unknown;
 
     return { screen: 'dungeon', atMs: frame.atMs, confidence: confidenceOf(hudInk) };
   }
@@ -193,8 +244,8 @@ export class HudPerceiver implements Perceiver {
  * - G1, the readout's eight glyph runs — decisive (0 of 198 non-map frames) and cheap enough to run
  *   on every frame;
  * - G3, the panel's white ink — a *precondition* for G6, not a verdict: plenty of non-map frames
- *   carry white ink (research §1: 0–869 655 over 198 frames), so the ink alone never decides, but
- *   both of its ends are informative (below 15 000 the panel is a scene; above 200 000 it is no map);
+ *   carry white ink (research §1: 0–869 655 over 198 frames), so the ink alone never decides; at
+ *   map density the lattice is read;
  * - G6, the 36-px wall lattice — the second structure, so a map caught mid-open that has lost its
  *   readout but keeps its walls is still refused.
  *
@@ -301,27 +352,37 @@ function lineCentres(profile: Float64Array, origin: number): number[] {
   return centres;
 }
 
-/** Is this axis at least eight lines on a 36-px lattice, best phase, rms within 3.5 px? */
+/**
+ * Is this axis at least eight lines on a 36-px lattice — the map parser's own pitch sweep
+ * (35.5–36.5 px), best phase, rms within 3.5 px? The sweep is the parser's, not narrower: a
+ * recogniser whose answer hands the frame to that parser must not be stricter than it, or a real
+ * map whose best fit sits away from 36.0 would be read as the 3-D view.
+ */
 function fitsLattice(profile: Float64Array, origin: number): boolean {
   const centres = lineCentres(profile, origin);
   if (centres.length < LATTICE_MIN_LINES) return false;
 
   let best = Infinity;
-  for (let phase = 0; phase < TILE_PX; phase += LATTICE_PHASE_STEP) {
-    let sumSq = 0;
-    for (const centre of centres) {
-      const offset = centre - phase;
-      const residual = offset - Math.round(offset / TILE_PX) * TILE_PX;
-      sumSq += residual * residual;
+  const pitchSteps = Math.round((PITCH_MAX - PITCH_MIN) / PITCH_STEP);
+  for (let step = 0; step <= pitchSteps; step += 1) {
+    const pitch = PITCH_MIN + step * PITCH_STEP;
+    const phaseSteps = Math.floor(pitch / LATTICE_PHASE_STEP);
+    for (let phaseStep = 0; phaseStep <= phaseSteps; phaseStep += 1) {
+      const phase = phaseStep * LATTICE_PHASE_STEP;
+      let sumSq = 0;
+      for (const centre of centres) {
+        const residual = centre - (phase + Math.round((centre - phase) / pitch) * pitch);
+        sumSq += residual * residual;
+      }
+      const rms = Math.sqrt(sumSq / centres.length);
+      if (rms < best) best = rms;
     }
-    const rms = Math.sqrt(sumSq / centres.length);
-    if (rms < best) best = rms;
   }
   return best <= LATTICE_RMS_MAX;
 }
 
 // ---------------------------------------------------------------------------------------------
-// The HUD anchor
+// The HUD structure
 // ---------------------------------------------------------------------------------------------
 
 /** Bright low-saturation ink inside the minimap box: the panel's border, walls and glyphs. */
@@ -338,7 +399,41 @@ function minimapInk(image: RgbaImage): number {
   return ink;
 }
 
-/** The HUD is present; how much of the measured panel is actually drawn is the confidence. */
+/**
+ * Is the HUD really drawn? Brightness is only the cheap pre-filter: a bright rectangle in this box
+ * would pass it. The evidence is the structure the fixture shows — sparse line work on a dark panel,
+ * with the 2×2 command grid beneath it — so a block of brightness fails the density bound and a stray
+ * patch fails the grid.
+ */
+function hudStructure(hudInk: number, image: RgbaImage): boolean {
+  // Cheapest first: without bright ink there is no HUD at all (a black or faded frame).
+  if (hudInk < HUD_INK_FLOOR) return false;
+  // Line work, not a block: a filled block or a mostly-bright panel is far above the measured 12.5 %.
+  if (hudInk > HUD_INK_FRACTION_MAX * HUD_W * HUD_H) return false;
+  // The 2×2 command grid below the minimap: four cells, each carrying a glyph.
+  return commandGridPresent(image);
+}
+
+/** The four cells of the command grid; each must carry bright ink (one sample: 82 / 107 / 157 / 157). */
+function commandGridPresent(image: RgbaImage): boolean {
+  const { data, width } = image;
+  const halfW = GRID_W / 2;
+  const halfH = GRID_H / 2;
+  const cells = [0, 0, 0, 0];
+  for (let y = 0; y < GRID_H; y += 1) {
+    const row = (GRID_Y + y) * width;
+    const cellRow = y < halfH ? 0 : 2;
+    for (let x = 0; x < GRID_W; x += 1) {
+      const offset = (row + GRID_X + x) * 4;
+      if (lumaAt(data, offset) <= HUD_INK_LUMA) continue;
+      if (saturationAt(data, offset) >= HUD_INK_SAT) continue;
+      cells[cellRow + (x < halfW ? 0 : 1)] += 1;
+    }
+  }
+  return cells.every((count) => count >= GRID_QUADRANT_MIN_INK);
+}
+
+/** The HUD structure is present; how densely the panel is drawn is the confidence. */
 function confidenceOf(hudInk: number): number {
   const span = HUD_INK_STRONG - HUD_INK_FLOOR;
   const earned = Math.min(1, Math.max(0, (hudInk - HUD_INK_FLOOR) / span));
@@ -348,6 +443,25 @@ function confidenceOf(hudInk: number): number {
 // ---------------------------------------------------------------------------------------------
 // Pixels
 // ---------------------------------------------------------------------------------------------
+
+/** A flat or black frame: mean and standard deviation over a strided sample (research §10 step 0). */
+function isUniform(data: Uint8Array, width: number, height: number): boolean {
+  let sum = 0;
+  let sumSq = 0;
+  let samples = 0;
+  for (let y = 0; y < height; y += UNIFORM_SAMPLE_STRIDE) {
+    const row = y * width;
+    for (let x = 0; x < width; x += UNIFORM_SAMPLE_STRIDE) {
+      const value = lumaAt(data, (row + x) * 4);
+      sum += value;
+      sumSq += value * value;
+      samples += 1;
+    }
+  }
+  const mean = sum / samples;
+  const variance = sumSq / samples - mean * mean;
+  return Math.sqrt(Math.max(0, variance)) < UNIFORM_STD || mean < UNIFORM_MEAN;
+}
 
 /** Rec. 601 luma, floored, matching the research's `(299R + 587G + 114B) / 1000`. */
 function lumaAt(data: Uint8Array, offset: number): number {
