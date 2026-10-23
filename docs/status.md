@@ -50,6 +50,21 @@ because Task 5's activation gesture is unknown.
 - **`qteDecelPxPerS2` is provisional** at 3000; the recorded stop implies 2740–3100. It firms up from
   taps the agent times itself.
 
+## The standing instruction
+
+The operator's goal for this session, recorded verbatim on 2026-10-24:
+
+> after finishing all tasks and implementation, shutdown the pc. if there's hard blocker that need my
+> decision, then pause, save the status and also shutdown the pc.
+
+Read as: finish the remaining tasks (11, 6, 8, 9, 10, and 5 if it unblocks), then power the machine
+down; if something can only be settled by the operator, stop there, leave this file accurate, and power
+down anyway rather than idling.
+
+**What counts as a hard blocker right now:** Task 5's automove gesture — the live build falsified §3a
+and the activation is unknown, so it needs one recorded success or explicit authorisation to drive.
+That blocks *completion*, not progress: everything else on the list can be built without the game.
+
 ## How the work is tracked
 
 - `docs/status.md` (this file) — the committed record.
