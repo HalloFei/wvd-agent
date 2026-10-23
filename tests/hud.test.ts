@@ -1,8 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
-import type { Frame, RgbaImage } from '../src/contracts.ts';
-import { HudPerceiver } from '../src/perception/hud.ts';
+import type { Frame, Observation, RouteState, RgbaImage } from '../src/contracts.ts';
+import { CompositePerceiver } from '../src/perception/composite.ts';
+import { HudPerceiver, UNNAMED_CONFIDENCE } from '../src/perception/hud.ts';
+import { classify } from '../src/policy/session.ts';
 
 /**
  * The fixtures are the JPEGs the engine hands the World (`ffmpeg -q:v 6`; R26), decoded here the way
@@ -118,7 +120,13 @@ function washOut(image: RgbaImage, amount: number): void {
   }
 }
 
-const UNKNOWN_AT = (atMs: number) => ({ screen: 'unknown', atMs, confidence: 0 });
+/** Nothing was drawn at all — the only refusal that may stop a session (contracts §2). */
+const NOTHING_AT = (atMs: number): Observation => ({ screen: 'unknown', atMs, confidence: 0 });
+/** Something is drawn and this perceiver cannot name it: positive, and below any act floor. */
+const UNNAMED_AT = (atMs: number): Observation => ({ screen: 'unknown', atMs, confidence: UNNAMED_CONFIDENCE });
+
+/** The route's act floor (contracts §6), the floor the composition root gives this recogniser. */
+const ACTING_FLOOR = 0.5;
 
 /**
  * Research §3: the eight measured readout runs (`X : d d Y : d d`), x spans inclusive, ink rows
@@ -150,30 +158,45 @@ describe('HudPerceiver', () => {
     expect(observation).not.toHaveProperty('map');
   });
 
-  it('leaves the open dungeon map to the map perceiver', async () => {
+  it('leaves the open dungeon map to the map perceiver, but says a frame was drawn', async () => {
+    // Not this perceiver's answer, and also not an empty screen: contract §2's two refusals differ
+    // in confidence, and the map perceiver is the one that will name it.
     expect(await new HudPerceiver().observe(await jpegFrame(MAP_FRAME, 11_111))).toEqual(
-      UNKNOWN_AT(11_111),
+      UNNAMED_AT(11_111),
     );
   });
 
   it('leaves the map under the automove banner to the map perceiver', async () => {
     expect(await new HudPerceiver().observe(await jpegFrame(MAP_BANNER_FRAME, 12_345))).toEqual(
-      UNKNOWN_AT(12_345),
+      UNNAMED_AT(12_345),
     );
   });
 
   it('reports unknown with confidence 0 for a uniform frame the HUD ink threshold would admit', async () => {
     // Luma 160 is above every HUD ink threshold (L > 150), so without the uniform gate the whole
-    // frame would read as a bright minimap. A flat field is `unknown` (contracts §2).
+    // frame would read as a bright minimap. A flat field is `unknown` at 0 (contracts §2).
     expect(await new HudPerceiver().observe(frameOf(uniformImage(1920, 1080, 160), 3_333))).toEqual(
-      UNKNOWN_AT(3_333),
+      NOTHING_AT(3_333),
     );
   });
 
   it('reports unknown with confidence 0 for a black frame', async () => {
     expect(await new HudPerceiver().observe(frameOf(uniformImage(1920, 1080, 0), 2_000))).toEqual(
-      UNKNOWN_AT(2_000),
+      NOTHING_AT(2_000),
     );
+  });
+
+  it('reports a busy frame it cannot name at a positive confidence', async () => {
+    // A 3-D scene with no HUD at all (a battle, a loading screen, the opener panel): the frame is
+    // not flat, so this is not "nothing was perceived". It must be positive — a stop is the answer
+    // for a black frame, not for a screen nobody has a recogniser for (contracts §2) — and below
+    // the act floor, so it can never be acted on.
+    const observation = await new HudPerceiver().observe(frameOf(sceneImage(1920, 1080), 2_750));
+
+    expect(observation).toEqual(UNNAMED_AT(2_750));
+    // asserted as numbers, not through the constant: setting the constant to 0 must fail here
+    expect(observation.confidence).toBeGreaterThan(0);
+    expect(observation.confidence).toBeLessThan(ACTING_FLOOR);
   });
 
   it('refuses a flat frame carrying one bright box where the minimap would be', async () => {
@@ -182,16 +205,17 @@ describe('HudPerceiver', () => {
     const image = uniformImage(1920, 1080, 160);
     paint(image, MINIMAP_BOX, 255);
 
-    expect(await new HudPerceiver().observe(frameOf(image, 2_500))).toEqual(UNKNOWN_AT(2_500));
+    expect(await new HudPerceiver().observe(frameOf(image, 2_500))).toEqual(UNNAMED_AT(2_500));
   });
 
   it('refuses a frame whose decoded pixels are not the size the frame declares', async () => {
     // contracts §0.5: dimensions come from the frame. A source that hands back a smaller image
-    // would have the fixed rects read off the end of it, so it is refused, not read.
-    const image = uniformImage(960, 540, 40);
+    // would have the fixed rects read off the end of it, so it is refused, not read — and refused
+    // as a drawn frame (the pixels are not flat), so the loop asks instead of stopping.
+    const image = sceneImage(960, 540);
     const frame: Frame = { atMs: 4_242, width: 1920, height: 1080, toRgba: async () => image };
 
-    expect(await new HudPerceiver().observe(frame)).toEqual(UNKNOWN_AT(4_242));
+    expect(await new HudPerceiver().observe(frame)).toEqual(UNNAMED_AT(4_242));
   });
 
   it('refuses a frame of another size, even with a real HUD drawn on it', async () => {
@@ -201,7 +225,7 @@ describe('HudPerceiver', () => {
     const image = sceneImage(2560, 1440);
     blit(image, await jpegImage(HUD_FRAME), HUD_AREA);
 
-    expect(await new HudPerceiver().observe(frameOf(image, 5_555))).toEqual(UNKNOWN_AT(5_555));
+    expect(await new HudPerceiver().observe(frameOf(image, 5_555))).toEqual(UNNAMED_AT(5_555));
   });
 
   it('refuses a 3-D frame whose minimap is not drawn', async () => {
@@ -209,7 +233,7 @@ describe('HudPerceiver', () => {
     const image = copyOf(await jpegImage(HUD_FRAME));
     paint(image, MINIMAP_BOX, 24);
 
-    expect(await new HudPerceiver().observe(frameOf(image, 2_222))).toEqual(UNKNOWN_AT(2_222));
+    expect(await new HudPerceiver().observe(frameOf(image, 2_222))).toEqual(UNNAMED_AT(2_222));
   });
 
   it('refuses a frame where the HUD and the map walls are both on screen', async () => {
@@ -221,7 +245,7 @@ describe('HudPerceiver', () => {
     paint(image, { x: 1005, y: 894, w: 146, h: 24 }, 0);
     blit(image, await jpegImage(HUD_FRAME), HUD_AREA);
 
-    expect(await new HudPerceiver().observe(frameOf(image, 4_444))).toEqual(UNKNOWN_AT(4_444));
+    expect(await new HudPerceiver().observe(frameOf(image, 4_444))).toEqual(UNNAMED_AT(4_444));
   });
 
   it('refuses a frame that carries only the readout structure', async () => {
@@ -234,7 +258,7 @@ describe('HudPerceiver', () => {
     }
     blit(image, await jpegImage(HUD_FRAME), HUD_AREA);
 
-    expect(await new HudPerceiver().observe(frameOf(image, 6_666))).toEqual(UNKNOWN_AT(6_666));
+    expect(await new HudPerceiver().observe(frameOf(image, 6_666))).toEqual(UNNAMED_AT(6_666));
   });
 
   it('refuses an over-bright frame, such as a combat flash', async () => {
@@ -244,7 +268,7 @@ describe('HudPerceiver', () => {
     const image = copyOf(await jpegImage(HUD_FRAME));
     washOut(image, 150);
 
-    expect(await new HudPerceiver().observe(frameOf(image, 8_888))).toEqual(UNKNOWN_AT(8_888));
+    expect(await new HudPerceiver().observe(frameOf(image, 8_888))).toEqual(UNNAMED_AT(8_888));
   });
 
   it('refuses a bright block filling the minimap box', async () => {
@@ -253,7 +277,7 @@ describe('HudPerceiver', () => {
     const image = sceneImage(1920, 1080);
     paint(image, MINIMAP_BOX, 240);
 
-    expect(await new HudPerceiver().observe(frameOf(image, 3_100))).toEqual(UNKNOWN_AT(3_100));
+    expect(await new HudPerceiver().observe(frameOf(image, 3_100))).toEqual(UNNAMED_AT(3_100));
   });
 
   it('refuses a mostly-bright block over a real minimap', async () => {
@@ -262,7 +286,7 @@ describe('HudPerceiver', () => {
     const image = copyOf(await jpegImage(HUD_FRAME));
     paint(image, { x: 1825, y: 35, w: 65, h: 105 }, 240);
 
-    expect(await new HudPerceiver().observe(frameOf(image, 3_200))).toEqual(UNKNOWN_AT(3_200));
+    expect(await new HudPerceiver().observe(frameOf(image, 3_200))).toEqual(UNNAMED_AT(3_200));
   });
 
   it('refuses a small bright patch where a HUD would have a command grid', async () => {
@@ -272,7 +296,7 @@ describe('HudPerceiver', () => {
     const image = sceneImage(1920, 1080);
     paint(image, { x: 1790, y: 40, w: 60, h: 60 }, 240);
 
-    expect(await new HudPerceiver().observe(frameOf(image, 3_400))).toEqual(UNKNOWN_AT(3_400));
+    expect(await new HudPerceiver().observe(frameOf(image, 3_400))).toEqual(UNNAMED_AT(3_400));
   });
 
   it('interpolates confidence with how densely the panel is drawn', async () => {
@@ -299,6 +323,50 @@ describe('HudPerceiver', () => {
       },
     };
 
-    expect(await new HudPerceiver().observe(frame)).toEqual(UNKNOWN_AT(9_999));
+    expect(await new HudPerceiver().observe(frame)).toEqual(NOTHING_AT(9_999));
+  });
+});
+
+/**
+ * The rule the whole finding rests on (Task 10 review, Critical 1): a dead frame and an unrecognised
+ * live frame must not reach the same verdict. The chain is the real one — the HUD recogniser behind
+ * the composite the composition root builds — and the classifier is the real one.
+ */
+describe('a black frame and a busy frame it cannot name reach different verdicts', () => {
+  const perceiver = new CompositePerceiver([{ perceiver: new HudPerceiver(), floor: ACTING_FLOOR }]);
+  const state = (observation: Observation): RouteState => ({ observation, willpower: [], chestsRemaining: 1 });
+
+  it('stops on a black frame: nothing was perceived', async () => {
+    const black = await perceiver.observe(frameOf(uniformImage(1920, 1080, 0), 1_000));
+
+    expect(black).toEqual(NOTHING_AT(1_000));
+    expect(classify(state(black), 0, 20)).toBe('stop');
+  });
+
+  it('escalates on a busy frame nobody can name: something is on screen', async () => {
+    const busy = await perceiver.observe(frameOf(sceneImage(1920, 1080), 1_000));
+
+    expect(busy.screen).toBe('unknown');
+    expect(busy.confidence).toBeGreaterThan(0);
+    // never an act floor: an unnamed frame is asked about, never clicked
+    expect(busy.confidence).toBeLessThan(ACTING_FLOOR);
+    expect(classify(state(busy), 0, 20)).toBe('escalate');
+  });
+
+  it('keeps the strongest positive refusal when recognisers disagree about how much they saw', async () => {
+    // A recogniser can only say "I saw something" below its own floor. The composite must not throw
+    // that evidence away and answer 0 — that would be a stop on a frame two recognisers saw.
+    const sawSomething = { observe: async (): Promise<Observation> => UNNAMED_AT(5) };
+    const sawNothing = { observe: async (): Promise<Observation> => NOTHING_AT(5) };
+    const composite = new CompositePerceiver([
+      { perceiver: sawNothing, floor: ACTING_FLOOR },
+      { perceiver: sawSomething, floor: ACTING_FLOOR },
+    ]);
+
+    const observation = await composite.observe(frameOf(uniformImage(1, 1, 0), 5));
+
+    expect(observation.confidence).toBeGreaterThan(0);
+    expect(observation.confidence).toBe(UNNAMED_CONFIDENCE);
+    expect(classify(state(observation), 0, 20)).toBe('escalate');
   });
 });

@@ -67,8 +67,14 @@ the route acts on by opening the map, and it is distinguishable from `unknown` b
 a HUD (minimap box, party bar) while a black or uniform frame has nothing. Without that distinction a
 policy either clicks on a black frame or waits forever on a normal view.
 
-`unknown` is a real answer, not a fallback to be smoothed over: a uniform or black frame is
-`unknown` with confidence 0.
+`unknown` is a real answer, not a fallback to be smoothed over, and it has **two strengths**:
+
+- **confidence 0** — nothing was drawn: a uniform or black frame, or a frame that could not be
+  decoded. This is the only observation that may end a session, because there is nothing to look at.
+- **a positive confidence, below every act floor** — something is drawn and no recogniser can name
+  it (a battle, a loading screen, the opener panel, a menu). A human can look at that frame, so the
+  session escalates and asks; stopping would end the run on the first fight or floor transition.
+  `CompositePerceiver` keeps the strongest positive refusal when no recogniser clears its floor.
 
 ## 3. Perception
 
@@ -145,6 +151,11 @@ completes a gesture is always sent, even if the window changed while the key was
 a stuck mouse button is worse than a refused one, and the gesture reports `rejected` after the fact.
 A press is held at least 60 ms: a 0 ms press is dropped at 30 fps.
 
+A press is held **at most `MAX_PRESS_HOLD_MS` (500 ms)**, and the World clamps any longer request to
+it. The ceiling is not taste: it is the teardown bound of §5, and the two numbers are one fact —
+`MAX_PRESS_HOLD_MS < TEARDOWN_GRACE_MS`. A hold that outlived the teardown clock would be killed
+with the key still down.
+
 ## 5. Engine protocol (World ↔ child)
 
 ```ts
@@ -191,6 +202,13 @@ The child also sends events unsolicited: `stopHotkey` when the global stop key i
 `engineProblem` with a `detail` when a capability is not available. An unregistered stop hotkey is
 `detail: 'stop-hotkey-unregistered'`; a slow encoder fallback is `detail: 'native-encoder-unavailable'`.
 A session must not run believing the stop key works, and must not time a QTE on a 5 fps frame path.
+
+**Teardown.** Closing the pipe ends the child gracefully — it finishes the request in flight, calls
+`releaseHeld()` and exits — and the parent kills it only after `TEARDOWN_GRACE_MS` (1200 ms). On
+Windows that kill is `TerminateProcess`, which skips `releaseHeld()`, so the grace must outlive §4's
+maximum hold: 500 ms of hold + the 500 ms a first capture may wait for warm-up, plus margin. The
+invariant is `MAX_PRESS_HOLD_MS < TEARDOWN_GRACE_MS`; both numbers live beside each other in
+`contracts.ts` and one test asserts that no kill lands inside a maximum-length hold.
 
 ## 6. Policy
 

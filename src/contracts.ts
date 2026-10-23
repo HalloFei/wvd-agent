@@ -30,7 +30,11 @@ export interface FrameSource {
 // §2 Screens
 
 /** `dungeon` is the 3D exploration view: party walking, HUD up, no map open. The route opens the map
- *  from it; it is distinct from `unknown` (a black or uniform frame has no HUD at all). */
+ *  from it; it is distinct from `unknown` (a black or uniform frame has no HUD at all).
+ *
+ *  `unknown` has two strengths (§2): confidence 0 means nothing was drawn (a uniform or black
+ *  frame), the only confidence that may end a session; a positive confidence below every act floor
+ *  means something is drawn and no recogniser can name it, which escalates. */
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'loot' | 'loading' | 'unknown';
@@ -88,6 +92,20 @@ export interface Actuator {
   doubleTap(at: Point): Promise<ActionResult>;
   holdKey(scan: number, holdMs: number): Promise<ActionResult>;   // WASD escape
 }
+
+/**
+ * The hold ceiling the World enforces on every `holdKey`, and the grace the engine's teardown gives
+ * a request in flight (§5) before it kills the child.
+ *
+ * They are one fact, not two: on Windows the kill is `TerminateProcess`, which skips the child's
+ * `releaseHeld()`, so **a hold that outlived the teardown would leave a key down** — and a stuck key
+ * is worse than a refused press (§4). The invariant is `MAX_PRESS_HOLD_MS < TEARDOWN_GRACE_MS`;
+ * `tests/engine.test.ts` asserts it and that no kill lands inside a maximum-length hold. The grace
+ * covers the worst queue the child can still be draining: the maximum hold plus the 500 ms a first
+ * capture may wait for warm-up (§5), with margin.
+ */
+export const MAX_PRESS_HOLD_MS = 500;
+export const TEARDOWN_GRACE_MS = 1_200;
 
 // §5 Engine protocol (World ↔ child)
 

@@ -9,14 +9,19 @@
  *
  * The rulings that shape the tick:
  *
- * - **One command at a time.** The policy is stateless, so it re-derives the same intent on every
- *   tick; the loop is what remembers that it just pressed a key. After a command is sent the loop
- *   stops deciding until the screen answers it (or the command gives up), and a command that timed
- *   out is not sent again until the farm has advanced. Without that, `dungeon` (the walking view)
- *   gets a second `G` 100 ms after the first, and `exit` fires at 10 Hz.
+ * - **One command at a time, until its own effect is answered.** The policy is stateless, so it
+ *   re-derives the same intent on every tick; the loop is what remembers that it just pressed a key.
+ *   A command stays in flight **through the screens it produces itself** — `move`'s own effect is
+ *   the map closing, so a screen change is not an answer — and is released only by its own evidence:
+ *   `open-map` by the map arriving, a walk by **arrival**, which is the scene going still for
+ *   `automoveStillSeconds` (`src/frames/stillness.ts`). A command that timed out is not sent again
+ *   until the farm has advanced. Without that, `dungeon` (the walking view) gets a second `G` 100 ms
+ *   after the first, and the party is asked to open the map in the middle of every walk.
  * - **Progress is state, not screen identity.** The party's position and the chest count on the map
  *   are what say the farm advanced; a dungeon ↔ map alternation at the same position is not
- *   progress, however many screens it cycles through.
+ *   progress, however many screens it cycles through. While a walk is outstanding a changed map
+ *   read is that walk moving, not the farm advancing: it keeps the stall clock alive, and it does
+ *   not re-open a command the walk has not answered.
  * - **One clock.** `atMs` is `performance.now()`; the engine reports `ageMs` only, and
  *   `Win32Capture` already subtracts it. A decision is dated by `frame.atMs`, never by "just
  *   received".
@@ -39,6 +44,7 @@ import type {
   WorldHost,
   WorldWebUiDecl,
 } from 'cortico/core/types.ts';
+import { MAX_PRESS_HOLD_MS } from './contracts.ts';
 import type {
   ActionResult,
   Actuator,
@@ -62,6 +68,7 @@ import {
   stuckEvent,
   type WvdEvent,
 } from './escalation/event.ts';
+import { sceneIsStill, sceneSignature, type SceneSignature } from './frames/stillness.ts';
 import { snapshotBlob, takeSnapshot, type SnapshotSource } from './escalation/image.ts';
 import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
 
@@ -126,11 +133,17 @@ const HOUR_MS = 60 * 60 * 1000;
 /** `wvd_act` holdKey defaults, mirroring contracts §8.3's `hazardEscapeHoldMs` and §4's floor. */
 const DEFAULT_ACT_HOLD_MS = 250;
 const MIN_ACT_HOLD_MS = 40;
-const MAX_ACT_HOLD_MS = 2000;
 /** Windows set-1 scan codes for the WASD keys; the model names letters, the engine gets integers. */
 const MOVEMENT_SCAN: Readonly<Record<string, number>> = { w: 0x11, a: 0x1e, s: 0x1f, d: 0x20 };
-/** What the loop does when nobody answers: the route's own recovery (contracts §6). */
-const FALLBACK_INTENT: Intent = { kind: 'exit' };
+/**
+ * What the loop does when nobody answers: reach for the map, the only surface the route can act
+ * from — `F` is 移動至出口 only on the map, and 調査 in the 3D view (navigation §3d), so a blind
+ * `F` is not a recovery. On the map the recovery is the exit itself (contracts §6).
+ */
+function fallbackIntent(screen: ScreenId | null): Intent {
+  return screen === 'dungeonmap' ? { kind: 'exit' } : { kind: 'open-map' };
+}
+
 /**
  * **Deliberate choice, not a spec value.** Contracts §6's `RouteState` needs a chest budget and
  * contracts §8 has no key for one, so the loop uses "what the last map read showed". Before the
@@ -182,7 +195,9 @@ export const WVD_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
         x: { type: 'integer', minimum: 0, description: 'Pixel column on the last image, 0 at its left edge. tap and doubleTap only.' },
         y: { type: 'integer', minimum: 0, description: 'Pixel row on that image, 0 at its top edge. tap and doubleTap only.' },
         key: { type: 'string', enum: ['w', 'a', 's', 'd'], description: 'holdKey only: the movement key to hold.' },
-        holdMs: { type: 'integer', minimum: 40, maximum: 2000, description: 'holdKey only: how long to hold, default 250.' },
+        // The ceiling is contracts §4's: a longer hold could outlive the engine's teardown and
+        // leave the key down (contracts §5), so it is refused rather than attempted.
+        holdMs: { type: 'integer', minimum: 40, maximum: MAX_PRESS_HOLD_MS, description: `holdKey only: how long to hold, default 250, at most ${MAX_PRESS_HOLD_MS}.` },
       },
       required: ['kind'],
     },
@@ -260,15 +275,26 @@ export function parseIntent(value: unknown): ParsedIntent {
   }
 }
 
-/** A command that has been sent and whose screen has not answered it yet. */
+/**
+ * A command that has been sent and whose own effect has not been answered yet.
+ *
+ * The screen is not the evidence: `move`'s effect *is* the map closing, so the screen changes as
+ * soon as the key works. What releases a walk is arrival — the scene standing still — and what
+ * releases `open-map` is the map itself.
+ */
 interface InFlight {
-  readonly kind: Intent['kind'];
-  /** The screen the key was pressed on: any other screen means the command took effect. */
+  readonly kind: 'open-map' | 'move' | 'exit';
+  /** The screen the key was pressed on, for the "did this key belong here" evidence. */
   readonly fromScreen: ScreenId;
-  /** The last screen seen while the command was in flight, and when it last changed. */
-  lastScreen: ScreenId;
   readonly sinceMs: number;
-  stillSinceMs: number;
+  /** The last instant the arrival evidence moved; stillness is measured from here. */
+  evidenceAtMs: number;
+  /** The scene signature of the last frame measured, or null before the first measurement. */
+  signature: SceneSignature | null;
+  /** True once the walk is under way (the map closed, or the readout moved): only arrival ends it. */
+  walking: boolean;
+  /** The map readout at press time, so a party walking under an open map is not "no effect". */
+  readonly readAtPress: MapRead | null;
 }
 
 /** What the last map read said: the loop's only measure of whether the farm advanced. */
@@ -276,6 +302,14 @@ interface MapRead {
   readonly floor: string;
   readonly player: Point;
   readonly chests: readonly Point[];
+}
+
+/** Did the readout move on the map? That is the party walking, not the farm advancing. */
+function mapReadMoved(previous: MapRead, next: MapRead): boolean {
+  return previous.floor !== next.floor
+    || previous.player.x !== next.player.x
+    || previous.player.y !== next.player.y
+    || previous.chests.length !== next.chests.length;
 }
 
 export class WvdWorld implements World {
@@ -472,9 +506,9 @@ export class WvdWorld implements World {
       return;
     }
 
-    // One command at a time: a sent command owns the loop until the screen answers it. The verdict
-    // is still taken — a stalled action has to be able to escalate — but nothing new is sent.
-    const waiting = this.#advanceInFlight(observation, now);
+    // One command at a time: a sent command owns the loop until its own effect answers it. The
+    // verdict is still taken — a stalled action has to be able to escalate — but nothing is sent.
+    const waiting = await this.#advanceInFlight(observation, frame, now);
 
     const state: RouteState = {
       observation,
@@ -544,9 +578,17 @@ export class WvdWorld implements World {
    * the chest count are the map readout's facts, and entering a screen a walk produces is the other
    * signal. A dungeon ↔ map cycle at the same position therefore counts for nothing, which is what
    * stops an alternation masquerading as progress (Task 10 review, Critical).
+   *
+   * The two questions are kept apart. *Activity* is anything happening on screen, and it keeps the
+   * stall clock alive; *advance* is the farm moving on, and only that re-opens a command that
+   * failed. While a walk is outstanding a changed readout is the party walking — navigation §3d:
+   * automove does not care whether the map is open, so the map can stay up during the walk — so it
+   * is activity, not advance. Otherwise every readout tick would clear `#failed` mid-walk and the
+   * command the walk never answered could be sent again the moment it gave up (Critical 2).
    */
   #measureProgress(observation: Observation, now: number): void {
     let advanced = false;
+    let active = false;
     switch (observation.screen) {
       case 'dungeonmap': {
         const read: MapRead = {
@@ -555,16 +597,16 @@ export class WvdWorld implements World {
           chests: observation.map.icons.filter((icon) => icon.kind === 'chest').map((icon) => icon.at),
         };
         const previous = this.#lastMapRead;
-        if (
-          previous === null
+        const changed = previous === null
           || previous.floor !== read.floor
           || previous.player.x !== read.player.x
           || previous.player.y !== read.player.y
-          || previous.chests.length !== read.chests.length
-        ) {
-          advanced = true;
-        }
+          || previous.chests.length !== read.chests.length;
         this.#lastMapRead = read;
+        if (changed) {
+          active = true;
+          advanced = !this.#walkOutstanding();
+        }
         break;
       }
       case 'chest-open':
@@ -573,53 +615,130 @@ export class WvdWorld implements World {
       case 'combat':
         // A screen a walk produces. Staying on one is not progress, so a fight that never ends stalls.
         advanced = this.#lastScreen !== observation.screen;
+        active = advanced;
         break;
       default:
         // `dungeon`, `loading`, `town`, `worldmap`, `unknown`: the map readout is the measure.
         break;
     }
     this.#lastScreen = observation.screen;
-    if (advanced) {
-      this.#lastProgressAtMs = now;
-      // The farm moved on: a command that failed before may be worth sending again.
-      this.#failed.clear();
-    }
+    if (active) this.#lastProgressAtMs = now;
+    // The farm moved on: a command that failed before may be worth sending again.
+    if (advanced) this.#failed.clear();
+  }
+
+  /** Is a walk (a command whose effect is the party moving) still un-answered? */
+  #walkOutstanding(): boolean {
+    return this.#inFlight !== null && this.#inFlight.kind !== 'open-map';
   }
 
   /**
    * Book-keeping for the command sent on an earlier tick. Returns true while it is still waiting.
    *
-   * `automoveStillSeconds` is "the scene stopped moving but nothing happened"; `automoveArrivalTimeoutMs`
-   * is the hard give-up. Either way the command is recorded as failed, so the same intent is not
-   * re-sent on the same screen until the farm advances.
+   * The release rules are per command, because "what this key produces" is per command:
+   *
+   * - `open-map` is answered by **the map arriving** (that is the key's whole purpose), or by the
+   *   screen moving somewhere else on its own (a battle, a loading pause) — then the presses are
+   *   moot and the route decides what the new screen wants. It gives up when the scene has been
+   *   still for `automoveStillSeconds` (the menu opened but the map never did) or after
+   *   `mapOpenTimeoutMs`, the key the config declares for exactly this wait.
+   * - `move`/`exit` are answered by **arrival**: the walk starts (the map closes, or the readout
+   *   moves under an open map) and ends when the scene stands still for `automoveStillSeconds`.
+   *   While the walk is outstanding, no other command is sent — that is the whole point. A walk that
+   *   never starts (the map stays put, nothing moves) has changed nothing and is recorded failed; one
+   *   that never arrives is given up at `automoveArrivalTimeoutMs`, also failed.
+   *
+   * Arrival is not a failure: the farm advanced, so the command is not held against the next tick.
    */
-  #advanceInFlight(observation: Observation, now: number): boolean {
+  async #advanceInFlight(observation: Observation, frame: Frame, now: number): Promise<boolean> {
     const inFlight = this.#inFlight;
     if (!inFlight) return false;
-    if (observation.screen !== inFlight.lastScreen) {
-      inFlight.lastScreen = observation.screen;
-      inFlight.stillSinceMs = now;
+
+    const isWalk = inFlight.kind !== 'open-map';
+
+    // 1. The command's own key working ------------------------------------------------------------
+    if (!isWalk) {
+      if (observation.screen === 'dungeonmap') {
+        this.#inFlight = null;
+        this.#host?.log.info('wvd: open-map took effect: the map is open');
+        return false;
+      }
+      if (observation.screen !== inFlight.fromScreen && observation.screen !== 'unknown') {
+        // The screen moved on without the map: a battle, a loading pause, a chest panel. Not a
+        // failure — the farm did not stay put — and the route decides what the new screen wants.
+        this.#inFlight = null;
+        this.#host?.log.info(`wvd: open-map was overtaken: the screen is now ${observation.screen}`);
+        return false;
+      }
+    } else if (!inFlight.walking) {
+      // The walk has started if the map closed, or if the party is already moving under an open one.
+      const moved = inFlight.readAtPress !== null && this.#lastMapRead !== null
+        && mapReadMoved(inFlight.readAtPress, this.#lastMapRead);
+      if (observation.screen !== 'dungeonmap' || moved) {
+        inFlight.walking = true;
+        inFlight.evidenceAtMs = now;
+        inFlight.signature = null;
+        const where = observation.screen === 'dungeonmap'
+          ? 'the party is moving on the map'
+          : `the map closed (${observation.screen})`;
+        this.#host?.log.info(`wvd: ${inFlight.kind} took effect: ${where}`);
+      }
     }
-    if (observation.screen !== inFlight.fromScreen) {
-      this.#inFlight = null;
-      this.#host?.log.info(`wvd: ${inFlight.kind} took effect: the screen is now ${observation.screen}`);
-      return false;
-    }
-    const stillMs = now - inFlight.stillSinceMs;
+
+    // 2. Stillness: contracts §8.3's `automoveStillSeconds`, measured on the frame ---------------
+    const stillMs = await this.#measureStillness(frame, inFlight, now);
+    const stillForMs = Math.max(1, this.#cfg.automoveStillSeconds * 1000);
     const waitedMs = now - inFlight.sinceMs;
-    if (
-      stillMs >= Math.max(1, this.#cfg.automoveStillSeconds * 1000)
-      || waitedMs >= Math.max(1, this.#cfg.automoveArrivalTimeoutMs)
-    ) {
+
+    if (stillMs !== null && stillMs >= stillForMs) {
+      if (inFlight.walking) {
+        // Arrival: the party stopped. The walk is over and it succeeded, so it is progress.
+        this.#inFlight = null;
+        this.#lastProgressAtMs = now;
+        this.#failed.clear();
+        this.#host?.log.info(`wvd: ${inFlight.kind} arrived: the scene has been still for ${stillMs} ms`);
+        return false;
+      }
       this.#inFlight = null;
       this.#failed.add(inFlight.kind);
       this.#host?.log.warn(
-        `wvd: ${inFlight.kind} did not change the screen; not sending it again until the farm advances`,
+        `wvd: ${inFlight.kind} changed nothing; not sending it again until the farm advances`,
         { stillMs, waitedMs },
       );
       return false;
     }
+
+    // 3. The hard give-up, by the key that owns it ------------------------------------------------
+    const timeoutMs = isWalk ? this.#cfg.automoveArrivalTimeoutMs : this.#cfg.mapOpenTimeoutMs;
+    if (waitedMs >= Math.max(1, timeoutMs)) {
+      this.#inFlight = null;
+      this.#failed.add(inFlight.kind);
+      this.#host?.log.warn(
+        `wvd: ${inFlight.kind} never ${isWalk ? 'arrived' : 'opened the map'}; not sending it again until the farm advances`,
+        { waitedMs, timeoutMs },
+      );
+      return false;
+    }
     return true;
+  }
+
+  /**
+   * Compare this frame's scene signature with the last one and answer **how long the scene has been
+   * still**, or null when there are no pixels to compare (a decode failure is no evidence either
+   * way: the timeouts above end the wait).
+   */
+  async #measureStillness(frame: Frame, inFlight: InFlight, now: number): Promise<number | null> {
+    let signature: SceneSignature;
+    try {
+      signature = sceneSignature(await frame.toRgba());
+    } catch {
+      return null;
+    }
+    if (inFlight.signature === null || !sceneIsStill(inFlight.signature, signature)) {
+      inFlight.evidenceAtMs = now;
+    }
+    inFlight.signature = signature;
+    return now - inFlight.evidenceAtMs;
   }
 
   // --- the escalation ------------------------------------------------------------------------
@@ -647,6 +766,9 @@ export class WvdWorld implements World {
     const question = this.#question(observation);
     const id = `esc-${this.#nextEscalationId++}`;
     const timeoutMs = this.#cfg.escalateTimeoutMs;
+    // The recovery the model is told about, and the one the loop takes, are the same decision:
+    // on the map it is the exit; anywhere else it is opening the map — never `F` blind (§3d).
+    const fallback = fallbackIntent(observation.screen);
 
     const envelope = stuckEvent({
       timezone: this.#timezone,
@@ -656,9 +778,9 @@ export class WvdWorld implements World {
       ticksStuck: Math.max(1, Math.round((now - this.#lastProgressAtMs) / Math.max(1, this.#cfg.tickMs))),
       observation,
       question,
-      fallbackLine: fallbackPhrase(FALLBACK_INTENT),
+      fallbackLine: fallbackPhrase(fallback),
       timeoutMs,
-      fallback: FALLBACK_INTENT,
+      fallback,
       escalationsThisHour: spent,
       maxPerHour: this.#cfg.escalateMaxPerHour,
       image,
@@ -672,7 +794,7 @@ export class WvdWorld implements World {
       atMs: now,
       frameWidth: frame.width,
       image: snapshot ? { width: snapshot.width, height: snapshot.height } : null,
-      fallback: FALLBACK_INTENT,
+      fallback,
       timeoutMs,
       onPush: () => {
         // The count arms the cap at the push, not at the answer: an unanswered question is spent.
@@ -699,7 +821,7 @@ export class WvdWorld implements World {
         // One wait's worth of cooldown: a screen that stays unknown must not spend the hour in a
         // minute (research §5.2).
         this.#escalationCooldownUntilMs = this.#now() + Math.max(1, timeoutMs);
-        await this.#execute(FALLBACK_INTENT, this.#lastObservation?.screen ?? null);
+        await this.#execute(fallback, observation.screen);
         return;
       case 'cancelled':
         return;
@@ -757,19 +879,52 @@ export class WvdWorld implements World {
 
   // --- acting --------------------------------------------------------------------------------
 
-  /** The one path from an `Intent` to an `Actuator` call: the escalation must not grow a second. */
+  /**
+   * The one path from an `Intent` to an `Actuator` call: the escalation must not grow a second.
+   *
+   * **Every key is gated on the screen it is that command on** (navigation §3d). The map's legend is
+   * a set of commands — `L` 移動至宝箱, `F` 移動至出口 — and the same keys mean something else
+   * elsewhere: `F` in the 3D view is 調査, and `G` **on the map** is 移動至目的地, an unintended
+   * automove. So:
+   *
+   * - `move` is pressed on the map and nowhere else; off the map there is no chest command to press.
+   * - `exit` is pressed on the map. Off the map the loop opens the map first and lets the next tick
+   *   take the exit from it — the route returns `exit` for the 3D view once the chest budget is
+   *   spent (`route.ts`), so translating it here is what keeps that state reachable.
+   * - `open-map` is pressed anywhere **but** the map: G is the menu-then-map key in the 3D view, and
+   *   on the map it is 移動至目的地.
+   */
   async #execute(intent: Intent, fromScreen: ScreenId | null): Promise<void> {
     this.#lastIntent = { intent, atMs: this.#now() };
     switch (intent.kind) {
       case 'open-map':
         // Never blind-retry this one: if the second G failed, the menu is already open and a retry
-        // presses G on the map, which is 移动至目的地 — an unintended automove. Re-perceive instead.
+        // presses G on the map, which is 移動至目的地 — an unintended automove. Re-perceive instead.
+        if (fromScreen === 'dungeonmap') {
+          this.#host?.log.warn('wvd: not opening the map from the map: G there is 移動至目的地');
+          return;
+        }
         await this.#press('open-map', fromScreen, () => this.#commands.openMap());
         return;
       case 'move':
+        if (fromScreen !== 'dungeonmap') {
+          // L is 移動至宝箱 only on the map; anywhere else it is not the chest command, and the map
+          // has to be open before the game has a chest to walk to.
+          this.#host?.log.warn(
+            `wvd: not walking to a chest from ${fromScreen ?? 'an unknown screen'}: L is the map's command`,
+          );
+          return;
+        }
         await this.#press('move', fromScreen, () => this.#commands.automoveToChest());
         return;
       case 'exit':
+        if (fromScreen !== 'dungeonmap') {
+          // F on the 3D view is 調査: walking to the exit needs the map, so the recovery is to open
+          // it and let the next tick press F from the only screen where it is 移動至出口.
+          this.#host?.log.info(`wvd: exit needs the map (screen is ${fromScreen ?? 'unknown'}); opening it first`);
+          await this.#press('open-map', fromScreen, () => this.#commands.openMap());
+          return;
+        }
         await this.#press('exit', fromScreen, () => this.#commands.automoveToExit());
         return;
       case 'open-chest':
@@ -814,7 +969,18 @@ export class WvdWorld implements World {
     }
     if (fromScreen === null) return;
     const now = this.#now();
-    this.#inFlight = { kind, fromScreen, lastScreen: fromScreen, sinceMs: now, stillSinceMs: now };
+    this.#inFlight = {
+      kind,
+      fromScreen,
+      sinceMs: now,
+      // Stillness is measured from the first frame the command saw; the signature starts empty.
+      evidenceAtMs: now,
+      signature: null,
+      walking: false,
+      // A walk pressed on the map may keep the map open (navigation §3d), so the readout it started
+      // from is the second way to see the party move.
+      readAtPress: kind === 'open-map' ? null : this.#lastMapRead,
+    };
   }
 
   // --- stopping ------------------------------------------------------------------------------
@@ -947,7 +1113,9 @@ export class WvdWorld implements World {
       const age = Math.max(0, Math.round((now - this.#lastIntent.atMs) / 1000));
       parts.push(`last intent ${this.#lastIntent.intent.kind} ${age} s ago`);
     }
-    if (this.#inFlight) parts.push(`waiting for ${this.#inFlight.kind} to change the screen`);
+    if (this.#inFlight) {
+      parts.push(`waiting for ${this.#inFlight.kind} ${this.#inFlight.walking ? 'to arrive' : 'to take effect'}`);
+    }
     if (this.#lastObservation) parts.push(`last observation ${observationLine(this.#lastObservation)}`);
     const open = this.#supervisor.open;
     if (open) {
@@ -1013,9 +1181,10 @@ export class WvdWorld implements World {
         const scan = MOVEMENT_SCAN[key];
         if (scan === undefined) return { text: 'not sent: key must be one of w, a, s, d', failed: true };
         const requested = Number(args.holdMs ?? DEFAULT_ACT_HOLD_MS);
+        // The ceiling is the contract's, not this tool's taste: see `MAX_PRESS_HOLD_MS`.
         const holdMs = Number.isFinite(requested)
-          ? Math.min(MAX_ACT_HOLD_MS, Math.max(MIN_ACT_HOLD_MS, Math.round(requested)))
-          : DEFAULT_ACT_HOLD_MS;
+          ? Math.min(MAX_PRESS_HOLD_MS, Math.max(MIN_ACT_HOLD_MS, Math.round(requested)))
+          : Math.min(DEFAULT_ACT_HOLD_MS, MAX_PRESS_HOLD_MS);
         return this.#actionReceipt(`held ${key} ${holdMs} ms`, await session.actuator.holdKey(scan, holdMs));
       }
       default:

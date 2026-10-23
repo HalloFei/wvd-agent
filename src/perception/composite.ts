@@ -17,6 +17,13 @@
  *   the same image. The Win32 source already caches its own decode per frame; the contract does not
  *   promise that, and a replay source may decode on every call.
  *
+ * The fallback keeps the confidences apart, because the session classifier stops at 0 and escalates
+ * above it (contracts §2, Task 10 review Critical 1). When no recogniser clears its floor the
+ * composite answers `unknown` at **the strongest positive confidence any of them offered** — a
+ * recogniser that saw a busy frame it could not name said "something is drawn", and that evidence
+ * outranks the empty answer. `unknown` at 0 survives only when every recogniser offered nothing,
+ * which is what a black or uniform frame earns and the only frame a session may be stopped on.
+ *
  * A recogniser that throws is not caught here: contracts §0.6 makes that the loop's failure to
  * handle, and swallowing it would hide a bug behind an `unknown`.
  */
@@ -38,11 +45,15 @@ export class CompositePerceiver implements Perceiver {
 
   async observe(frame: Frame): Promise<Observation> {
     const shared = decodeOnce(frame);
+    // The strongest "something is drawn, but not at my floor" answer seen, if any. A named screen
+    // below its own floor is not trusted for acting, but it is still evidence of a drawn frame.
+    let seen = 0;
     for (const { perceiver, floor } of this.recognisers) {
       const observation = await perceiver.observe(shared);
       if (observation.screen !== 'unknown' && observation.confidence >= floor) return observation;
+      if (observation.confidence > seen) seen = observation.confidence;
     }
-    return { screen: 'unknown', atMs: frame.atMs, confidence: 0 };
+    return { screen: 'unknown', atMs: frame.atMs, confidence: seen };
   }
 }
 

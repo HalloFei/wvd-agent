@@ -27,9 +27,13 @@
  *   fourth pixel (~130 k reads instead of 2 M) and the common 3-D frame then reads three small rects
  *   (the readout band, the map panel at a stride, the HUD area). The lattice rect is read only when
  *   the panel's ink says a map could be there.
- * - **Refusal is a first-class answer.** Every non-dungeon frame — another size, a uniform or black
- *   frame, a decode failure, a frame showing any map structure, a frame without HUD structure — is
- *   `unknown` with confidence 0 (contracts §2/§3). No path throws into the loop (contracts §0.6).
+ * - **Refusal is a first-class answer, and it has two strengths.** `unknown` at **confidence 0** is
+ *   "nothing was drawn": a uniform or black frame, or a decode failure — the only case where the
+ *   session classifier may stop (contracts §2). A frame this perceiver cannot name but that is
+ *   plainly *not* flat — another size, the map's structure (the map perceiver's frame), or a busy
+ *   screen that is not the 3-D view — is `unknown` at `UNNAMED_CONFIDENCE`: positive, so the loop
+ *   escalates and asks a human, and below every act floor, so nothing is ever clicked on it. No path
+ *   throws into the loop (contracts §0.6).
  *
  * Geometry is 1920×1080 device pixels. Contracts §0.5: another size is unsupported, not re-scaled.
  */
@@ -184,53 +188,85 @@ const GRID_QUADRANT_MIN_INK = 40;
  */
 const HUD_CONFIDENCE_MIN = 0.8;
 
+/**
+ * **Something is on the screen and this perceiver cannot name it.**
+ *
+ * The uniformity gate above answers "nothing is drawn". Between that and "I know what this is" there
+ * is a third case the session classifier must be able to tell apart (contracts §2, Task 10 review
+ * Critical 1): a battle, a loading screen, the opener panel, a menu — a frame that is *busy* and
+ * therefore not black. Reporting it at confidence 0 says "nothing was perceived", which the
+ * classifier must turn into a `stop`; that ends the run on the first fight or floor transition.
+ *
+ * So a non-uniform frame this perceiver cannot name is `unknown` at this confidence: positive, so a
+ * session **escalates** and asks Coo to look at it, and far below every act floor (0.5), so it can
+ * never become a `dungeon` and a click on it. `unknown` at **confidence 0** is reserved for a
+ * uniform or black frame and for a frame that could not be decoded at all — the two cases where
+ * there really is nothing to look at.
+ */
+export const UNNAMED_CONFIDENCE = 0.2;
+
 // ---------------------------------------------------------------------------------------------
 // The perceiver
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Names the 3-D exploration view. `unknown` (confidence 0) is its refusal: another frame size, a
- * uniform or black frame, a decode failure, a frame without HUD structure, or any frame that still
- * shows the map — that frame is the map perceiver's business.
+ * Names the 3-D exploration view, and says "something is drawn but not named" when it cannot.
+ *
+ * Two answers, never three: `dungeon` above the route's act floor, or `unknown`. The confidence on
+ * `unknown` is the whole point (compare `UNNAMED_CONFIDENCE`): **0 means nothing was drawn** — a
+ * uniform or black frame, or a frame that could not be decoded — while a positive confidence means
+ * the frame is busy and this perceiver does not recognise it, which is a question for a human, not
+ * a reason to end the session.
  *
  * The steps are the research's refusal order, each one reading the smallest rect that can answer:
- * size, uniformity, the readout structure, the panel's ink mass, the wall lattice, then the HUD.
+ * uniformity, size, the readout structure, the panel's ink mass, the wall lattice, then the HUD.
  */
 export class HudPerceiver implements Perceiver {
   async observe(frame: Frame): Promise<Observation> {
-    const unknown: Observation = { screen: 'unknown', atMs: frame.atMs, confidence: 0 };
-
     let image: RgbaImage;
     try {
       image = await frame.toRgba();
     } catch {
       // Failure is a value (contracts §0.6): a decode failure is "not observed", not a throw.
-      return unknown;
+      return nothingAt(frame.atMs);
     }
 
-    // 0. Size, from the frame's declared dimensions (contracts §0.5) ----------------------------
-    if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) return unknown;
-    // The rects are indexed against the decoded pixels, so they must be the frame the contract
-    // describes; a source that hands back another size is unsupported, not re-scaled.
+    // 0. A black or uniform frame is `unknown` at confidence 0, never a minimap (contracts §2). --
+    // This runs before the size gates because it reads the decoded image's own geometry: a flat
+    // frame is "nothing drawn" whatever size it declares.
     const { data, width, height } = image;
-    if (width !== frame.width || height !== frame.height) return unknown;
+    if (isUniform(data, width, height)) return nothingAt(frame.atMs);
 
-    // 1. A black or uniform frame is `unknown`, never a minimap (contracts §2). -----------------
-    if (isUniform(data, width, height)) return unknown;
+    // 1. Size, from the frame's declared dimensions (contracts §0.5) ----------------------------
+    // The rects are indexed against the decoded pixels, so they must be the frame the contract
+    // describes; a source that hands back another size is unsupported, not re-scaled. It is still
+    // *a frame with something on it*, so it earns the unnamed confidence rather than a 0.
+    if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) return unnamed(frame.atMs);
+    if (width !== frame.width || height !== frame.height) return unnamed(frame.atMs);
 
     // 2. G1: the readout's eight runs — the map's decisive structure, and the map's frame. ------
-    if (readoutPresent(image)) return unknown;
+    if (readoutPresent(image)) return unnamed(frame.atMs);
 
     // 3. G3 + G6: the map panel's white ink and, at map density, its wall lattice. --------------
     const panelInkPx = panelInk(image);
-    if (panelInkPx >= MAP_INK_MIN && latticePresent(image)) return unknown;
+    if (panelInkPx >= MAP_INK_MIN && latticePresent(image)) return unnamed(frame.atMs);
 
     // 4. The HUD's structure must be there — a scene, or a bright rectangle, is not a screen. ---
     const hudInk = minimapInk(image);
-    if (!hudStructure(hudInk, image)) return unknown;
+    if (!hudStructure(hudInk, image)) return unnamed(frame.atMs);
 
     return { screen: 'dungeon', atMs: frame.atMs, confidence: confidenceOf(hudInk) };
   }
+}
+
+/** Nothing was drawn at all: the one refusal that may end a session (contracts §2). */
+function nothingAt(atMs: number): Observation {
+  return { screen: 'unknown', atMs, confidence: 0 };
+}
+
+/** Something is drawn and this perceiver cannot name it: ask, do not stop (see `UNNAMED_CONFIDENCE`). */
+function unnamed(atMs: number): Observation {
+  return { screen: 'unknown', atMs, confidence: UNNAMED_CONFIDENCE };
 }
 
 // ---------------------------------------------------------------------------------------------

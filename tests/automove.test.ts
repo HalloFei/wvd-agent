@@ -95,4 +95,25 @@ describe('the automove command chain (navigation §3d)', () => {
     await expect(automoveToExit(actuator)).resolves.toEqual({ ok: true });
     expect(actuator.presses).toEqual([{ scan: SCAN.exit, holdMs: PRESS_MS }]);
   });
+
+  it('presses for the configured hold when one is handed in, on every command', async () => {
+    // `worlds.wvd.pressHoldMs` is the operator's value (contracts §8.2). The module used to
+    // hardcode 60 ms and silently ignore it (Important 2); a tuned hold must reach the actuator.
+    vi.useFakeTimers();
+    const configured = 90;
+    const actuator = fakeActuator();
+
+    const opening = openMap(actuator, configured);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(opening).resolves.toEqual({ ok: true });
+    await automoveToChest(actuator, configured);
+    await automoveToExit(actuator, configured);
+
+    expect(actuator.presses).toEqual([
+      { scan: SCAN.destination, holdMs: configured },
+      { scan: SCAN.destination, holdMs: configured },
+      { scan: SCAN.chest, holdMs: configured },
+      { scan: SCAN.exit, holdMs: configured },
+    ]);
+  });
 });

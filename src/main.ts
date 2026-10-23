@@ -12,7 +12,13 @@
  * - **It connects no host.** The host arrives at `start(host)`; the engine's unsolicited messages
  *   reach the loop because the session's `onEngineEvent` forwards them.
  */
-import type { ActionResult, Actuator, EngineEvent, Point } from './contracts.ts';
+import {
+  MAX_PRESS_HOLD_MS,
+  type ActionResult,
+  type Actuator,
+  type EngineEvent,
+  type Point,
+} from './contracts.ts';
 import { automoveToChest, automoveToExit, openMap } from './actions/automove.ts';
 import type { WvdConfigSection } from './config.ts';
 import { connectEngine, startEngine, type EngineClient } from './engine/child.ts';
@@ -51,6 +57,13 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     );
     return engine;
   };
+
+  /**
+   * The configured press, clamped to the ceiling the engine's teardown can still release
+   * (contracts §4/§5): `pressHoldMs` is the operator's, and a hand-edited config must not be able
+   * to ask for a hold longer than the child's grace.
+   */
+  const pressHoldMs = (): number => Math.min(MAX_PRESS_HOLD_MS, Math.max(1, cfg.pressHoldMs));
 
   /** `Actuator` over the engine: the child asserts foreground before every press (contracts §4). */
   const actuator: Actuator = {
@@ -107,9 +120,10 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     policy: routePolicy,
     classify,
     commands: {
-      openMap: () => openMap(actuator),
-      automoveToChest: () => automoveToChest(actuator),
-      automoveToExit: () => automoveToExit(actuator),
+      // `pressHoldMs` is read per command, like every other key this World owns (§0.3).
+      openMap: () => openMap(actuator, pressHoldMs()),
+      automoveToChest: () => automoveToChest(actuator, pressHoldMs()),
+      automoveToExit: () => automoveToExit(actuator, pressHoldMs()),
     },
     openSession,
   });

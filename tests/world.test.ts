@@ -26,6 +26,7 @@ import type {
 } from '../src/contracts.ts';
 import { automoveToChest, automoveToExit, openMap } from '../src/actions/automove.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
+import { MAX_PRESS_HOLD_MS } from '../src/contracts.ts';
 import { routePolicy } from '../src/policy/route.ts';
 import { classify } from '../src/policy/session.ts';
 import { WvdWorld, type WvdSession } from '../src/world.ts';
@@ -38,12 +39,17 @@ const SCAN = { W: 0x11, F: 0x21, G: 0x22, L: 0x26 };
 // The fakes the brief asks for: a source, a perceiver and an actuator
 // ---------------------------------------------------------------------------------------------
 
-function frame(atMs: number): Frame {
+/**
+ * A frame whose pixels the loop can compare: `seed` is the sampled scene. The 1x1 image is the
+ * smallest thing `sceneSignature` can read, which is all the stillness rule needs (the real measure
+ * is tested in `tests/stillness.test.ts`).
+ */
+function frame(atMs: number, seed = 0): Frame {
   return {
     atMs,
     width: 1920,
     height: 1080,
-    toRgba: async () => ({ data: new Uint8Array(4), width: 1, height: 1 }),
+    toRgba: async () => ({ data: Uint8Array.of(seed, seed, seed, 255), width: 1, height: 1 }),
   };
 }
 
@@ -53,6 +59,9 @@ class ScriptedSource implements FrameSource {
   failures = 0;
   /** When set, `capture()` waits for it: the test decides when the tick may finish. */
   gate: Promise<void> | null = null;
+  /** When true every capture is a different scene: the party is walking. */
+  moving = false;
+  private seed = 0;
 
   async capture(): Promise<Frame> {
     this.captures += 1;
@@ -62,7 +71,8 @@ class ScriptedSource implements FrameSource {
       this.failures -= 1;
       throw new Error('capture timeout: no-frame');
     }
-    return frame(this.captures * 100);
+    if (this.moving) this.seed = (this.seed + 40) % 256;
+    return frame(this.captures * 100, this.seed);
   }
 }
 
@@ -179,6 +189,21 @@ const dungeonMap: Observation = {
   },
 };
 
+/**
+ * A map with no chest left on it: the route's next move is the exit (contracts §6). `hazard` is a
+ * non-chest icon so the map is still a real readout.
+ */
+const emptyMap: Observation = {
+  screen: 'dungeonmap',
+  atMs: 100,
+  confidence: 0.9,
+  map: {
+    floorTitle: 'B1F',
+    player: { x: 19, y: 21 },
+    icons: [{ kind: 'hazard', at: { x: 10, y: 10 } }],
+  },
+};
+
 const unknownButSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0.2 };
 const nothingSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0 };
 const waiting: Observation = { screen: 'loading', atMs: 100, confidence: 0.9 };
@@ -227,9 +252,11 @@ function makeWorld(options: {
     policy: routePolicy,
     classify,
     commands: {
-      openMap: () => openMap(actuator),
-      automoveToChest: () => automoveToChest(actuator),
-      automoveToExit: () => automoveToExit(actuator),
+      // `main.ts` reads `pressHoldMs` per command; the harness does the same, so a configured hold
+      // that the loop ignored would show up here (Important 2).
+      openMap: () => openMap(actuator, cfg.pressHoldMs),
+      automoveToChest: () => automoveToChest(actuator, cfg.pressHoldMs),
+      automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
     },
     openSession: async () => {
       openSessionCalls += 1;
@@ -389,6 +416,111 @@ describe('the tick', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// One command at a time: the walk owns the loop until arrival (Critical 2)
+// ---------------------------------------------------------------------------------------------
+
+describe('a walk stays in flight through the screens it produces', () => {
+  it('does not open the map again when the map closing is the walk itself', async () => {
+    const { world, host, perceiver, actuator, source, clock } = makeWorld();
+    await started(world, host);
+
+    // On the map the route walks to a chest: L. The map closing on the next tick is the key
+    // working, not the walk finishing, so it must not release the command.
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+
+    perceiver.observation = dungeonView;
+    source.moving = true;
+    for (let index = 0; index < 10; index += 1) {
+      clock.advance(500);
+      await world.tick();
+    }
+    // Five seconds of walking and nothing is sent: no G, no second L.
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+    expect(world.isRunning()).toBe(true);
+
+    // The party stops. The scene has been still for automoveStillSeconds: arrival, and the route's
+    // next decision (open the map from the 3D view) is allowed.
+    source.moving = false;
+    clock.advance(100);
+    await world.tick();
+    clock.advance(5_100);
+    await world.tick();
+    expect(actuator.calls).toEqual([
+      `key ${SCAN.L} 60`,
+      `key ${SCAN.G} 60`,
+      `key ${SCAN.G} 60`,
+    ]);
+  });
+
+  it('treats a readout that moves under an open map as the walk starting, not as arrival', async () => {
+    // navigation §3d: automove does not care whether the map is open, so the party can walk with the
+    // map up. The readout moving is the walk, and arrival is the scene standing still.
+    const { world, host, perceiver, actuator, clock } = makeWorld();
+    await started(world, host);
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+
+    perceiver.observation = { ...dungeonMap, map: { ...dungeonMap.map, player: { x: 11, y: 19 } } };
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+
+    clock.advance(5_100);
+    await world.tick();
+    // Arrival releases the walk, and the map is still open at a chest, so the route walks again.
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`, `key ${SCAN.L} 60`]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Every command is gated on the screen it is valid on (Important 1)
+// ---------------------------------------------------------------------------------------------
+
+describe('the command gates', () => {
+  it('presses F on the map, and opens the map first when the exit is decided elsewhere', async () => {
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: emptyMap });
+    await started(world, host);
+
+    // On the map, F is 移動至出口: the one screen where the exit command is valid.
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.F} 60`]);
+
+    // The map closed and the party walked: the walk is outstanding, so nothing is sent.
+    perceiver.observation = dungeonView;
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.F} 60`]);
+
+    // Arrival, still with no chest budget: the route asks for the exit from the 3D view, where F is
+    // 調査. The loop opens the map instead, and the next tick presses F from the map.
+    clock.advance(5_100);
+    await world.tick();
+    expect(actuator.calls).toEqual([
+      `key ${SCAN.F} 60`,
+      `key ${SCAN.G} 60`,
+      `key ${SCAN.G} 60`,
+    ]);
+  });
+
+  it('refuses to open the map from the map: G there is 移動至目的地', async () => {
+    // A model answer can name any intent. On the map, `open-map` is an unintended automove, so the
+    // loop refuses it rather than pressing G.
+    const doubtedMap: Observation = { ...dungeonMap, confidence: 0.3 };
+    const { world, host, actuator } = makeWorld({ observation: doubtedMap, cfg: { escalateTimeoutMs: 5000 } });
+    await started(world, host);
+    const tick = world.tick();
+    await until(() => host.pushed.length === 1, 'the question');
+
+    const answer = outcome(await tool(world, 'wvd_resume').handler({ intent: { kind: 'open-map' } }, CTX));
+    expect(answer.failed).toBeUndefined();
+    await tick;
+
+    expect(actuator.calls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // Stalls are the loop's
 // ---------------------------------------------------------------------------------------------
 
@@ -408,8 +540,9 @@ describe('the stall policy', () => {
 
     const stuck = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck');
     expect(stuck).toHaveLength(1);
-    // no answer → the policy's own recovery: leave the dungeon (F)
-    expect(actuator.calls).toContain(`key ${SCAN.F} 60`);
+    // no answer → the policy's own recovery: open the map (G twice), never `F` blind — on the 3D
+    // view F is 調査, and the exit is only a command on the map (navigation §3d)
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
   });
 
   it('stops at stallStopSeconds, after the escalation has had its chance', async () => {
@@ -501,8 +634,8 @@ describe('the escalation exchange', () => {
     expect(stuck[0]!.event.text).toContain('Question:');
     // the snapshot is a second capture at the configured width, not a re-encode of the verdict frame
     expect(snapshotCalls).toEqual([cfg.escalationImageWidth]);
-    // nobody answered, so the loop took its own recovery
-    expect(actuator.calls).toEqual([`key ${SCAN.F} 60`]);
+    // nobody answered, so the loop took its own recovery: the map first, never `F` blind
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
     // exactly one question, counting pushes: the hourly budget is the loop's
     expect(world.escalationsThisHour()).toBe(1);
   });
@@ -556,7 +689,7 @@ describe('the escalation exchange', () => {
     const start = Date.now();
     await world.tick();
     expect(Date.now() - start).toBeLessThan(2000);
-    expect(actuator.calls).toEqual([`key ${SCAN.F} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
   });
 
   it('a stop during the snapshot capture asks nothing and sends nothing', async () => {
@@ -587,7 +720,7 @@ describe('the escalation exchange', () => {
 
     await world.tick();
 
-    expect(actuator.calls).toEqual([`key ${SCAN.F} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
   });
 
   it('treats a discarded question as undelivered and takes the fallback', async () => {
@@ -601,7 +734,7 @@ describe('the escalation exchange', () => {
     world.onEventsSettled([envelope], 'discarded');
     await tick;
 
-    expect(actuator.calls).toEqual([`key ${SCAN.F} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
   });
 
   it('resumes with the answer\'s intent, and refuses a second answer', async () => {
@@ -634,7 +767,8 @@ describe('the escalation exchange', () => {
     const late = outcome(await tool(world, 'wvd_resume').handler({}, CTX));
     expect(late.failed).toBe(true);
     expect(late.text).toContain('expired');
-    expect(late.text).toContain('leaves the dungeon');
+    // the fallback is screen-chosen: an unknown screen is opened, not left (F is 調査 there)
+    expect(late.text).toContain('opened the map');
   });
 });
 
@@ -714,6 +848,37 @@ describe('the tools', () => {
     await tick;
   });
 
+  it('presses with the configured hold rather than the 60 ms default', async () => {
+    const { world, host, actuator } = makeWorld({ cfg: { pressHoldMs: 90 } });
+    await started(world, host);
+
+    await world.tick();
+
+    // `worlds.wvd.pressHoldMs` is threaded into the command by the composition root; the map's
+    // 移動至宝箱 is one press, and it carries the tuned duration (Important 2).
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 90`]);
+  });
+
+  it('clamps a hold to the contract ceiling: a longer one could outlive the engine teardown', async () => {
+    const { world, host, actuator } = makeWorld({ observation: unknownButSeen, cfg: { escalateTimeoutMs: 5000 } });
+    await started(world, host);
+    const tick = world.tick();
+    await until(() => host.pushed.length === 1, 'the question');
+
+    const act = tool(world, 'wvd_act');
+    const held = outcome(await act.handler({ kind: 'holdKey', key: 'w', holdMs: 5_000 }, CTX));
+    expect(held.failed).toBeUndefined();
+    expect(held.text).toBe(`sent: held w ${MAX_PRESS_HOLD_MS} ms`);
+    expect(actuator.calls).toContain(`key ${SCAN.W} ${MAX_PRESS_HOLD_MS}`);
+
+    // the schema says the same ceiling, so a model reading the declaration cannot ask for more
+    const properties = (act.parameters as { properties: Record<string, { maximum?: number }> }).properties;
+    expect(properties.holdMs!.maximum).toBe(MAX_PRESS_HOLD_MS);
+
+    await tool(world, 'wvd_resume').handler({}, CTX);
+    await tick;
+  });
+
   it('wvd_act reports a rejected input as not sent', async () => {
     const actuator = new ScriptedActuator();
     actuator.result = { ok: false, reason: 'rejected', detail: 'not-foreground' };
@@ -731,7 +896,10 @@ describe('the tools', () => {
   });
 
   it('wvd_resume validates the intent it is given, and move needs no tile', async () => {
-    const { world, host, actuator } = makeWorld({ observation: unknownButSeen, cfg: { escalateTimeoutMs: 5000 } });
+    // The escalation is on a map the route will not act on (below its floor), because `move` is
+    // 移動至宝箱 only on the map: the loop refuses to press L anywhere else (navigation §3d).
+    const doubtedMap: Observation = { ...dungeonMap, confidence: 0.3 };
+    const { world, host, actuator } = makeWorld({ observation: doubtedMap, cfg: { escalateTimeoutMs: 5000 } });
     await started(world, host);
     const tick = world.tick();
     await until(() => host.pushed.length === 1, 'the question');

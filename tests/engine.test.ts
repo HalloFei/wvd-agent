@@ -1,6 +1,9 @@
+import { EventEmitter } from 'node:events';
+import type { ChildProcess } from 'node:child_process';
 import jpeg from 'jpeg-js';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineEvent, EngineReply, EngineRequest } from '../src/contracts.ts';
+import { MAX_PRESS_HOLD_MS, TEARDOWN_GRACE_MS } from '../src/contracts.ts';
 import { FRAME_MAX_AGE_MS, LineDecoder, decodeLine, encodeEvent, encodeReply, encodeRequest } from '../src/engine/protocol.ts';
 import { connectEngine, startEngine } from '../src/engine/child.ts';
 import { parseHotkey } from '../src/engine/hotkey.mjs';
@@ -254,6 +257,66 @@ describe('stop hotkey parser', () => {
   it('rejects two keys and unknown names', () => {
     expect(parseHotkey('Ctrl+W+Q')).toBeNull();
     expect(parseHotkey('Ctrl+What')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Teardown: a stuck key is worse than a refused press (contracts §4/§5)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The `ChildProcess` surface `connectEngine` touches, with the kill recorded. Every failure mode
+ * here is the one that matters: on Windows `kill()` is `TerminateProcess`, so whatever the child
+ * had not released when it lands stays down until something else releases it.
+ */
+class FakeChild extends EventEmitter {
+  exitCode: number | null = null;
+  signalCode: string | null = null;
+  kills = 0;
+  readonly stdin = Object.assign(new EventEmitter(), {
+    write: (): boolean => true,
+    end: (): void => undefined,
+  });
+  readonly stdout = Object.assign(new EventEmitter(), { setEncoding: (): void => undefined });
+  readonly stderr = Object.assign(new EventEmitter(), { setEncoding: (): void => undefined });
+
+  kill(): boolean {
+    this.kills += 1;
+    this.exitCode = 0;
+    this.emit('exit', 0, null);
+    return true;
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('engine teardown', () => {
+  it('keeps the maximum hold strictly inside the teardown grace', () => {
+    // contracts §4: a press is held at most MAX_PRESS_HOLD_MS. contracts §5: the parent kills the
+    // child TEARDOWN_GRACE_MS after closing the pipe, and that kill skips `releaseHeld()`. If the
+    // two ever crossed, the World could send a hold the teardown would kill with the key down.
+    expect(MAX_PRESS_HOLD_MS).toBeLessThan(TEARDOWN_GRACE_MS);
+  });
+
+  it('does not kill the child while a maximum-length hold could still be finishing', () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const engine = connectEngine(child as unknown as ChildProcess, { timeoutMs: 5_000 });
+
+    // The World has asked for the longest hold it can and the session closes while it is in flight.
+    void engine.request({ op: 'key', scan: 0x11, holdMs: MAX_PRESS_HOLD_MS });
+    engine.close();
+
+    // A maximum-length hold is still within its own duration: the child must still be alive to
+    // release the key when the hold ends.
+    vi.advanceTimersByTime(MAX_PRESS_HOLD_MS);
+    expect(child.kills).toBe(0);
+
+    // Only after the grace — which the hold fits inside — may a child that never exits be killed.
+    vi.advanceTimersByTime(TEARDOWN_GRACE_MS - MAX_PRESS_HOLD_MS);
+    expect(child.kills).toBe(1);
   });
 });
 

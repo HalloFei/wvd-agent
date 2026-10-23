@@ -12,7 +12,12 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import type { ActionFailure, EngineReply, EngineRequest } from '../contracts.ts';
+import {
+  TEARDOWN_GRACE_MS,
+  type ActionFailure,
+  type EngineReply,
+  type EngineRequest,
+} from '../contracts.ts';
 import { LineDecoder, decodeLine, encodeRequest, type EngineEvent } from './protocol.ts';
 
 export interface EngineOptions {
@@ -193,7 +198,7 @@ export function connectEngine(child: ChildProcess, options: EngineClientOptions 
         } catch {
           // already gone
         }
-      }, 500);
+      }, TEARDOWN_GRACE_MS);
       timer.unref?.();
       child.once('exit', () => clearTimeout(timer));
     },

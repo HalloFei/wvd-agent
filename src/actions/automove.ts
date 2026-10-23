@@ -24,8 +24,12 @@ export const SCAN = {
   chest: 0x26,       // L — 移动至宝箱
 } as const;
 
-/** A press is held at least 60 ms (contracts §4): a 0 ms press is dropped at 30 fps. */
-const PRESS_MS = 60;
+/**
+ * A press is held at least 60 ms (contracts §4): a 0 ms press is dropped at 30 fps. This is only the
+ * fallback for a caller that hands no configured hold — `worlds.wvd.pressHoldMs` (§8.2) is the real
+ * value, and the composition root passes it in, so a tuned press is not silently ignored.
+ */
+const DEFAULT_HOLD_MS = 60;
 
 /**
  * The pause between the two `G` presses of `openMap`. The menu is drawn on a frame boundary, not
@@ -41,34 +45,46 @@ function settle(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Press one key once with the contract's 60 ms hold. */
-function press(actuator: Actuator, scan: number): Promise<ActionResult> {
-  return actuator.holdKey(scan, PRESS_MS);
+/** Press one key once for `holdMs` (contracts §4's floor is the default). */
+function press(actuator: Actuator, scan: number, holdMs: number): Promise<ActionResult> {
+  return actuator.holdKey(scan, holdMs);
 }
 
 /**
  * Open the dungeon map from the 3D view: `G` opens the menu, `G` again opens the map.
  * A failed menu press is returned unchanged and the second press never happens.
+ *
+ * `holdMs` is the configured press (`worlds.wvd.pressHoldMs`); omitting it falls back to the
+ * contract's 60 ms floor rather than inventing a duration here.
  */
-export async function openMap(actuator: Actuator): Promise<ActionResult> {
-  const menu = await press(actuator, SCAN.destination);
+export async function openMap(
+  actuator: Actuator,
+  holdMs: number = DEFAULT_HOLD_MS,
+): Promise<ActionResult> {
+  const menu = await press(actuator, SCAN.destination, holdMs);
   if (!menu.ok) return menu;
   await settle(MENU_SETTLE_MS);
-  return press(actuator, SCAN.destination);
+  return press(actuator, SCAN.destination, holdMs);
 }
 
 /**
  * Walk to a chest: `L` (移动至宝箱). The map closes and the game walks the party; the game chooses
  * the chest, and battles on the way resolve themselves.
  */
-export async function automoveToChest(actuator: Actuator): Promise<ActionResult> {
-  return press(actuator, SCAN.chest);
+export async function automoveToChest(
+  actuator: Actuator,
+  holdMs: number = DEFAULT_HOLD_MS,
+): Promise<ActionResult> {
+  return press(actuator, SCAN.chest, holdMs);
 }
 
 /**
  * Walk to the exit: `F` (移动至出口). One press. Unlike a chest move, this one crosses down when the
  * destination is the next-floor tile (navigation §3d: `F` on B1F walked the party into B2F).
  */
-export async function automoveToExit(actuator: Actuator): Promise<ActionResult> {
-  return press(actuator, SCAN.exit);
+export async function automoveToExit(
+  actuator: Actuator,
+  holdMs: number = DEFAULT_HOLD_MS,
+): Promise<ActionResult> {
+  return press(actuator, SCAN.exit, holdMs);
 }

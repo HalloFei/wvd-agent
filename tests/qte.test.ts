@@ -355,7 +355,10 @@ describe('CompositePerceiver', () => {
     expect(strong.calls).toBe(1);
   });
 
-  it('answers unknown when no recogniser clears its floor', async () => {
+  it('answers unknown at the strongest refusal when no recogniser clears its floor', async () => {
+    // A name below its recogniser's floor is not trusted for acting, but it is still evidence that
+    // the frame was drawn: the fallback repeats that confidence, so the session classifier escalates
+    // (a stop is reserved for the all-zero answer, Task 10 review Critical 1).
     const composite = new CompositePerceiver([
       { perceiver: new StubPerceiver((f) => ({ screen: 'unknown', atMs: f.atMs, confidence: 0 })), floor: 0.5 },
       { perceiver: new StubPerceiver(() => ({ screen: 'dungeon' as const, atMs: 0, confidence: 0.3 })), floor: 0.5 },
@@ -363,7 +366,16 @@ describe('CompositePerceiver', () => {
 
     const observation = await composite.observe(frame());
 
-    expect(observation).toEqual({ screen: 'unknown', atMs: 777, confidence: 0 });
+    expect(observation).toEqual({ screen: 'unknown', atMs: 777, confidence: 0.3 });
+  });
+
+  it('answers unknown at confidence 0 only when every recogniser saw nothing', async () => {
+    const composite = new CompositePerceiver([
+      { perceiver: new StubPerceiver((f) => ({ screen: 'unknown', atMs: f.atMs, confidence: 0 })), floor: 0.5 },
+      { perceiver: new StubPerceiver((f) => ({ screen: 'unknown', atMs: f.atMs, confidence: 0 })), floor: 0.5 },
+    ]);
+
+    expect(await composite.observe(frame())).toEqual({ screen: 'unknown', atMs: 777, confidence: 0 });
   });
 
   it('decodes the frame once, however many recognisers read it', async () => {
