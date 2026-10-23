@@ -1,0 +1,554 @@
+import { readFile } from 'node:fs/promises';
+import jpeg from 'jpeg-js';
+import { describe, expect, it } from 'vitest';
+import type { Frame, Observation, Perceiver, QteZone, RgbaImage } from '../src/contracts.ts';
+import { ChestPerceiver, parseQte } from '../src/perception/chest.ts';
+import { CompositePerceiver } from '../src/perception/composite.ts';
+import { planTap, qteVelocity } from '../src/policy/qte.ts';
+
+/**
+ * The six stills are one chest, recorded 2026-10-24 01:41 (`testdata/chest/2026-10-24-qte-0141/`).
+ * They are JPEGs of the engine's own quality, so they are decoded here the way a `FrameSource`
+ * decodes them: `jpeg-js` into RGBA, then a Frame whose `toRgba()` returns that image.
+ *
+ * The expected numbers are the measurements in `.superpowers/sdd/2026-10-24-wvd-world-v1/
+ * research-qte-parser.md` §11, not numbers read back from the implementation: the zones' fill
+ * interiors are 696–920 and 999–1223, the gap is 78 px, the marker's core sits at
+ * 1072.5 … 768.5 across the six frames, and the 解除 control is at (960, 662).
+ *
+ * The recording itself (`…-qte-recorded/qte.mp4`, 250 frames) is not a unit fixture — extracting it
+ * costs an `ffmpeg` run and the replay harness (Task 9) owns that. The six stills pin the geometry;
+ * the recording's parse rate was measured out of band and is in the task report.
+ */
+const FIXTURES = new URL('../testdata/chest/2026-10-24-qte-0141/', import.meta.url);
+/** A 3-D view: a real frame with no bar on it (peak warm in the band is 0). */
+const NAV_FIXTURES = new URL('../testdata/nav-1024-0213/', import.meta.url);
+
+/** Marker core centres, frame-0 … frame-5 (research §11). The marker moves; the bar does not. */
+const MARKER_X = [1072.5, 1011.5, 950.5, 889.5, 829.5, 768.5] as const;
+const ZONES: readonly QteZone[] = [
+  { from: 696, to: 920 },
+  { from: 999, to: 1223 },
+];
+const BUTTON = { x: 960, y: 662 };
+
+// ---------------------------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------------------------
+
+/** Decoded once per fixture: `jpeg-js` spends ~150 ms on a 1080p frame, and 34 tests share six. */
+const imageCache = new Map<string, Promise<RgbaImage>>();
+
+function jpegImage(name: string, dir = FIXTURES): Promise<RgbaImage> {
+  const key = `${dir.href}${name}`;
+  let image = imageCache.get(key);
+  if (!image) {
+    image = readFile(new URL(name, dir)).then((bytes) => {
+      const decoded = jpeg.decode(bytes, { useTArray: true });
+      return { data: decoded.data, width: decoded.width, height: decoded.height };
+    });
+    imageCache.set(key, image);
+  }
+  return image;
+}
+
+function frameOf(image: RgbaImage, atMs: number): Frame {
+  return { atMs, width: image.width, height: image.height, toRgba: async () => image };
+}
+
+async function jpegFrame(name: string, atMs = 1_000, dir = FIXTURES): Promise<Frame> {
+  return frameOf(await jpegImage(name, dir), atMs);
+}
+
+function copyOf(image: RgbaImage): RgbaImage {
+  return { data: Uint8Array.from(image.data), width: image.width, height: image.height };
+}
+
+interface Rect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+function paint(image: RgbaImage, rect: Rect, rgb: readonly [number, number, number]): void {
+  for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+    for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+      const offset = (y * image.width + x) * 4;
+      image.data[offset] = rgb[0];
+      image.data[offset + 1] = rgb[1];
+      image.data[offset + 2] = rgb[2];
+      image.data[offset + 3] = 255;
+    }
+  }
+}
+
+/** Copy columns `srcX …` over `dstX …`: used to erase the marker with the fill beside it. */
+function copyColumns(
+  image: RgbaImage,
+  srcX: number,
+  dstX: number,
+  width: number,
+  y0: number,
+  y1: number,
+): void {
+  for (let y = y0; y <= y1; y += 1) {
+    const from = (y * image.width + srcX) * 4;
+    const to = (y * image.width + dstX) * 4;
+    image.data.copyWithin(to, from, from + width * 4);
+  }
+}
+
+function darken(image: RgbaImage, rect: Rect, factor: number): void {
+  for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+    for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+      const offset = (y * image.width + x) * 4;
+      image.data[offset] = Math.round(image.data[offset] * factor);
+      image.data[offset + 1] = Math.round(image.data[offset + 1] * factor);
+      image.data[offset + 2] = Math.round(image.data[offset + 2] * factor);
+    }
+  }
+}
+
+function uniformImage(width: number, height: number, luma: number): RgbaImage {
+  const data = new Uint8Array(width * height * 4);
+  for (let offset = 0; offset < data.length; offset += 4) {
+    data[offset] = luma;
+    data[offset + 1] = luma;
+    data[offset + 2] = luma;
+    data[offset + 3] = 255;
+  }
+  return { data, width, height };
+}
+
+type QteParseResult = Awaited<ReturnType<typeof parseQte>>;
+
+/** Assert a parse happened and hand back its payload; a refusal fails the test with its reason. */
+function read(result: QteParseResult): Extract<QteParseResult, { ok: true }> {
+  if (!result.ok) throw new Error(`expected a parse, refused with '${result.reason}'`);
+  return result;
+}
+
+function refusal(result: QteParseResult): string {
+  if (result.ok) throw new Error('expected a refusal, got a parse');
+  return result.reason;
+}
+
+// ---------------------------------------------------------------------------------------------
+// parseQte — the bar and the marker
+// ---------------------------------------------------------------------------------------------
+
+describe('parseQte', () => {
+  it('reads the two zones, the marker and the 解除 button from the first still', async () => {
+    const parsed = read(await parseQte(await jpegFrame('frame-0.jpg')));
+
+    expect(parsed.qte.zones).toEqual(ZONES);
+    expect(parsed.qte.zones[1].from - parsed.qte.zones[0].to - 1).toBe(78);
+    expect(parsed.qte.markerX).toBe(1072.5);
+    expect(parsed.qte.button).toEqual(BUTTON);
+    // Research §7: only the value 3 has ever been seen, so an attempt count would be a guess.
+    expect(parsed.qte.attempts).toBeNull();
+    expect(parsed.confidence).toBe(1);
+    expect(parsed.enabled).toBe(true);
+  });
+
+  it('holds the bar fixed while the marker is the only white run that moves', async () => {
+    const parsed = [];
+    for (let index = 0; index < 6; index += 1) {
+      parsed.push(read(await parseQte(await jpegFrame(`frame-${index}.jpg`))));
+    }
+
+    // The zones and the button are identical in all six frames (research §11).
+    for (const entry of parsed) {
+      expect(entry.qte.zones).toEqual(ZONES);
+      expect(entry.qte.button).toEqual(BUTTON);
+    }
+    // Only the marker's x changes, and by the measured ~61 px per still.
+    expect(parsed.map((entry) => entry.qte.markerX)).toEqual([...MARKER_X]);
+  });
+
+  it('refuses another frame size instead of mis-scaling the fixed anchors', async () => {
+    let decodes = 0;
+    const frame: Frame = {
+      atMs: 1_000,
+      width: 1280,
+      height: 720,
+      toRgba: async () => {
+        decodes += 1;
+        return uniformImage(1280, 720, 40);
+      },
+    };
+
+    expect(refusal(await parseQte(frame))).toBe('unsupported-size');
+    // Refused from the frame's declared size: a foreign frame never pays for its decode.
+    expect(decodes).toBe(0);
+  });
+
+  it('refuses an image whose pixels are not the size the anchors were measured at', async () => {
+    const frame: Frame = {
+      atMs: 0,
+      width: 1920,
+      height: 1080,
+      toRgba: async () => uniformImage(1280, 720, 40),
+    };
+    expect(refusal(await parseQte(frame))).toBe('unsupported-size');
+  });
+
+  it('refuses a frame with no bar and names the reason', async () => {
+    const blank = frameOf(uniformImage(1920, 1080, 0), 1_000);
+    expect(refusal(await parseQte(blank))).toBe('no-bar');
+
+    // A real frame: the 3-D view has no bar (peak warm in the band measures 0).
+    const hud = await jpegFrame('minimap-and-hud.jpg', 1_000, NAV_FIXTURES);
+    expect(refusal(await parseQte(hud))).toBe('no-bar');
+  });
+
+  it('refuses when the marker is gone rather than reading a zone border as one', async () => {
+    const image = copyOf(await jpegImage('frame-0.jpg'));
+    copyColumns(image, 1090, 1069, 8, 36, 82);
+    expect(refusal(await parseQte(frameOf(image, 1_000)))).toBe('no-marker');
+  });
+
+  it('refuses when two white runs could be the marker', async () => {
+    const image = copyOf(await jpegImage('frame-0.jpg'));
+    paint(image, { x: 950, y: 40, w: 8, h: 31 }, [255, 255, 255]);
+
+    expect(refusal(await parseQte(frameOf(image, 1_000)))).toBe('multi-marker');
+  });
+
+  it("uses the previous frame's marker to eliminate a static white run", async () => {
+    const image = copyOf(await jpegImage('frame-0.jpg'));
+    paint(image, { x: 950, y: 40, w: 8, h: 31 }, [255, 255, 255]);
+
+    // 953.5 is the painted run's centre; the survivor is the real marker at 1072.5.
+    const parsed = read(await parseQte(frameOf(image, 1_000), 953.5));
+    expect(parsed.qte.markerX).toBe(1072.5);
+  });
+
+  it('refuses when the zones merge into one run', async () => {
+    const image = copyOf(await jpegImage('frame-0.jpg'));
+    paint(image, { x: 921, y: 36, w: 78, h: 47 }, [255, 170, 30]);
+    expect(refusal(await parseQte(frameOf(image, 1_000)))).toBe('no-zones');
+  });
+
+  it('refuses a pair of zones whose gap is not a hazard gap', async () => {
+    const image = copyOf(await jpegImage('frame-0.jpg'));
+    paint(image, { x: 921, y: 36, w: 50, h: 47 }, [255, 170, 30]);
+    expect(refusal(await parseQte(frameOf(image, 1_000)))).toBe('bad-gap');
+  });
+
+  it('refuses a gap that is not dark', async () => {
+    const image = copyOf(await jpegImage('frame-0.jpg'));
+    paint(image, { x: 921, y: 36, w: 78, h: 47 }, [200, 200, 200]);
+    expect(refusal(await parseQte(frameOf(image, 1_000)))).toBe('gap-not-dark');
+  });
+
+  it('refuses when the 解除 control is not on screen', async () => {
+    const image = copyOf(await jpegImage('frame-0.jpg'));
+    paint(image, { x: 870, y: 572, w: 181, h: 181 }, [128, 128, 128]);
+    expect(refusal(await parseQte(frameOf(image, 1_000)))).toBe('no-button');
+  });
+
+  it('reads a dimmed 解除 control as disabled, not as a live pass', async () => {
+    const image = copyOf(await jpegImage('frame-0.jpg'));
+    darken(image, { x: 929, y: 616, w: 63, h: 93 }, 0.7);
+
+    const parsed = read(await parseQte(frameOf(image, 1_000)));
+    expect(parsed.enabled).toBe(false);
+    // Research §9: a dimmed control subtracts 0.20 and nothing else is wrong with this frame.
+    expect(parsed.confidence).toBe(0.8);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// ChestPerceiver
+// ---------------------------------------------------------------------------------------------
+
+describe('ChestPerceiver', () => {
+  it('reports chest-qte with the parsed state and the frame time', async () => {
+    const frame = await jpegFrame('frame-3.jpg', 4_321);
+    const observation = await new ChestPerceiver().observe(frame);
+
+    expect(observation.screen).toBe('chest-qte');
+    expect(observation.atMs).toBe(4_321);
+    if (observation.screen !== 'chest-qte') throw new Error('not a QTE observation');
+    expect(observation.qte.zones).toEqual(ZONES);
+    expect(observation.qte.markerX).toBe(889.5);
+    expect(observation.confidence).toBe(1);
+  });
+
+  it('answers unknown, not a QTE guess, when the bar is not there', async () => {
+    const observation = await new ChestPerceiver().observe(
+      await jpegFrame('minimap-and-hud.jpg', 2_000, NAV_FIXTURES),
+    );
+
+    expect(observation.screen).toBe('unknown');
+    expect(observation.confidence).toBe(0);
+    expect(observation.atMs).toBe(2_000);
+  });
+
+  it('never reports chest-open: the opener panel has no fixture, so it is not guessed', async () => {
+    // The controller's ruling: `由谁打开` was never recorded, so `parseOpener` does not exist and
+    // this perceiver cannot name `chest-open`. Every frame it has ever seen is the bar (or nothing).
+    const frames = [
+      ...(await Promise.all(MARKER_X.map((_, index) => jpegFrame(`frame-${index}.jpg`)))),
+      await jpegFrame('minimap-and-hud.jpg', 1_000, NAV_FIXTURES),
+    ];
+    for (const frame of frames) {
+      expect((await new ChestPerceiver().observe(frame)).screen).not.toBe('chest-open');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// CompositePerceiver — the composition seam
+// ---------------------------------------------------------------------------------------------
+
+class StubPerceiver implements Perceiver {
+  calls = 0;
+
+  constructor(private readonly answer: (frame: Frame) => Observation | Promise<Observation>) {}
+
+  async observe(frame: Frame): Promise<Observation> {
+    this.calls += 1;
+    return this.answer(frame);
+  }
+}
+
+const qteState = { zones: ZONES, markerX: 889.5, button: BUTTON, attempts: null } as const;
+
+describe('CompositePerceiver', () => {
+  const frame = (): Frame => frameOf(uniformImage(8, 8, 0), 777);
+
+  it('returns the first recogniser whose confidence clears its floor', async () => {
+    const first = new StubPerceiver((f) => ({ screen: 'dungeon', atMs: f.atMs, confidence: 0.9 }));
+    const second = new StubPerceiver(() => ({
+      screen: 'chest-qte' as const,
+      atMs: 0,
+      confidence: 1,
+      qte: qteState,
+    }));
+    const composite = new CompositePerceiver([
+      { perceiver: first, floor: 0.5 },
+      { perceiver: second, floor: 0.5 },
+    ]);
+
+    const observation = await composite.observe(frame());
+
+    expect(observation.screen).toBe('dungeon');
+    expect(observation.confidence).toBe(0.9);
+    expect(second.calls).toBe(0);
+  });
+
+  it('skips a recogniser whose confidence is below its floor and tries the next', async () => {
+    const weak = new StubPerceiver((f) => ({ screen: 'dungeon', atMs: f.atMs, confidence: 0.4 }));
+    const strong = new StubPerceiver((f) => ({ screen: 'dungeon', atMs: f.atMs, confidence: 0.8 }));
+    const composite = new CompositePerceiver([
+      { perceiver: weak, floor: 0.5 },
+      { perceiver: strong, floor: 0.5 },
+    ]);
+
+    const observation = await composite.observe(frame());
+
+    expect(observation.confidence).toBe(0.8);
+    expect(weak.calls).toBe(1);
+    expect(strong.calls).toBe(1);
+  });
+
+  it('answers unknown when no recogniser clears its floor', async () => {
+    const composite = new CompositePerceiver([
+      { perceiver: new StubPerceiver((f) => ({ screen: 'unknown', atMs: f.atMs, confidence: 0 })), floor: 0.5 },
+      { perceiver: new StubPerceiver(() => ({ screen: 'dungeon' as const, atMs: 0, confidence: 0.3 })), floor: 0.5 },
+    ]);
+
+    const observation = await composite.observe(frame());
+
+    expect(observation).toEqual({ screen: 'unknown', atMs: 777, confidence: 0 });
+  });
+
+  it('decodes the frame once, however many recognisers read it', async () => {
+    const image = uniformImage(8, 8, 0);
+    let decodes = 0;
+    const counting: Frame = {
+      atMs: 9,
+      width: 8,
+      height: 8,
+      toRgba: async () => {
+        decodes += 1;
+        return image;
+      },
+    };
+    const reader = (confidence: number) =>
+      new StubPerceiver(async (f) => {
+        await f.toRgba();
+        return { screen: 'dungeon', atMs: f.atMs, confidence };
+      });
+    const composite = new CompositePerceiver([
+      { perceiver: reader(0.1), floor: 0.5 },
+      { perceiver: reader(0.9), floor: 0.5 },
+    ]);
+
+    const observation = await composite.observe(counting);
+
+    expect(observation.screen).toBe('dungeon');
+    expect(decodes).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// planTap — contracts §7
+// ---------------------------------------------------------------------------------------------
+
+/** The configuration the chest policy will pass (contracts §8.4); 610 px/s is the video's speed. */
+const TAP = { latencyMs: 75, decelPxPerS2: 3_000, horizonMs: 1_000 } as const;
+
+describe('planTap', () => {
+  it('plans a tap on the right zone for a rightward marker', async () => {
+    const plan = planTap({ markerX: 800, v: 610, zones: ZONES, ...TAP });
+
+    expect(plan).not.toBeNull();
+    // stop = 800 + 610·0.075 + 610²/6000 = 907.767 → (1111 − 907.767)/610 = 333.17 ms.
+    expect(plan!.target).toBe(1111);
+    expect(plan!.target).toBeGreaterThanOrEqual(ZONES[1].from);
+    expect(plan!.target).toBeLessThanOrEqual(ZONES[1].to);
+    expect(plan!.atMs).toBeCloseTo(333.17, 1);
+  });
+
+  it('carries the sign of motion into the slide term', () => {
+    // Mirrored geometry: 311 px to the target either way. With `sign(v)·v²/(2a)` both take
+    // 333.17 ms; a slide term that ignored the sign would take 536 ms leftward.
+    const rightward = planTap({ markerX: 800, v: 610, zones: [{ from: 1101, to: 1121 }], ...TAP });
+    const leftward = planTap({ markerX: 1200, v: -610, zones: [{ from: 879, to: 899 }], ...TAP });
+
+    expect(rightward).not.toBeNull();
+    expect(leftward).not.toBeNull();
+    expect(leftward!.target).toBeCloseTo(889, 6);
+    expect(leftward!.atMs).toBeCloseTo(333.17, 1);
+    expect(leftward!.atMs).toBeCloseTo(rightward!.atMs, 6);
+    // A negative lead: the plan aims behind a marker that is travelling left, and still waits.
+    expect(leftward!.target).toBeLessThan(1200);
+    expect(leftward!.atMs).toBeGreaterThan(0);
+  });
+
+  it('plans a tap on the left zone for a leftward marker', () => {
+    const plan = planTap({ markerX: 1200, v: -610, zones: ZONES, ...TAP });
+
+    expect(plan).not.toBeNull();
+    expect(plan!.target).toBe(808);
+    // (808 − 1200 + 107.767)/(−610) = 465.96 ms.
+    expect(plan!.atMs).toBeCloseTo(465.96, 1);
+  });
+
+  it('takes the soonest reachable zone', () => {
+    const plan = planTap({ markerX: 650, v: 610, zones: ZONES, ...TAP });
+
+    // (808 − 650 − 107.767)/610 = 82.35 ms, against 579 ms for the right zone.
+    expect(plan!.target).toBe(808);
+    expect(plan!.atMs).toBeCloseTo(82.35, 1);
+  });
+
+  it('refuses a target past the bounce in the direction of travel', () => {
+    // Moving right, a centre beyond 1261.5 is on the other side of a reversal.
+    expect(planTap({ markerX: 1200, v: 610, zones: [{ from: 1300, to: 1400 }], ...TAP })).toBeNull();
+    // Moving left, a centre below 656.5 is.
+    expect(planTap({ markerX: 700, v: -610, zones: [{ from: 500, to: 560 }], ...TAP })).toBeNull();
+  });
+
+  it('refuses a pass the marker has already gone past', () => {
+    // At 1200 moving right both zone centres are behind the predicted stop.
+    expect(planTap({ markerX: 1200, v: 610, zones: ZONES, ...TAP })).toBeNull();
+  });
+
+  it('refuses a pass outside the prediction horizon', () => {
+    expect(planTap({ markerX: 650, v: 610, zones: ZONES, ...TAP, horizonMs: 50 })).toBeNull();
+  });
+
+  it('refuses a marker that is not moving', () => {
+    expect(planTap({ markerX: 800, v: 0, zones: ZONES, ...TAP })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// qteVelocity — research §8: three frames, ≥ 66 ms, reversal-aware
+// ---------------------------------------------------------------------------------------------
+
+describe('qteVelocity', () => {
+  it('measures a steady rightward speed from three samples 66 ms apart', () => {
+    const v = qteVelocity(
+      { atMs: 0, markerX: 1_000 },
+      { atMs: 33, markerX: 1_020 },
+      { atMs: 66, markerX: 1_040 },
+    );
+    expect(v).toBeCloseTo(606.06, 1);
+  });
+
+  it('returns a signed speed for a leftward marker', () => {
+    const v = qteVelocity(
+      { atMs: 0, markerX: 1_000 },
+      { atMs: 33, markerX: 980 },
+      { atMs: 66, markerX: 960 },
+    );
+    expect(v).toBeCloseTo(-606.06, 1);
+  });
+
+  it('refuses a duplicated frame instead of reporting 1215 px/s', () => {
+    const v = qteVelocity(
+      { atMs: 0, markerX: 1_000 },
+      { atMs: 33, markerX: 1_000 },
+      { atMs: 66, markerX: 1_040 },
+    );
+    expect(v).toBeNull();
+  });
+
+  it('refuses a pair that straddles a reversal', () => {
+    const v = qteVelocity(
+      { atMs: 0, markerX: 1_000 },
+      { atMs: 33, markerX: 1_020 },
+      { atMs: 66, markerX: 990 },
+    );
+    expect(v).toBeNull();
+  });
+
+  it('refuses a baseline shorter than 66 ms', () => {
+    const v = qteVelocity(
+      { atMs: 0, markerX: 1_000 },
+      { atMs: 33, markerX: 1_020 },
+      { atMs: 50, markerX: 1_040 },
+    );
+    expect(v).toBeNull();
+  });
+
+  it('refuses an eased marker near a bounce', () => {
+    const v = qteVelocity(
+      { atMs: 0, markerX: 1_000 },
+      { atMs: 33, markerX: 1_002 },
+      { atMs: 66, markerX: 1_004 },
+    );
+    expect(v).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The tick budget — contracts §0 rule 7 (observe() inside half a tick, 50 ms)
+// ---------------------------------------------------------------------------------------------
+
+describe('the half-tick budget', () => {
+  it('keeps observe inside 50 ms for an already-decoded frame', async () => {
+    const images = await Promise.all(MARKER_X.map((_, index) => jpegImage(`frame-${index}.jpg`)));
+    const perceiver = new ChestPerceiver();
+    const samples: number[] = [];
+
+    for (let round = 0; round < 10; round += 1) {
+      for (const image of images) {
+        const start = performance.now();
+        const observation = await perceiver.observe(frameOf(image, round * 100));
+        samples.push(performance.now() - start);
+        expect(observation.screen).toBe('chest-qte');
+      }
+    }
+
+    samples.sort((a, b) => a - b);
+    const p50 = samples[Math.floor(samples.length / 2)];
+    expect(p50).toBeLessThan(50);
+  });
+});
