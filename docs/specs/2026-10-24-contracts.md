@@ -163,8 +163,10 @@ export type EngineEvent =
   | { kind: 'engineProblem'; detail: string };
 ```
 
-The child captures continuously on its own cadence and answers `capture` from its newest frame
-rather than taking a new one. The reply's `ageMs` is the authority for what the frame shows; the round
+The child captures on its own cadence **while something is asking for frames** — it stops rendering
+after a few idle ticks and resumes on demand — and answers `capture` from its newest frame rather than
+taking a new one. The first request after an idle gap may therefore find no frame and reply `timeout`;
+that is warm-up, not failure, and the World retries. The reply's `ageMs` is the authority for what the frame shows; the round
 trip is latency, not freshness, and a loop that treats a short round trip as a fresh frame is wrong by
 the age. A successful `capture` reply's `value` is an `EngineCapture`; a
 frame older than three ticks (300 ms at the default tick) is `{ ok:false, error:'timeout' }` instead,
