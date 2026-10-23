@@ -18,10 +18,14 @@ was not reproduced; do not treat it as procedure.
 | Frame ring | done | `src/frames/ring.ts` |
 | Dungeon map reading (`readMap`, `MapPerceiver`) | done | `src/perception/map.ts` |
 | Route state machine (`nextIntent`) | done | `src/policy/route.ts` |
-| Automove command chain, chest/QTE policy, session lifecycle, the World loop | **not built yet** (Tasks 5, 6, 8, 10) | — |
+| Automove command chain (`openMap`, `automoveToChest`, `automoveToExit`) | done | `src/actions/automove.ts` |
+| QTE bar parsing and tap planning (`parseQte`, `planTap`) | done | `src/perception/chest.ts`, `src/policy/qte.ts` |
+| Session verdicts (`classify`) | done | `src/policy/session.ts` |
+| The 10 Hz loop, the composition root, the escalation to Coo | done | `src/world.ts`, `src/main.ts`, `src/escalation/` |
 
-The World does not run a tick loop yet. Until Task 10 wires it, the engine is driven directly (the
-bench below is the reference client), and the in-game steps are performed by hand or by a probe.
+The World runs a tick loop now, and this guide stays useful for driving the game **by hand or by a
+probe** while the two declared gaps remain: the opener panel `由谁打开` has no parser (no fixture), and
+`planTap` has no caller in the loop yet. See `docs/status.md`.
 
 ## 2. Safety rules (non-negotiable)
 
@@ -115,8 +119,9 @@ choosing a *specific* tile rather than letting `L` choose.
 
 Two facts that bound it:
 
-- **Automove does not cross floors.** It stays on the current floor; stairs and floor changes are
-  not reachable through it. To leave, the operator walks out or uses the altar teleporter.
+- **The chest command stays on the floor; the exit command crosses.** `L` never leaves the floor.
+  `F` does: pressed on `B1F -巨坑-`, the party walked to the exit and the screen came up
+  `B2F -圣堂-` with no further input (observed). Going back *up* is not established.
 - **Opening the map takes `G` twice** from the 3D view: the first opens the menu (地图 `G`, 调查
   `F`, 切换指针 `Tab`, 返回 `Esc`), the second opens the map.
 
@@ -155,13 +160,16 @@ encode, in Node and in Electron-as-Node when it can find Electron. On the live g
 (1920×1080, q75): round trip 2.5 / 1.3 ms, cadence ~33 ms (~30 fps), decode 23.4 / 24.3 ms, encode
 20.4 / 20.6 ms, ~126 KB frames.
 
-## 6. Open items this run produced
+## 6. Open items this guide produced
 
-1. **Automove activation** (§4.4): the popup's anchor, pointer-mode prerequisite and the actual
-   double-click target need settling against hand-driven frames. Task 5 depends on it.
-2. **L gating**: the `移动至宝箱` hotkey was inert while G/Q/E worked; it may require a discovered
-   chest, a different mode, or a different key. Verify before wiring the command chain.
-3. **Altar teleporter**: a new modal state (`移动` → zones/`归还`/`什么也不做`). The loop must never
-   click it blindly; the safe dismissal is `什么也不做`.
-4. **Panning** the world map with a synthetic drag is unverified.
+All four were settled on 2026-10-24 night, and one more was found:
+
+1. **Automove activation** — settled: `G`,`G` opens the map, `L` walks to a chest (see §4.3–§4.4).
+   The earlier "L is inert" was a focus problem, not a dead key.
+2. **L gating** — settled: `L` works on the map when chest icons exist; on a floor with none it does
+   nothing at all, which is correct behaviour to encode rather than retry.
+3. **Altar teleporter** — still a modal the loop must never click blindly; `什么也不做` dismisses it.
+4. **Panning** the world map — still unverified.
+5. **The opener panel** (`由谁打开?`, 陷阱发现/陷阱解除 per member) — no fixture exists, so no parser
+   does. It is the first of the two declared gaps in `docs/status.md`.
 5. **UU**: unusable from this session (elevated); acceleration is the operator's manual step.

@@ -8,9 +8,11 @@ from its extension directory. Coopanion itself is a sibling checkout, consumed u
 
 ## Status
 
-Implementation under way: the engine child (capture, foreground-guarded input, native decode, stop
-hotkey), the frame ring, dungeon-map reading and the route state machine exist. The World loop, the
-automove command chain and the chest policy are still open. Binding declarations live in
+The v1 implementation is complete: the engine child captures the game at 30 fps while occluded,
+recognises the dungeon map, the 3D view and the chest QTE bar, walks the party with the game's own
+automove, escalates to Coo with a screenshot when it cannot decide, and stops on every path it should.
+[`docs/status.md`](docs/status.md) is the record of what runs and what is deliberately not built — read
+it before the specs. Binding declarations live in
 [`docs/specs/2026-10-24-contracts.md`](docs/specs/2026-10-24-contracts.md); the work is sequenced in
 [`docs/plans/2026-10-24-wvd-world-v1.md`](docs/plans/2026-10-24-wvd-world-v1.md).
 
