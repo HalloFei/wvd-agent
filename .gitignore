@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+.cache/
+.tmp/
+*.log
+
+# Raw recordings: kept on disk beside the fixtures they explain, too large to version.
+testdata/frames/*.bmp
+testdata/chest/session-*/
+testdata/nav-*/*.mp4

@@ -1,0 +1,90 @@
+{
+  "capturedAt": "2026-10-24T01:41+08:00",
+  "game": "Wizardry Variants Daphne (Steam), 1920x1080",
+  "note": "ONE INSTANCE, NOT A LAYOUT. Bar position, zone widths and marker speed vary per chest and appear to depend on the opener's 陷阱解除 value. Do not read these numbers as constants; the policy must parse every chest.",
+  "openerStep": {
+    "prompt": "由谁打开? (who opens it?)",
+    "fields": [
+      "陷阱发现 (trap detection)",
+      "陷阱解除 (trap disarm)"
+    ],
+    "chosen": "DragonSlayer",
+    "reason": "highest 陷阱解除 (105)"
+  },
+  "bar": {
+    "yRange": [
+      39,
+      79
+    ],
+    "leftZone": [
+      695,
+      920
+    ],
+    "hazardGap": [
+      920,
+      1000
+    ],
+    "rightZone": [
+      1000,
+      1225
+    ]
+  },
+  "marker": {
+    "speedPxPerSec": [
+      488,
+      474,
+      522
+    ],
+    "motion": "bounces at each end, ~700 and ~1210; it does not wrap",
+    "sampledPositions": [
+      {
+        "atMs": 50,
+        "x": 1049.9
+      },
+      {
+        "atMs": 150,
+        "x": 1001.1
+      },
+      {
+        "atMs": 250,
+        "x": 952.3
+      },
+      {
+        "atMs": 350,
+        "x": 903.5
+      },
+      {
+        "atMs": 450,
+        "x": 855.5
+      },
+      {
+        "atMs": 550,
+        "x": 806.7
+      }
+    ]
+  },
+  "attempt": {
+    "model": "tap when the marker will be at targetX after inputLatency; target = centre of the reachable zone",
+    "targetX": 807,
+    "inputLatencyMs": 70,
+    "marginMs": 20,
+    "predictionHorizonMs": 570,
+    "result": "success",
+    "loot": "苍蓝矿石 x4"
+  },
+  "captureCostMs": 41.7,
+  "frames": [
+    "frame-0.jpg",
+    "frame-1.jpg",
+    "frame-2.jpg",
+    "frame-3.jpg",
+    "frame-4.jpg",
+    "frame-5.jpg"
+  ],
+  "variability": {
+    "barPosition": "random per chest",
+    "zoneWidths": "random per chest, suspected to scale with 陷阱解除",
+    "markerSpeed": "varies per chest, slow to fast",
+    "validConstant": "input latency 48.7-67.2 ms (the agent's own pipeline)"
+  }
+}

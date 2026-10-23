@@ -1,0 +1,34 @@
+{
+  "capturedAt": "2026-10-24T01:52+08:00",
+  "source": "qte.mp4 (30 fps, 1920x1080, 8.3 s, segmented capture)",
+  "note": "Second chest, opened by the operator while the agent only recorded. Same zones as the first chest within a few pixels, but the marker ran faster and the stop decelerates.",
+  "bar": {
+    "leftZone": [694, 922],
+    "hazardGap": [922, 997],
+    "rightZone": [997, 1223]
+  },
+  "marker": {
+    "steadySpeedPxPerSec": 610,
+    "perFramePx": 20.4,
+    "bounceAt": [694, 1224],
+    "motion": "constant in mid-flight, eased at the bounces"
+  },
+  "stop": {
+    "observed": "the marker glides to rest instead of halting",
+    "fromX": 862,
+    "toX": 906,
+    "overshootPx": 44,
+    "durationMs": 300,
+    "implication": "a tap timed to land the marker on the zone edge overshoots by about 40 px; the policy must aim short by the overshoot"
+  },
+  "attemptsCounter": {
+    "visible": true,
+    "valueSeen": 3,
+    "meaning": "chances left for this chest; a pass never stopped consumes one"
+  },
+  "comparisonWithFirstChest": {
+    "speedFirstChestPxPerSec": 488,
+    "speedThisChestPxPerSec": 610,
+    "zonesNearlyIdentical": true
+  }
+}
