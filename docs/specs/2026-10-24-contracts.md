@@ -58,9 +58,14 @@ encoder changes one module and no parser.
 
 ```ts
 export type ScreenId =
-  | 'town' | 'worldmap' | 'dungeonmap' | 'combat'
+  | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'loot' | 'loading' | 'unknown';
 ```
+
+`dungeon` is the 3D exploration view — the party walking, the HUD up, no map open. It is the screen
+the route acts on by opening the map, and it is distinguishable from `unknown` because the 3D view has
+a HUD (minimap box, party bar) while a black or uniform frame has nothing. Without that distinction a
+policy either clicks on a black frame or waits forever on a normal view.
 
 `unknown` is a real answer, not a fallback to be smoothed over: a uniform or black frame is
 `unknown` with confidence 0.
