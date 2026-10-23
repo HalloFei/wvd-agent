@@ -11,6 +11,11 @@ export interface EngineForeground {
   readonly foreground: boolean;
 }
 
+/** The value of a successful `tap`/`key` reply: the measured input leg, on the child's clock. */
+export interface EngineInputAck {
+  readonly inputMs: number;
+}
+
 /** A §5 request as it goes on the wire: the correlation id the child must echo. */
 export interface WireRequest {
   readonly id: number;

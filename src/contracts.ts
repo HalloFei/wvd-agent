@@ -108,8 +108,12 @@ export type EngineReply =
   | { id: number; ok: true; value: unknown }
   | { id: number; ok: false; error: ActionFailure; detail?: string };
 
-/** Unsolicited child → World messages. An unregistered stop hotkey is
- *  `{ kind:'engineProblem', detail:'stop-hotkey-unregistered' }`. */
+// A successful `tap` or `key` reply's `value` is `{ inputMs: number }`: the duration from request
+// receipt to the `SendInput` completing, on the child's clock. `doubleTap` is one request.
+// Unsolicited child → World messages: an unregistered stop hotkey is
+// `{ kind:'engineProblem', detail:'stop-hotkey-unregistered' }`; a JPEG encoder that fell back to
+// `jpeg-js` is `detail:'native-encoder-unavailable'`, and a World-side decoder fallback reports the
+// same way locally with `detail:'native-decoder-unavailable'`.
 export type EngineEvent =
   | { kind: 'stopHotkey' }
   | { kind: 'engineProblem'; detail: string };

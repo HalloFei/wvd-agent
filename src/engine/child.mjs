@@ -4,21 +4,17 @@
  * tsx, but this process is spawned with `process.execPath` and inherits none of that, so it must
  * start under both a plain `node` and `ELECTRON_RUN_AS_NODE=1 electron`.
  *
- * It owns every Win32 call (./win32-native.mjs), speaks contracts §5 over stdin/stdout — one JSON
- * message per line, never raw BGRA — and pumps the thread message queue on a timer so the global
- * stop hotkey is serviced beside the protocol loop (R3).
+ * This file is the protocol thread only: it speaks contracts §5 over stdin/stdout, pumps the global
+ * stop hotkey, and sends input. Rendering runs on two workers — a capture thread (PrintWindow and
+ * the client-area DIB) feeding a JPEG encoder thread over a MessagePort (R20a) — so a tap never
+ * queues behind a render. The newest encoded frame is all this thread keeps; `capture` answers from
+ * it with `ageMs`, and a frame older than three ticks is `timeout` (R11).
  *
- * Capture runs on its own cadence (R11): the loop keeps the newest encoded frame and `capture`
- * requests answer from that slot immediately, reporting how old it is. A frame older than three
- * ticks is `timeout` instead, because a stale frame that looks fresh is how a QTE tap lands in the
- * hazard gap. JPEG encoding happens on a worker thread (./jpeg-worker.mjs) so capture and encode
- * overlap; this thread only renders and copies.
- *
- * Requests are handled one at a time, in arrival order: there is one window and one input stream,
- * and two overlapping inputs have no meaning. A request that the queue cannot answer in time is
- * the parent's `timeout`; the child never invents one.
+ * Input is measured, not guessed: `tap`/`key` replies carry `{ inputMs }`, request receipt to the
+ * final `SendInput` (R20b). A failed stop-hotkey registration and a JPEG fallback are `engineProblem`
+ * events, never silent (R13, R23).
  */
-import { Worker } from 'node:worker_threads';
+import { MessageChannel, Worker } from 'node:worker_threads';
 import { decodeLine, encodeEvent, encodeReply, isStaleFrame, LineDecoder } from './protocol.mjs';
 import * as win32 from './win32-native.mjs';
 
@@ -51,6 +47,59 @@ const write = (line) => {
   }
 };
 
+let stopping = false;
+let latest = null; // { jpeg: Buffer, width, height, capturedAt }
+
+// Two render threads, connected to each other: the capture worker sends pixels on this channel and
+// the encoder worker returns the spent buffers on it. Only JPEGs reach this thread.
+const channel = new MessageChannel();
+const captureWorker = new Worker(new URL('./capture-worker.mjs', import.meta.url), {
+  workerData: { title, port: channel.port1 },
+  transferList: [channel.port1],
+});
+const encoderWorker = new Worker(new URL('./jpeg-worker.mjs', import.meta.url), {
+  workerData: { quality, port: channel.port2 },
+  transferList: [channel.port2],
+});
+
+function onWorkerMessage(message) {
+  if (!message) return;
+  switch (message.kind) {
+    case 'frame':
+      latest = {
+        jpeg: Buffer.from(message.jpeg),
+        width: message.width,
+        height: message.height,
+        capturedAt: message.capturedAt,
+      };
+      return;
+    case 'problem':
+      write(encodeEvent({ kind: 'engineProblem', detail: message.detail }));
+      return;
+    case 'log':
+      log(message.message);
+      return;
+    case 'ready':
+      log(`worker ${message.role} ready (node=${message.node ?? process.version}${message.role === 'encoder' ? `, gdiplus=${message.gdiplus}` : ''})`);
+      return;
+    default:
+  }
+}
+
+captureWorker.on('message', onWorkerMessage);
+encoderWorker.on('message', onWorkerMessage);
+for (const [name, worker] of [['capture', captureWorker], ['encoder', encoderWorker]]) {
+  worker.on('error', (error) => {
+    log(`${name} worker failed: ${error?.stack ?? error}`);
+    shutdown(1);
+  });
+  worker.on('exit', (code) => {
+    if (stopping) return;
+    log(`${name} worker exited (${code})`);
+    shutdown(1);
+  });
+}
+
 // A hotkey that cannot be registered must not take the engine down with it, but the World must know
 // the emergency stop does not exist (R13): it reports `engineProblem` and Task 10 stops the session.
 let hotkeyState = 'off';
@@ -63,84 +112,7 @@ if (hotkey) {
   }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Continuous capture: the newest encoded frame is all the World ever gets, and its age is reported.
-
-let latest = null; // { jpeg: Buffer, width, height, capturedAt }
-let stopping = false;
-let nextSeq = 0;
-let inFlight = 0;
-const capturedAtBySeq = new Map();
-const freeBuffers = [];
-const MAX_IN_FLIGHT = 2;
-
-const encoder = new Worker(new URL('./jpeg-worker.mjs', import.meta.url), { workerData: { quality } });
-encoder.on('message', (message) => {
-  if (!message) return;
-  if (message.kind === 'log') {
-    log(message.message);
-    return;
-  }
-  if ('ready' in message) return;
-  if (typeof message.seq !== 'number') return;
-  const capturedAt = capturedAtBySeq.get(message.seq);
-  capturedAtBySeq.delete(message.seq);
-  inFlight = Math.max(0, inFlight - 1);
-  if (capturedAt !== undefined) {
-    latest = { jpeg: Buffer.from(message.jpeg), width: message.width, height: message.height, capturedAt };
-  }
-  if (message.pixels) {
-    freeBuffers.push(new Uint8Array(message.pixels));
-    if (freeBuffers.length > MAX_IN_FLIGHT) freeBuffers.shift();
-  }
-});
-encoder.on('error', (error) => {
-  log(`encoder failed: ${error?.stack ?? error}`);
-  shutdown(1);
-});
-encoder.on('exit', (code) => {
-  if (stopping) return;
-  log(`encoder exited (${code})`);
-  shutdown(1);
-});
-
-let lastCaptureLog = 0;
-
-function captureLoop() {
-  if (stopping) return;
-  const hwnd = win32.findWindow(title);
-  if (!hwnd) {
-    // the game is not up yet; keep the engine alive and let capture age out to `timeout`
-    setTimeout(captureLoop, 100);
-    return;
-  }
-  if (inFlight >= MAX_IN_FLIGHT) {
-    setTimeout(captureLoop, 1);
-    return;
-  }
-  const capturedAt = performance.now();
-  let frame;
-  try {
-    frame = win32.captureClient(hwnd, freeBuffers.pop() ?? null);
-  } catch (error) {
-    if (capturedAt - lastCaptureLog > 5000) {
-      log(`capture: ${error?.message ?? error}`);
-      lastCaptureLog = capturedAt;
-    }
-    setTimeout(captureLoop, 50);
-    return;
-  }
-  if (stopping) return;
-  const seq = nextSeq++;
-  capturedAtBySeq.set(seq, capturedAt);
-  inFlight++;
-  // the pixels move to the encoder thread; they come back with the JPEG
-  encoder.postMessage({ seq, pixels: frame.bgra.buffer, width: frame.width, height: frame.height }, [frame.bgra.buffer]);
-  setImmediate(captureLoop);
-}
-
 log(`ready node=${process.version} title="${title}" hotkey=${hotkeyState} quality=${quality}`);
-setImmediate(captureLoop);
 
 // ---------------------------------------------------------------------------------------------
 // Protocol loop
@@ -162,13 +134,15 @@ function requireWindow() {
   return hwnd;
 }
 
-async function dispatch(request) {
+async function dispatch(request, receivedAt) {
   switch (request.op) {
     case 'foreground': {
       const hwnd = win32.findWindow(title);
       return { foreground: hwnd !== 0 && win32.isForeground(hwnd) };
     }
     case 'capture': {
+      // demand wakes the render threads; the reply still comes from the newest frame
+      captureWorker.postMessage({ op: 'demand' });
       if (!win32.findWindow(title)) throw new EngineFailure('unavailable', 'window-not-found');
       if (!latest) throw new EngineFailure('timeout', 'no-frame');
       const jpeg = latest.jpeg.toString('base64');
@@ -176,20 +150,22 @@ async function dispatch(request) {
       if (isStaleFrame(ageMs)) throw new EngineFailure('timeout', 'stale-frame');
       return { jpeg, width: latest.width, height: latest.height, ageMs };
     }
-    case 'tap':
+    case 'tap': {
       await win32.tap(requireWindow(), request.x, request.y, request.count);
-      return null;
-    case 'key':
+      return { inputMs: performance.now() - receivedAt };
+    }
+    case 'key': {
       await win32.holdKey(requireWindow(), request.scan, request.holdMs);
-      return null;
+      return { inputMs: performance.now() - receivedAt };
+    }
     default:
       throw new EngineFailure('unavailable', 'unknown-op');
   }
 }
 
-async function handle(id, request) {
+async function handle(id, request, receivedAt) {
   try {
-    write(encodeReply({ id, ok: true, value: await dispatch(request) }));
+    write(encodeReply({ id, ok: true, value: await dispatch(request, receivedAt) }));
   } catch (error) {
     write(encodeReply(failureReply(id, error)));
   }
@@ -202,13 +178,14 @@ const decoder = new LineDecoder();
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
   for (const line of decoder.push(chunk)) {
+    const receivedAt = performance.now();
     const message = decodeLine(line);
     if (!message || !('request' in message)) {
       log('dropped a malformed line');
       continue;
     }
     const { id, request } = message.request;
-    queue = queue.then(() => handle(id, request));
+    queue = queue.then(() => handle(id, request, receivedAt));
   }
 });
 
@@ -226,20 +203,22 @@ function shutdown(code) {
   if (stopping) return;
   stopping = true;
   clearInterval(pump);
-  try {
-    encoder.terminate();
-  } catch {
-    // already gone
+  for (const worker of [captureWorker, encoderWorker]) {
+    try {
+      worker.postMessage({ op: 'stop' });
+    } catch {
+      // worker already gone
+    }
+    try {
+      worker.terminate();
+    } catch {
+      // already gone
+    }
   }
   try {
     win32.unregisterStopHotkey();
   } catch {
     // the process is going away; the OS releases the hotkey with it
-  }
-  try {
-    win32.releaseCaptureSurface();
-  } catch {
-    // nothing left to release
   }
   process.exitCode = code;
   process.stdin.pause();

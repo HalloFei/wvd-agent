@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { EngineEvent, EngineReply, EngineRequest } from '../src/contracts.ts';
 import { FRAME_MAX_AGE_MS, LineDecoder, decodeLine, encodeEvent, encodeReply, encodeRequest } from '../src/engine/protocol.ts';
 import { connectEngine, startEngine } from '../src/engine/child.ts';
+import { parseHotkey } from '../src/engine/hotkey.mjs';
 import { sendInput, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
 
 /** An engine that records what it was asked and answers from a script. */
@@ -104,6 +105,15 @@ describe('engine input guard', () => {
     expect(await sendInput(engine, { op: 'tap', x: 1, y: 2, count: 1 }))
       .toEqual({ ok: false, reason: 'timeout' });
   });
+
+  it('carries the child-measured input leg in the outcome (R20b)', async () => {
+    const engine = new FakeEngine((request) => request.op === 'foreground'
+      ? { id: 1, ok: true, value: { foreground: true } }
+      : { id: 2, ok: true, value: { inputMs: 73.5 } });
+
+    expect(await sendInput(engine, { op: 'key', scan: 0x1e, holdMs: 60 }))
+      .toEqual({ ok: true, inputMs: 73.5 });
+  });
 });
 
 describe('Win32Capture', () => {
@@ -197,17 +207,68 @@ describe('Win32Capture', () => {
     await expect(new Win32Capture(engine).capture())
       .rejects.toMatchObject({ reason: 'unavailable', detail: 'malformed-capture' });
   });
+
+  it('decodes each frame once even when toRgba is called twice', async () => {
+    let calls = 0;
+    const decode = () => {
+      calls++;
+      return { data: new Uint8Array(4), width: 1, height: 1 };
+    };
+    const frame = await new Win32Capture(new FakeEngine(captureReply()), { decode }).capture();
+
+    const [first, second] = await Promise.all([frame.toRgba(), frame.toRgba()]);
+
+    expect(calls).toBe(1);
+    expect(first).toBe(second);
+  });
+
+  it('falls back to jpeg-js and reports native-decoder-unavailable once (R23)', async () => {
+    const problems: EngineEvent[] = [];
+    const capture = new Win32Capture(new FakeEngine(captureReply()), {
+      decode: () => {
+        throw new Error('no gdiplus here');
+      },
+      onProblem: (event) => problems.push(event),
+    });
+
+    const first = await (await capture.capture()).toRgba();
+    const second = await (await capture.capture()).toRgba();
+
+    expect(first.width).toBe(WIDTH);
+    expect(second.width).toBe(WIDTH);
+    expect(problems).toEqual([{ kind: 'engineProblem', detail: 'native-decoder-unavailable' }]);
+  });
+});
+
+describe('stop hotkey parser', () => {
+  it('requires a modifier, so a bare key cannot be swallowed globally', () => {
+    expect(parseHotkey('w')).toBeNull();
+    expect(parseHotkey('F5')).toBeNull();
+    expect(parseHotkey('Shift')).toBeNull();
+  });
+
+  it('parses the default stop key', () => {
+    expect(parseHotkey('Ctrl+Alt+W')).toEqual({ mods: 0x1 | 0x2, vk: 0x57 });
+  });
+
+  it('rejects two keys and unknown names', () => {
+    expect(parseHotkey('Ctrl+W+Q')).toBeNull();
+    expect(parseHotkey('Ctrl+What')).toBeNull();
+  });
 });
 
 describe('engine child process', () => {
-  it.skipIf(process.platform !== 'win32')('reports an unregistered stop hotkey as engineProblem', async () => {
+  it.skipIf(process.platform !== 'win32')('buffers engineProblem until onEvent subscribes, and forwards stderr', async () => {
+    const lines: string[] = [];
     const engine = connectEngine(
       startEngine({ title: `__wvd_no_such_window_${process.pid}__`, hotkey: 'NotAKey' }),
-      { timeoutMs: 15000 },
+      { timeoutMs: 15000, logger: (line) => lines.push(line) },
     );
     try {
+      // the child emits the problem at startup; subscribe long after, so only buffering can save it
+      await new Promise((resolve) => setTimeout(resolve, 1500));
       const problem = await new Promise<EngineEvent>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('no engineProblem event')), 10000);
+        const timer = setTimeout(() => reject(new Error('no buffered engineProblem event')), 10000);
         engine.onEvent((event) => {
           if (event.kind !== 'engineProblem') return;
           clearTimeout(timer);
@@ -215,6 +276,7 @@ describe('engine child process', () => {
         });
       });
       expect(problem).toEqual({ kind: 'engineProblem', detail: 'stop-hotkey-unregistered' });
+      expect(lines.some((line) => line.startsWith('[wvd-engine] ready'))).toBe(true);
     } finally {
       engine.close();
     }

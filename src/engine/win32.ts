@@ -1,19 +1,27 @@
 /**
  * The World side of Win32 (contracts §1, §4, §5): capture and input realized through the engine
- * child. Every native call happens in `./child.mjs`; what lives here only speaks the protocol, so
- * the untestable part stays in one process and one file.
+ * child. Capture, input and the stop hotkey happen in that process; JPEG **decoding** happens here
+ * through GDI+ (R19), because `toRgba()` runs on the World thread and jpeg-js needs 179–359 ms for a
+ * 2 MP frame — the half-tick budget is 50 ms.
  */
 import jpeg from 'jpeg-js';
 import type {
   ActionFailure,
   ActionResult,
+  EngineEvent,
   EngineReply,
   EngineRequest,
   Frame,
   FrameSource,
   RgbaImage,
 } from '../contracts.ts';
-import { isStaleFrame, type EngineCapture, type EngineForeground } from './protocol.ts';
+import { decodeJpeg } from './gdiplus.mjs';
+import {
+  isStaleFrame,
+  type EngineCapture,
+  type EngineForeground,
+  type EngineInputAck,
+} from './protocol.ts';
 
 /** The part of the engine the World needs; `EngineClient` (./child.ts) satisfies it, tests fake it. */
 export interface EngineRequester {
@@ -22,6 +30,9 @@ export interface EngineRequester {
 
 /** A request that carries input; capture and foreground are reads. */
 export type InputRequest = Extract<EngineRequest, { op: 'tap' } | { op: 'key' }>;
+
+/** `ActionResult` plus the measured input leg when the child reported one (contracts §5). */
+export type InputOutcome = ActionResult & { readonly inputMs?: number };
 
 /**
  * The one failure a foreground miss can be (ruling R4). `ActionFailure` is closed, so "the window
@@ -37,15 +48,30 @@ const failure = (reply: Extract<EngineReply, { ok: false }>): ActionResult =>
 /**
  * Sends one input to the game after asserting its precondition. When the window is not foreground
  * nothing but the query is sent. The child asserts again immediately before `SendInput`, so a focus
- * change between the query and the input is still refused.
+ * change between the query and the input is still refused; and when it did send, it reports how long
+ * the input leg took, which the planner uses instead of assuming one.
  */
-export async function sendInput(engine: EngineRequester, request: InputRequest): Promise<ActionResult> {
+export async function sendInput(engine: EngineRequester, request: InputRequest): Promise<InputOutcome> {
   const foreground = await engine.request({ op: 'foreground' });
   if (!foreground.ok) return failure(foreground);
   const value = foreground.value as Partial<EngineForeground> | null;
   if (value?.foreground !== true) return { ...NOT_FOREGROUND };
   const sent = await engine.request(request);
-  return sent.ok ? { ok: true } : failure(sent);
+  if (!sent.ok) return failure(sent);
+  const ack = sent.value as Partial<EngineInputAck> | null;
+  return typeof ack?.inputMs === 'number' && Number.isFinite(ack.inputMs) && ack.inputMs >= 0
+    ? { ok: true, inputMs: ack.inputMs }
+    : { ok: true };
+}
+
+/** Decodes the base64 JPEG a capture reply carries into RGBA. */
+export type JpegDecoder = (bytes: Uint8Array) => RgbaImage | Promise<RgbaImage>;
+
+export interface Win32CaptureOptions {
+  /** Defaults to native GDI+ (`decodeJpeg`); tests inject a fake. */
+  decode?: JpegDecoder;
+  /** A degraded decode path is reported here as `engineProblem` (R23), wired to the World. */
+  onProblem?: (event: EngineEvent) => void;
 }
 
 /**
@@ -61,25 +87,51 @@ export class EngineCaptureError extends Error {
 
 /** `FrameSource` over the engine child: the child ships JPEG bytes, never raw BGRA. */
 export class Win32Capture implements FrameSource {
-  constructor(private readonly engine: EngineRequester) {}
+  private readonly decode: JpegDecoder;
+  private readonly onProblem: (event: EngineEvent) => void;
+  private nativeDecodeBroken = false;
+
+  constructor(private readonly engine: EngineRequester, options: Win32CaptureOptions = {}) {
+    this.decode = options.decode ?? ((bytes) => decodeJpeg(bytes));
+    this.onProblem = options.onProblem
+      ?? ((event) => console.error(`[wvd] ${event.kind}${event.kind === 'engineProblem' ? `: ${event.detail}` : ''}`));
+  }
 
   async capture(): Promise<Frame> {
     const reply = await this.engine.request({ op: 'capture' });
+    // stamped at the reply, before the base64 decode: decoding is work after the observation, and
+    // charging it to the frame's age would make every frame older than it is
+    const receivedAt = performance.now();
     if (!reply.ok) throw new EngineCaptureError(reply.error, reply.detail);
     const { jpeg: base64, width, height, ageMs } = captureValue(reply.value);
     if (isStaleFrame(ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
-    const bytes = Uint8Array.from(Buffer.from(base64, 'base64'));
     // the child reports a duration, never a timestamp (§0.4): the World stamps the frame from it
-    const atMs = performance.now() - ageMs;
+    const atMs = receivedAt - ageMs;
+    const bytes = Uint8Array.from(Buffer.from(base64, 'base64'));
+    let decoded: Promise<RgbaImage> | undefined;
     return {
       atMs,
       width,
       height,
-      toRgba: async (): Promise<RgbaImage> => {
-        const image = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
-        return { data: image.data, width: image.width, height: image.height };
+      // toRgba() is once per frame in practice; the contract allows two calls and the second is free
+      toRgba: (): Promise<RgbaImage> => {
+        decoded ??= this.decodeFrame(bytes);
+        return decoded;
       },
     };
+  }
+
+  private async decodeFrame(bytes: Uint8Array): Promise<RgbaImage> {
+    if (!this.nativeDecodeBroken) {
+      try {
+        return await this.decode(bytes);
+      } catch {
+        this.nativeDecodeBroken = true;
+        this.onProblem({ kind: 'engineProblem', detail: 'native-decoder-unavailable' });
+      }
+    }
+    const image = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+    return { data: image.data, width: image.width, height: image.height };
   }
 }
 
