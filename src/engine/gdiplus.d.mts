@@ -21,5 +21,8 @@ export declare function createJpegEncoder(quality: number): JpegEncoder | null;
 /** Decode a JPEG to RGBA; throws when GDI+ cannot start or the bytes are unreadable. */
 export declare function decodeJpeg(bytes: Uint8Array): RgbaFrame;
 
+/** Copy 32bpp top-down pixels out of native memory with any stride; exported for its row test. */
+export declare function copyStrided(source: unknown, stride: number, width: number, height: number): Uint8Array;
+
 /** Why GDI+ is unavailable; empty when it is available. */
 export declare function gdiplusProblem(): string;

@@ -175,11 +175,42 @@ export function createJpegEncoder(quality) {
           GlobalUnlock(hglobal[0]);
         }
       } finally {
-        if (opened) releaseStream(stream[0]);
-        GdipDisposeImage(bitmap[0]);
+        try {
+          if (opened) releaseStream(stream[0]);
+        } catch {
+          // the bitmap below is still disposed
+        }
+        try {
+          GdipDisposeImage(bitmap[0]);
+        } catch {
+          // nothing else to do
+        }
       }
     },
   };
+}
+
+/**
+ * Copy a 32bpp top-down RGBA image out of native memory with whatever stride GDI+ gave it. The
+ * common case (stride == width*4) is one `RtlMoveMemory`; a padded or bottom-up stride is copied
+ * row by row, because assuming width*4 is how a decoder silently scans garbage. Exported so the
+ * non-standard strides can be tested without a codec that produces them.
+ */
+export function copyStrided(source, stride, width, height) {
+  const rowBytes = width * 4;
+  if (!Number.isInteger(stride) || Math.abs(stride) < rowBytes) throw new Error(`jpeg-stride:${stride}`);
+  const out = Buffer.allocUnsafe(rowBytes * height);
+  if (stride === rowBytes) {
+    RtlMoveMemory(out, source, out.length);
+    return out;
+  }
+  const base = typeof source === 'bigint' ? source : koffi.address(source);
+  for (let row = 0; row < height; row++) {
+    // a negative stride means GDI+ handed us the bottom row first
+    const at = stride > 0 ? base + BigInt(row * stride) : base + BigInt((height - 1 - row) * stride);
+    RtlMoveMemory(out.subarray(row * rowBytes, (row + 1) * rowBytes), at, rowBytes);
+  }
+  return out;
 }
 
 /**
@@ -223,9 +254,7 @@ export function decodeJpeg(bytes) {
     const locked = GdipBitmapLockBits(bitmap[0], rect, IMAGE_LOCK_MODE_READ, PIXEL_FORMAT_32BPP_ARGB, data);
     if (locked !== 0) throw new Error(`jpeg-lock:${locked}`);
     try {
-      if (data.Stride !== width[0] * 4) throw new Error(`jpeg-stride:${data.Stride}`);
-      const out = Buffer.allocUnsafe(width[0] * height[0] * 4);
-      RtlMoveMemory(out, data.Scan0, out.length);
+      const out = copyStrided(data.Scan0, data.Stride, width[0], height[0]);
       // BGRA in memory -> the RGBA the RgbaImage contract promises (one 32-bit pass)
       const pixels = new Uint32Array(out.buffer, out.byteOffset, width[0] * height[0]);
       for (let index = 0; index < pixels.length; index++) {
@@ -237,7 +266,16 @@ export function decodeJpeg(bytes) {
       GdipBitmapUnlockBits(bitmap[0], data);
     }
   } finally {
-    if (bitmap[0]) GdipDisposeImage(bitmap[0]);
-    if (stream[0]) releaseStream(stream[0]);
+    // each release is independent: a bad vtable or a failed dispose must not leak the other
+    try {
+      if (bitmap[0]) GdipDisposeImage(bitmap[0]);
+    } catch {
+      // tearing down anyway
+    }
+    try {
+      if (stream[0]) releaseStream(stream[0]);
+    } catch {
+      // as above; the stream's HGLOBAL is released by the OS with the process
+    }
   }
 }

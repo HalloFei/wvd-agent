@@ -16,6 +16,7 @@
  * `pollStopHotkey` pumps the queue from a timer the child runs beside the protocol loop (R3).
  */
 import koffi from 'koffi';
+import { createGestures } from './gestures.mjs';
 import { parseHotkey } from './hotkey.mjs';
 
 const user32 = koffi.load('user32.dll');
@@ -81,8 +82,6 @@ const HOTKEY_ID = 1;
 const INPUT_MOUSE = 0, INPUT_KEYBOARD = 1;
 const MOUSEEVENTF_LEFTDOWN = 0x2, MOUSEEVENTF_LEFTUP = 0x4;
 const KEYEVENTF_KEYUP = 0x2, KEYEVENTF_SCANCODE = 0x8;
-/** The shortest press the game sees: a 0 ms press is dropped at 30 fps (spec §4). */
-const PRESS_MS = 60;
 
 // per-monitor DPI aware v2, so no call here scales anything (SetProcessDpiAwarenessContext(-4))
 try {
@@ -91,14 +90,7 @@ try {
   // before Windows 10 1703 the call is absent; the window is at 100% there anyway
 }
 
-/** The one refusal the hotkey guard makes; the child turns it into `rejected`/`not-foreground`. */
-export class Refused extends Error {
-  constructor(detail) {
-    super(detail);
-    this.name = 'Refused';
-    this.detail = detail;
-  }
-}
+export { Refused } from './gestures.mjs';
 
 /** `sizeof(INPUT)` on this ABI; `SendInput` refuses the array when it is anything else. */
 export const INPUT_SIZE = koffi.sizeof(INPUT);
@@ -239,55 +231,30 @@ function send(inputs) {
 }
 
 /**
- * The gesture rule (contracts §4, R21): guard the press, always complete the gesture. The foreground
- * is asserted immediately before the down; the matching up is sent unconditionally, because a stuck
- * button is worse than a refused one. If the window changed while the button was down the gesture
- * reports `rejected` after the release instead of leaving input in whatever took the focus.
- *
- * `count` left clicks at `x`,`y` — client device pixels, converted to screen through
- * `ClientToScreen` once per click. Each click is a 60 ms press, and the foreground is re-asserted
- * before every click, so a focus change between clicks refuses the rest.
+ * The Win32 device the gesture rules drive (gestures.mjs owns the rules, this file owns the calls).
+ * `moveToClient` converts client device pixels to screen through `ClientToScreen` once per press.
  */
-export async function tap(hwnd, x, y, count) {
-  let refused = false;
-  for (let index = 0; index < count; index++) {
-    if (!isForeground(hwnd)) {
-      refused = true;
-      break;
-    }
+const device = {
+  isForeground: (hwnd) => isForeground(hwnd),
+  moveToClient(hwnd, x, y) {
     const point = { x: Math.round(x), y: Math.round(y) };
     if (!ClientToScreen(hwnd, point)) throw new Error('client-to-screen');
     if (!SetCursorPos(point.x, point.y)) throw new Error('set-cursor');
-    send([mouse(MOUSEEVENTF_LEFTDOWN)]);
-    try {
-      await sleep(PRESS_MS);
-    } finally {
-      send([mouse(MOUSEEVENTF_LEFTUP)]);
-    }
-    if (!isForeground(hwnd)) {
-      refused = true;
-      break;
-    }
-    if (index < count - 1) await sleep(PRESS_MS);
-  }
-  if (refused) throw new Refused('not-foreground');
-}
+  },
+  mouseDown: () => send([mouse(MOUSEEVENTF_LEFTDOWN)]),
+  mouseUp: () => send([mouse(MOUSEEVENTF_LEFTUP)]),
+  keyDown: (scan) => send([key(scan, KEYEVENTF_SCANCODE)]),
+  keyUp: (scan) => send([key(scan, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP)]),
+  sleep,
+};
 
-/**
- * Holds the key with keyboard scan code `scan` for at least `holdMs`. Same gesture rule as `tap`:
- * the down is guarded, the up is sent in `finally` no matter what, and a window that moved during
- * the hold is `rejected` after the release.
- */
-export async function holdKey(hwnd, scan, holdMs) {
-  if (!isForeground(hwnd)) throw new Refused('not-foreground');
-  send([key(scan, KEYEVENTF_SCANCODE)]);
-  try {
-    await sleep(Math.max(PRESS_MS, Math.round(holdMs)));
-  } finally {
-    send([key(scan, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP)]);
-  }
-  if (!isForeground(hwnd)) throw new Refused('not-foreground');
-}
+const gestures = createGestures(device);
+
+/** Same contract as before: guard the press, always complete the gesture (R21); see gestures.mjs. */
+export const tap = gestures.tap;
+export const holdKey = gestures.holdKey;
+/** Sends the releases for anything still down when the process is going away. */
+export const releaseHeld = gestures.releaseHeld;
 
 let hotkeyRegistered = false;
 

@@ -15,6 +15,7 @@
  * events, never silent (R13, R23).
  */
 import { MessageChannel, Worker } from 'node:worker_threads';
+import { inputAcknowledgement } from './gestures.mjs';
 import { decodeLine, encodeEvent, encodeReply, isStaleFrame, LineDecoder } from './protocol.mjs';
 import * as win32 from './win32-native.mjs';
 
@@ -50,6 +51,13 @@ const write = (line) => {
 let stopping = false;
 let latest = null; // { jpeg: Buffer, width, height, capturedAt }
 
+// The first capture request waits for the render threads to produce a frame (bounded), so startup
+// is not a spurious `timeout`; after that, serving stays instant.
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let firstFrameSeen = false;
+let resolveFirstFrame;
+const firstFrame = new Promise((resolve) => { resolveFirstFrame = resolve; });
+
 // Two render threads, connected to each other: the capture worker sends pixels on this channel and
 // the encoder worker returns the spent buffers on it. Only JPEGs reach this thread.
 const channel = new MessageChannel();
@@ -72,6 +80,10 @@ function onWorkerMessage(message) {
         height: message.height,
         capturedAt: message.capturedAt,
       };
+      if (!firstFrameSeen) {
+        firstFrameSeen = true;
+        resolveFirstFrame();
+      }
       return;
     case 'problem':
       write(encodeEvent({ kind: 'engineProblem', detail: message.detail }));
@@ -144,6 +156,7 @@ async function dispatch(request, receivedAt) {
       // demand wakes the render threads; the reply still comes from the newest frame
       captureWorker.postMessage({ op: 'demand' });
       if (!win32.findWindow(title)) throw new EngineFailure('unavailable', 'window-not-found');
+      if (!latest) await Promise.race([firstFrame, sleep(500)]);
       if (!latest) throw new EngineFailure('timeout', 'no-frame');
       const jpeg = latest.jpeg.toString('base64');
       const ageMs = performance.now() - latest.capturedAt;
@@ -152,11 +165,11 @@ async function dispatch(request, receivedAt) {
     }
     case 'tap': {
       await win32.tap(requireWindow(), request.x, request.y, request.count);
-      return { inputMs: performance.now() - receivedAt };
+      return inputAcknowledgement(receivedAt);
     }
     case 'key': {
       await win32.holdKey(requireWindow(), request.scan, request.holdMs);
-      return { inputMs: performance.now() - receivedAt };
+      return inputAcknowledgement(receivedAt);
     }
     default:
       throw new EngineFailure('unavailable', 'unknown-op');
@@ -203,6 +216,12 @@ function shutdown(code) {
   if (stopping) return;
   stopping = true;
   clearInterval(pump);
+  try {
+    // holdKey cancellation: a key or button still down is released before the process goes away
+    win32.releaseHeld();
+  } catch {
+    // nothing is held, or the device is already gone
+  }
   for (const worker of [captureWorker, encoderWorker]) {
     try {
       worker.postMessage({ op: 'stop' });
@@ -232,6 +251,11 @@ process.stdin.on('end', () => {
   queue.then(() => shutdown(0));
 });
 process.on('exit', () => {
+  try {
+    win32.releaseHeld();
+  } catch {
+    // nothing to release
+  }
   try {
     win32.unregisterStopHotkey();
   } catch {
