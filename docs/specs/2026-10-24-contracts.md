@@ -133,8 +133,10 @@ capability that cannot be exercised at all is `unavailable`. The Win32 actuator 
 `unavailable` when there is no window or no engine. A different transport reports its own detail
 without changing callers.
 
-Every action asserts its precondition first and sends nothing when it fails. A press is held at
-least 60 ms: a 0 ms press is dropped at 30 fps.
+Every press asserts its precondition first and sends nothing when it fails. The release that
+completes a gesture is always sent, even if the window changed while the key was down: a stuck key or
+a stuck mouse button is worse than a refused one, and the gesture reports `rejected` after the fact.
+A press is held at least 60 ms: a 0 ms press is dropped at 30 fps.
 
 ## 5. Engine protocol (World ↔ child)
 
