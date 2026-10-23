@@ -4,7 +4,7 @@ Where the plan stands. The plan file is the specification of the work, not the r
 is the record, updated at each milestone, and `docs/plans/2026-10-24-wvd-world-v1.md` stays the
 authority on *what* each task requires.
 
-Last updated 2026-10-24 05:00, at commit `bc5b605` on `feat/world-v1`.
+Last updated 2026-10-24 05:30, on `feat/world-v1`.
 
 ## Task table
 
@@ -13,13 +13,14 @@ Last updated 2026-10-24 05:00, at commit `bc5b605` on `feat/world-v1`.
 | 1 | Extension skeleton that loads | **done**, reviewed clean | `55541d0`, `15bdeb1` | — |
 | 2 | Engine child — capture, foreground guard | **done**, reviewed clean, validated against the live game | `fcc51d2`, `3649cdd`, `87b69e5`, `68a4886`, `5571ea9` | — |
 | 3 | Frame ring buffer | **done**, approved | `7bff768` | — |
-| 4 | Map perception | **implemented**, review under way | `6627242` | reviewer verdict; five disclosed concerns are its own (7 of 10 digit glyphs, one-sample stairs and title) |
-| 5 | Automove command chain | **blocked** | — | a recorded successful automove gesture: the live build contradicts navigation §3a (see §3c) |
+| 4 | Map perception | **done**, approved | `6627242` | 7 of 10 digit glyphs exist, so an unseen digit refuses; stairs and title are one sample |
+| 5 | Automove command chain | **implementing** | — | unblocked: the live run settled the gesture (`G`,`G`,`L`,`F`) |
 | 6 | Chest opener and QTE parser | **not started** | — | implement from `research-qte-parser.md` (199/250 frames parsed, constants corrected in `5be0054`) |
-| 7 | Route policy | **implemented**, fix round under way | `41f2c56` | missing `FarmPolicy` binding, no confidence gate, stop threshold below the usable opener floor |
+| 7 | Route policy | **done**, reviewed clean | `41f2c56`, `a3f0c28`, `deb11b2` | acts only on identified screens; the 0–60 willpower gap is Task 10's obligation |
 | 8 | Session lifecycle and escalation | **not started** | — | — |
 | 9 | Replay harness | **not started** | — | — |
 | 10 | The loop and the composition root | **not started** | — | brief enriched with `research-escalation-design.md`; also owes the `capture { maxWidth }` engine half |
+| 11 | Recognise the 3D view | **implemented**, review under way | `2be0357` | the perceiver that names the screen the route opens the map from |
 
 ## What exists and runs
 
@@ -33,15 +34,14 @@ Last updated 2026-10-24 05:00, at commit `bc5b605` on `feat/world-v1`.
 
 ## What does not exist yet
 
-No loop, no chest opener, no QTE timing, no session verdicts, no escalation to Coo. The agent cannot
-play the game end to end: it can see, and it can decide, but nothing turns a decision into a walk yet,
-because Task 5's activation gesture is unknown.
+No loop, no chest opener, no QTE timing, no session verdicts, no escalation to Coo. The agent can see,
+decide and — since Task 5 — walk, but nothing joins the three: Tasks 6, 8 and 10 are the rest of the
+chain.
 
 ## Open decisions and blockers
 
-- **The automove gesture (blocks Task 5).** A tile click only opens 自动移动 after `R` (pointer mode),
-  the element appears top-left rather than beside the tile, and it did not activate by single click,
-  engine double-click, fast native double-click, or Enter. One recorded success settles it.
+- **The automove gesture is settled.** `G` opens the menu, `G` again opens the map, `L` walks to a
+  chest, `F` walks to the exit. Automove stays on one floor, so the route ends when the chests do.
 - **Zero willpower versus the 60 floor.** The route stops only at 0, while no member below 60 can open
   a chest. Between them the route keeps asking and the chest module keeps refusing; Task 10 must bound
   the retries and Task 8 must classify the stall.
