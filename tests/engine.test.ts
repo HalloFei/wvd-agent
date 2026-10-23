@@ -1,0 +1,166 @@
+import jpeg from 'jpeg-js';
+import { describe, expect, it } from 'vitest';
+import type { EngineReply, EngineRequest } from '../src/contracts.ts';
+import { LineDecoder, decodeLine, encodeEvent, encodeReply, encodeRequest } from '../src/engine/protocol.ts';
+import { connectEngine, startEngine } from '../src/engine/child.ts';
+import { sendInput, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
+
+/** An engine that records what it was asked and answers from a script. */
+class FakeEngine implements EngineRequester {
+  readonly seen: EngineRequest[] = [];
+  atRequest = 0;
+
+  constructor(private readonly reply: EngineReply | ((request: EngineRequest) => EngineReply)) {}
+
+  async request(request: EngineRequest): Promise<EngineReply> {
+    this.seen.push(request);
+    this.atRequest = performance.now();
+    return typeof this.reply === 'function' ? this.reply(request) : this.reply;
+  }
+}
+
+describe('engine protocol', () => {
+  it('round-trips a capture request', () => {
+    const line = encodeRequest(7, { op: 'capture' });
+    expect(line.endsWith('\n')).toBe(true);
+    expect(decodeLine(line)).toEqual({ request: { id: 7, request: { op: 'capture' } } });
+  });
+
+  it('round-trips a rejected reply, failure name and all', () => {
+    const reply = { id: 3, ok: false, error: 'rejected', detail: 'not-foreground' } as const;
+    expect(decodeLine(encodeReply(reply))).toEqual({ reply });
+  });
+
+  it('round-trips a successful reply carrying a capture value', () => {
+    const reply = { id: 4, ok: true, value: { jpeg: 'AA==', width: 2, height: 1 } } as const;
+    expect(decodeLine(encodeReply(reply))).toEqual({ reply });
+  });
+
+  it('round-trips the stop-hotkey event', () => {
+    expect(decodeLine(encodeEvent({ kind: 'stopHotkey' }))).toEqual({ event: { kind: 'stopHotkey' } });
+  });
+
+  it('drops malformed lines instead of turning them into messages', () => {
+    expect(decodeLine('not json')).toBeNull();
+    expect(decodeLine('{"id":1,"ok":false,"error":"exploded"}')).toBeNull();
+    expect(decodeLine('{"id":1,"request":{"op":"teleport"}}')).toBeNull();
+    expect(decodeLine('{"id":1,"request":{"op":"tap","x":1,"y":2,"count":3}}')).toBeNull();
+  });
+
+  it('splits a byte stream into lines across chunk boundaries', () => {
+    const decoder = new LineDecoder();
+    const wire = encodeRequest(1, { op: 'capture' }) + encodeRequest(2, { op: 'foreground' });
+    // cut inside the first line, not on a boundary: the decoder must hold the leftover
+    const cut = 10;
+    expect(decoder.push(wire.slice(0, cut))).toEqual([]);
+    expect(decoder.push(wire.slice(cut)).map((line) => decodeLine(line))).toEqual([
+      { request: { id: 1, request: { op: 'capture' } } },
+      { request: { id: 2, request: { op: 'foreground' } } },
+    ]);
+  });
+});
+
+describe('engine input guard', () => {
+  it('refuses with rejected/not-foreground when the engine reports the window is not foreground', async () => {
+    const engine = new FakeEngine({ id: 1, ok: true, value: { foreground: false } });
+
+    const result = await sendInput(engine, { op: 'tap', x: 10, y: 20, count: 1 });
+
+    expect(result).toEqual({ ok: false, reason: 'rejected', detail: 'not-foreground' });
+    // the precondition is asserted before anything is sent: only the foreground query went out
+    expect(engine.seen).toEqual([{ op: 'foreground' }]);
+  });
+
+  it('sends the input once the window is foreground and reports success', async () => {
+    const engine = new FakeEngine((request) => request.op === 'foreground'
+      ? { id: 1, ok: true, value: { foreground: true } }
+      : { id: 2, ok: true, value: null });
+
+    const result = await sendInput(engine, { op: 'key', scan: 0x11, holdMs: 60 });
+
+    expect(result).toEqual({ ok: true });
+    expect(engine.seen).toEqual([{ op: 'foreground' }, { op: 'key', scan: 0x11, holdMs: 60 }]);
+  });
+
+  it('passes a child-side rejection through unchanged', async () => {
+    const engine = new FakeEngine((request) => request.op === 'foreground'
+      ? { id: 1, ok: true, value: { foreground: true } }
+      : { id: 2, ok: false, error: 'rejected', detail: 'not-foreground' });
+
+    expect(await sendInput(engine, { op: 'tap', x: 1, y: 2, count: 2 }))
+      .toEqual({ ok: false, reason: 'rejected', detail: 'not-foreground' });
+  });
+
+  it('passes a transport failure through, without inventing a detail', async () => {
+    const engine = new FakeEngine((request) => request.op === 'foreground'
+      ? { id: 1, ok: true, value: { foreground: true } }
+      : { id: 2, ok: false, error: 'timeout' });
+
+    expect(await sendInput(engine, { op: 'tap', x: 1, y: 2, count: 1 }))
+      .toEqual({ ok: false, reason: 'timeout' });
+  });
+});
+
+describe('Win32Capture', () => {
+  const WIDTH = 4;
+  const HEIGHT = 3;
+  // a colour the JPEG round trip keeps: black/white edges would hide a channel swap
+  const RGBA = new Uint8Array(Array.from({ length: WIDTH * HEIGHT }, () => [40, 120, 200, 255]).flat());
+  const JPEG = jpeg.encode({ data: RGBA, width: WIDTH, height: HEIGHT }, 95).data;
+  const captureReply = (): EngineReply => ({
+    id: 2,
+    ok: true,
+    value: { jpeg: Buffer.from(JPEG).toString('base64'), width: WIDTH, height: HEIGHT },
+  });
+
+  it('returns a frame whose atMs precedes the capture and whose size the engine reports', async () => {
+    const engine = new FakeEngine((request) => (request.op === 'capture' ? captureReply() : { id: 1, ok: false, error: 'unavailable' }));
+
+    const frame = await new Win32Capture(engine).capture();
+
+    expect(frame.width).toBe(WIDTH);
+    expect(frame.height).toBe(HEIGHT);
+    expect(frame.atMs).toBeLessThanOrEqual(engine.atRequest);
+    expect(engine.seen).toEqual([{ op: 'capture' }]);
+  });
+
+  it('decodes the JPEG into RGBA pixels inside the source', async () => {
+    const engine = new FakeEngine(captureReply());
+
+    const rgba = await new Win32Capture(engine).capture().then((frame) => frame.toRgba());
+
+    expect(rgba.width).toBe(WIDTH);
+    expect(rgba.height).toBe(HEIGHT);
+    expect(rgba.data).toBeInstanceOf(Uint8Array);
+    expect(rgba.data.length).toBe(WIDTH * HEIGHT * 4);
+    // the encoder is lossy, the channel order is not
+    expect(Math.abs(rgba.data[0]! - 40)).toBeLessThanOrEqual(6);
+    expect(Math.abs(rgba.data[1]! - 120)).toBeLessThanOrEqual(6);
+    expect(Math.abs(rgba.data[2]! - 200)).toBeLessThanOrEqual(6);
+  });
+
+  it('rejects with the engine failure when the child has no frame', async () => {
+    const engine = new FakeEngine({ id: 1, ok: false, error: 'unavailable', detail: 'window-not-found' });
+
+    await expect(new Win32Capture(engine).capture())
+      .rejects.toMatchObject({ reason: 'unavailable', detail: 'window-not-found' });
+  });
+});
+
+describe('engine child process', () => {
+  it.skipIf(process.platform !== 'win32')('starts under this Node and answers the protocol without a window', async () => {
+    const engine = connectEngine(
+      startEngine({ title: `__wvd_no_such_window_${process.pid}__`, hotkey: '' }),
+      { timeoutMs: 15000 },
+    );
+    try {
+      expect(await engine.request({ op: 'foreground' })).toMatchObject({ ok: true, value: { foreground: false } });
+      expect(await engine.request({ op: 'capture' }))
+        .toMatchObject({ ok: false, error: 'unavailable', detail: 'window-not-found' });
+      expect(await engine.request({ op: 'tap', x: 1, y: 2, count: 1 }))
+        .toMatchObject({ ok: false, error: 'unavailable', detail: 'window-not-found' });
+    } finally {
+      engine.close();
+    }
+  }, 30000);
+});
