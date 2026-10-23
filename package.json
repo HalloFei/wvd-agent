@@ -1,0 +1,36 @@
+{
+  "name": "cortico-world-wvd",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Cortico World: plays Wizardry Variants Daphne's FFXI dungeon route from a Windows child process",
+  "keywords": [
+    "cortico-world",
+    "cortico",
+    "wizardry-variants-daphne"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.28.6",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "cortico": {
+    "kind": "world",
+    "api": 6
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "5.9.3",
+    "vitest": "2.1.9"
+  }
+}
