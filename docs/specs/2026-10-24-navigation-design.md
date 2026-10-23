@@ -142,9 +142,12 @@ Driven through the engine with the operator's authorisation, on `B1F -巨坑-`:
   the key is inert.
 - **A tile click still needs `R` (pointer mode)**, shows 自动移动 beside the target, and needs a click
   on that element to confirm. It is a second, slower path to the same command.
-- **Automove does not cross floors** (operator, 2026-10-24). It stays on the current floor; stairs,
-  the exit and any floor change are not reachable through it. The altar teleporter is the only
-  floor-change mechanism seen so far.
+- **Automove does not cross floors** (operator, 2026-10-24). It stays on the current floor.
+- **Crossing is a tile, not a command.** A floor is left by standing on the special next-floor tile —
+  the white outlined cell on the map, which is how FFXI 4F is built (operator, 2026-10-24). So the
+  route is: farm the floor, `F` (移动至出口) to walk to the exit area, then **step onto the tile**.
+  Automove stops at the tile; the transition is a step, not an automove. The step itself has not yet
+  been observed from the engine, so its trigger (walk forward, or a confirm) is open.
 
 ## 4. What this means for the route policy
 
