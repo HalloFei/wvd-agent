@@ -75,6 +75,30 @@ case, and it has a fallback — the party can be walked out with **WASD**. Two l
 - **Resume only works while an automove is interrupted.** With no live automove set, the control
   does nothing — which is what happened in the test above. It is a resume, not a restart.
 
+## 3b. The map, measured from the frames
+
+A parser was prototyped against `testdata/nav-1024-0213/` and 198 other captured frames before Task 4
+existed (`research-map-parser.md`). What it settled:
+
+- **The canvas scrolls.** Whole-map shifts of 21, 72 and 210 px were measured on the same floor between
+  captures, and 210 is not a multiple of the tile size. So there is no absolute map origin: every
+  position is relative to the **chevron**, which sits at the centre of the player's cell (±1 px).
+- **Tile size is 36.0 px**, square on both axes (wall lines fit to rms 1.6 and 2.7 px). Click a target
+  at `chevron + ((x_t − x_p)·36, −(y_t − y_p)·36)` — Y inverts, because grid Y counts upward. Validated
+  to ≤1.1 px against a popup-to-map pair.
+- **The readout** `X: n Y: n` is 12 px digits at a fixed rect (ink rows 900–911, x 1010–1146). No OCR
+  exists on this machine; template matching read 26 of 26 map frames, but only seven of the ten digit
+  glyphs have ever been seen. An unseen digit returns `null`.
+- **Icons**, by reliability: chest (high — every instance matched at NCC 0.97–1.00, no false positive
+  above 0.55), hazard (high — an 85×36 red bar, `R−B ≥ 45`), stairs (medium, one sample), **haken
+  (not identifiable)**. `haken` must therefore never be emitted, and no policy may depend on it.
+- **Map versus not-a-map** is decided by structure, not colour: the readout's eight glyph runs, the white
+  ink count (15k–200k px), eight wall lines at 36 px pitch, then the chevron. Across 198 non-map frames
+  the run count was never eight; the HUD-only fixture yields two runs and 1 424 ink px against the map's
+  36 380.
+- **The 自动移动 banner** sits at x 1223–1402, y 533–567 (centre 1313, 550); double-click the text centre,
+  not the arrow tips.
+
 ## 4. What this means for the route policy
 
 - A chest run is: G, find the nearest reachable chest icon, click its tile, double-click automove,
