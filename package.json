@@ -25,6 +25,9 @@
     "README.md"
   ],
   "scripts": {
+    "setup:dev": "node scripts/setup-dev.mjs",
+    "pretest": "node scripts/setup-dev.mjs",
+    "pretypecheck": "node scripts/setup-dev.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

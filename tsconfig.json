@@ -1,6 +1,7 @@
 {
-  // Node-side code only. `cortico/*` points at the Coopanion checkout's framework source; at run
-  // time the host's own module hook resolves it, and vitest.config.ts repeats this mapping.
+  // Node-side code only. `cortico/*` resolves through the `node_modules/cortico` link that
+  // scripts/setup-dev.mjs creates, which points at the Coopanion checkout's framework source; at run
+  // time the host's own module hook resolves the prefix. vitest.config.ts maps the same files.
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -16,7 +17,7 @@
     "resolveJsonModule": true,
     "noEmit": true,
     "paths": {
-      "cortico/*": ["../../../Coopanion/vendor/cortico/src/*"]
+      "cortico/*": ["./node_modules/cortico/*"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],

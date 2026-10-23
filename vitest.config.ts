@@ -2,10 +2,11 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 /**
- * In tests `cortico/*` resolves to the Coopanion checkout's framework source, the same mapping as
- * tsconfig paths. Installed into Coopanion the host's module hook does this instead.
+ * `cortico/*` resolves through the `node_modules/cortico` link that scripts/setup-dev.mjs creates,
+ * the same files tsconfig.json gives tsc. Installed into Coopanion, the host's module hook resolves
+ * the prefix instead.
  */
-const FRAMEWORK_SRC = fileURLToPath(new URL('../../../Coopanion/vendor/cortico/src/', import.meta.url));
+const FRAMEWORK_SRC = fileURLToPath(new URL('./node_modules/cortico/', import.meta.url));
 
 export default defineConfig({
   resolve: { alias: [{ find: /^cortico\//, replacement: FRAMEWORK_SRC }] },
