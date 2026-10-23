@@ -38,7 +38,8 @@ export interface EngineClient {
   request(request: EngineRequest): Promise<EngineReply>;
   /** The child's unsolicited messages (R3, R23); the returned function unsubscribes. */
   onEvent(listener: (event: EngineEvent) => void): () => void;
-  /** Ends the pipe and the process; pending requests fail with `unavailable`. */
+  /** Graceful teardown: end the pipe, wait briefly for the child to release input and exit, then
+   *  kill it. Pending requests fail with `unavailable`. */
   close(): void;
 }
 
@@ -173,14 +174,28 @@ export function connectEngine(child: ChildProcess, options: EngineClientOptions 
       return () => listeners.delete(listener);
     },
     close() {
+      if (closed) return;
       closed = true;
       failAll('unavailable', 'engine-closed');
+      // Closing stdin is the child's teardown signal: it finishes the request in flight, calls
+      // releaseHeld() and exits. On Windows kill() is TerminateProcess, which would skip both, so
+      // wait for the graceful exit first and only kill a child that hangs (a crash can still lose
+      // the release; that is accepted).
       try {
         stdin?.end();
       } catch {
         // already closed
       }
-      child.kill();
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const timer = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+          // already gone
+        }
+      }, 500);
+      timer.unref?.();
+      child.once('exit', () => clearTimeout(timer));
     },
   };
 }

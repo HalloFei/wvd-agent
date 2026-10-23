@@ -42,6 +42,17 @@ describe('input gestures (R21)', () => {
     expect(gestures.heldButtons()).toEqual({ mouse: 0, keys: [] });
   });
 
+  it('refuses the second click when the window loses focus between clicks', async () => {
+    const device = new FakeDevice();
+    device.foregroundFor = [0, 1]; // click 1 passes; click 2's pre-down guard fails
+    const gestures = createGestures(device);
+
+    await expect(gestures.tap(1, 5, 6, 2)).rejects.toBeInstanceOf(Refused);
+
+    // one press then a refusal: deleting the per-click guard would make this two clicks and resolve
+    expect(device.events).toEqual(['move:5,6', 'down', 'up']);
+  });
+
   it('completes both clicks of a double tap while the window holds', async () => {
     const device = new FakeDevice();
     device.foregroundFor = [0, 1, 2, 3];
@@ -51,6 +62,16 @@ describe('input gestures (R21)', () => {
 
     expect(device.events).toEqual(['move:5,6', 'down', 'up', 'move:5,6', 'down', 'up']);
     expect(gestures.heldButtons()).toEqual({ mouse: 0, keys: [] });
+  });
+
+  it('asserts the foreground before a hold and sends nothing when refused', async () => {
+    const device = new FakeDevice();
+    device.foregroundFor = [];
+    const gestures = createGestures(device);
+
+    await expect(gestures.holdKey(1, 0x1e, 60)).rejects.toBeInstanceOf(Refused);
+
+    expect(device.events).toEqual([]);
   });
 
   it('holds a key, releases it, and reports rejected when the window moved during the hold', async () => {

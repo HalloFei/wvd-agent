@@ -99,7 +99,7 @@ export interface EngineCapture {
 }
 
 export type EngineRequest =
-  | { op: 'capture' }
+  | { op: 'capture'; maxWidth?: number }
   | { op: 'foreground' }
   | { op: 'tap'; x: number; y: number; count: 1 | 2 }
   | { op: 'key'; scan: number; holdMs: number };

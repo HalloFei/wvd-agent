@@ -191,33 +191,15 @@ export function createJpegEncoder(quality) {
 }
 
 /**
- * Copy a 32bpp top-down RGBA image out of native memory with whatever stride GDI+ gave it. The
- * common case (stride == width*4) is one `RtlMoveMemory`; a padded or bottom-up stride is copied
- * row by row, because assuming width*4 is how a decoder silently scans garbage. Exported so the
- * non-standard strides can be tested without a codec that produces them.
- */
-export function copyStrided(source, stride, width, height) {
-  const rowBytes = width * 4;
-  if (!Number.isInteger(stride) || Math.abs(stride) < rowBytes) throw new Error(`jpeg-stride:${stride}`);
-  const out = Buffer.allocUnsafe(rowBytes * height);
-  if (stride === rowBytes) {
-    RtlMoveMemory(out, source, out.length);
-    return out;
-  }
-  const base = typeof source === 'bigint' ? source : koffi.address(source);
-  for (let row = 0; row < height; row++) {
-    // a negative stride means GDI+ handed us the bottom row first
-    const at = stride > 0 ? base + BigInt(row * stride) : base + BigInt((height - 1 - row) * stride);
-    RtlMoveMemory(out.subarray(row * rowBytes, (row + 1) * rowBytes), at, rowBytes);
-  }
-  return out;
-}
-
-/**
  * Decode a JPEG to RGBA. Uses `GdipCreateBitmapFromStream` over an HGLOBAL IStream, locks the
- * decoded bitmap at 32bppARGB and copies the pixels out with one `RtlMoveMemory` (GDI+ gives a
- * width*4 stride for these images; anything else is refused so the caller can fall back rather than
- * mis-scan). Throws when GDI+ cannot start or the bytes are not a JPEG this GDI+ reads.
+ * decoded bitmap at 32bppARGB and copies the pixels out with one `RtlMoveMemory`.
+ *
+ * A stride other than width*4 is refused, not interpreted: GDI+ rows are `Scan0 + y*Stride`, so a
+ * negative stride already encodes bottom-up, and row arithmetic here cannot be exercised by any
+ * JPEG GDI+ produces (it locks these at width*4). A decoder that cannot occur is not worth an
+ * aliasing bug, so the caller falls back to jpeg-js and reports `native-decoder-unavailable`.
+ *
+ * Throws when GDI+ cannot start or the bytes are not a JPEG this GDI+ reads.
  */
 export function decodeJpeg(bytes) {
   const current = support();
@@ -254,7 +236,9 @@ export function decodeJpeg(bytes) {
     const locked = GdipBitmapLockBits(bitmap[0], rect, IMAGE_LOCK_MODE_READ, PIXEL_FORMAT_32BPP_ARGB, data);
     if (locked !== 0) throw new Error(`jpeg-lock:${locked}`);
     try {
-      const out = copyStrided(data.Scan0, data.Stride, width[0], height[0]);
+      if (data.Stride !== width[0] * 4) throw new Error(`jpeg-stride:${data.Stride}`);
+      const out = Buffer.allocUnsafe(width[0] * height[0] * 4);
+      RtlMoveMemory(out, data.Scan0, out.length);
       // BGRA in memory -> the RGBA the RgbaImage contract promises (one 32-bit pass)
       const pixels = new Uint32Array(out.buffer, out.byteOffset, width[0] * height[0]);
       for (let index = 0; index < pixels.length; index++) {

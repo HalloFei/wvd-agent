@@ -51,12 +51,20 @@ const write = (line) => {
 let stopping = false;
 let latest = null; // { jpeg: Buffer, width, height, capturedAt }
 
-// The first capture request waits for the render threads to produce a frame (bounded), so startup
-// is not a spurious `timeout`; after that, serving stays instant.
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// The first capture request ever waits for the render threads to produce a frame (bounded), so
+// startup is not a spurious `timeout`. The timer is cleared when the frame wins, and later requests
+// never wait: a render-hung child must not charge 500 ms to every serialized request.
 let firstFrameSeen = false;
 let resolveFirstFrame;
 const firstFrame = new Promise((resolve) => { resolveFirstFrame = resolve; });
+const warmup = new Promise((resolve) => {
+  const timer = setTimeout(resolve, 500);
+  firstFrame.then(() => {
+    clearTimeout(timer);
+    resolve();
+  });
+});
+let firstCaptureRequested = false;
 
 // Two render threads, connected to each other: the capture worker sends pixels on this channel and
 // the encoder worker returns the spent buffers on it. Only JPEGs reach this thread.
@@ -156,7 +164,10 @@ async function dispatch(request, receivedAt) {
       // demand wakes the render threads; the reply still comes from the newest frame
       captureWorker.postMessage({ op: 'demand' });
       if (!win32.findWindow(title)) throw new EngineFailure('unavailable', 'window-not-found');
-      if (!latest) await Promise.race([firstFrame, sleep(500)]);
+      if (!latest && !firstCaptureRequested) {
+        firstCaptureRequested = true;
+        await warmup;
+      }
       if (!latest) throw new EngineFailure('timeout', 'no-frame');
       const jpeg = latest.jpeg.toString('base64');
       const ageMs = performance.now() - latest.capturedAt;

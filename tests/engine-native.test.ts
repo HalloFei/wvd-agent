@@ -1,7 +1,6 @@
 import { MessageChannel, Worker } from 'node:worker_threads';
-import koffi from 'koffi';
 import { describe, expect, it } from 'vitest';
-import { copyStrided, createJpegEncoder, decodeJpeg, gdiplusProblem } from '../src/engine/gdiplus.mjs';
+import { createJpegEncoder, decodeJpeg, gdiplusProblem } from '../src/engine/gdiplus.mjs';
 
 const WINDOWS = process.platform === 'win32';
 
@@ -116,41 +115,3 @@ describe('native JPEG path', () => {
   }, 20000);
 });
 
-describe('decode stride helper', () => {
-  it.skipIf(!WINDOWS)('copies padded rows and bottom-up rows into top-down order', () => {
-    const kernel32 = koffi.load('kernel32.dll');
-    const GlobalAlloc = kernel32.func('intptr_t __stdcall GlobalAlloc(uint32_t flags, intptr_t bytes)');
-    const GlobalLock = kernel32.func('void * __stdcall GlobalLock(intptr_t handle)');
-    const GlobalUnlock = kernel32.func('int32_t __stdcall GlobalUnlock(intptr_t handle)');
-    const GlobalFree = kernel32.func('intptr_t __stdcall GlobalFree(intptr_t handle)');
-    const RtlMoveMemory = kernel32.func('void __stdcall RtlMoveMemory(void *dest, const void *src, intptr_t length)');
-
-    const width = 3;
-    const height = 2;
-    const rowBytes = width * 4;
-    const stride = rowBytes + 8;
-    const top = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-    const bottom = Buffer.from([13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]);
-    const memory = GlobalAlloc(0x2, stride * height);
-    const pointer = GlobalLock(memory);
-    try {
-      // positive stride with padding: row 0 is the top row
-      const positive = Buffer.alloc(stride * height, 0xee);
-      top.copy(positive, 0);
-      bottom.copy(positive, stride);
-      RtlMoveMemory(pointer, positive, positive.length);
-      expect([...copyStrided(pointer, stride, width, height)]).toEqual([...top, ...bottom]);
-
-      // negative stride: Scan0 points at the bottom row, the top row is |stride| below it
-      const negative = Buffer.alloc(stride * height, 0xee);
-      top.copy(negative, 0);
-      bottom.copy(negative, stride);
-      RtlMoveMemory(pointer, negative, negative.length);
-      const scan0 = koffi.address(pointer) + BigInt(stride);
-      expect([...copyStrided(scan0, -stride, width, height)]).toEqual([...top, ...bottom]);
-    } finally {
-      GlobalUnlock(memory);
-      GlobalFree(memory);
-    }
-  });
-});
