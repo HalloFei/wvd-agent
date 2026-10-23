@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: true
+  # koffi ships its binary in @koromix/koffi-win32-x64; its install script is not needed (verified
+  # under node 22 and Electron-as-Node 24). Keeping it ignored makes `pnpm install` reproducible.
+  koffi: false

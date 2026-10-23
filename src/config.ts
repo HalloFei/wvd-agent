@@ -1,0 +1,173 @@
+/** Config section `worlds.wvd`, its defaults and the console config group (contracts §8). */
+import type { ConfigGroup } from 'cortico/core/config-schema.ts';
+import type { WorldSection } from 'cortico/world.ts';
+
+export const WVD_ID = 'wvd';
+
+export interface WvdConfigSection extends WorldSection {
+  dryRun: boolean;
+  tickMs: number;
+  sessionMaxMinutes: number;
+  stallStopSeconds: number;
+  gameWindowTitle: string;
+  jpegQuality: number;
+  engineTimeoutMs: number;
+  pressHoldMs: number;
+  escalationImageWidth: number;
+  mapOpenTimeoutMs: number;
+  automoveArrivalTimeoutMs: number;
+  automoveStillSeconds: number;
+  hazardEscapeSteps: number;
+  hazardEscapeHoldMs: number;
+  resumeMaxAttempts: number;
+  willpowerFloor: number;
+  maxRerolls: number;
+  rerollLeadRatio: number;
+  qteLatencyMs: number;
+  qteDecelPxPerS2: number;
+  qteMinWindowMs: number;
+  qteAttemptsFallback: number;
+  lootTapIntervalMs: number;
+  lootTapMax: number;
+  autoBattleEnableAttempts: number;
+  fightTimeoutMs: number;
+  escalateMaxPerHour: number;
+  escalateTimeoutMs: number;
+  stopHotkey: string;
+}
+
+export const WVD_DEFAULTS: WvdConfigSection = {
+  enabled: false,
+  dryRun: false,
+  tickMs: 100,
+  sessionMaxMinutes: 120,
+  stallStopSeconds: 120,
+  gameWindowTitle: 'WizardryVariantsDaphne',
+  jpegQuality: 75,
+  engineTimeoutMs: 5000,
+  pressHoldMs: 60,
+  escalationImageWidth: 1280,
+  mapOpenTimeoutMs: 3000,
+  automoveArrivalTimeoutMs: 120000,
+  automoveStillSeconds: 5,
+  hazardEscapeSteps: 3,
+  hazardEscapeHoldMs: 250,
+  resumeMaxAttempts: 2,
+  willpowerFloor: 60,
+  maxRerolls: 3,
+  rerollLeadRatio: 0.5,
+  qteLatencyMs: 75,
+  qteDecelPxPerS2: 3000,
+  qteMinWindowMs: 150,
+  qteAttemptsFallback: 2,
+  lootTapIntervalMs: 400,
+  lootTapMax: 10,
+  autoBattleEnableAttempts: 3,
+  fightTimeoutMs: 180000,
+  escalateMaxPerHour: 20,
+  escalateTimeoutMs: 90000,
+  stopHotkey: 'Ctrl+Alt+W',
+};
+
+/** Every tunable of contracts §8, as one group the console renders. */
+export const WVD_CONFIG_GROUP: ConfigGroup = {
+  id: 'world:wvd',
+  owner: 'world:wvd',
+  schema: {
+    type: 'object',
+    title: 'WVD',
+    description: '捕获窗口、寻路、宝箱与升级的配置。',
+    properties: {
+      'worlds.wvd.enabled': {
+        type: 'boolean', title: '启用', description: '主开关。',
+      },
+      'worlds.wvd.dryRun': {
+        type: 'boolean', title: '演练', description: '只记录要做的操作，不发送输入。',
+      },
+      'worlds.wvd.tickMs': {
+        type: 'integer', title: '循环周期', description: '每一步之间的间隔，毫秒。', minimum: 50, maximum: 1000,
+      },
+      'worlds.wvd.sessionMaxMinutes': {
+        type: 'integer', title: '会话上限', description: '一次会话到点强制停止，分钟。',
+      },
+      'worlds.wvd.stallStopSeconds': {
+        type: 'integer', title: '停滞上限', description: '这么久没有进展就结束会话，秒。',
+      },
+      'worlds.wvd.gameWindowTitle': {
+        type: 'string', title: '游戏窗口标题', description: '要捕获和操作的窗口。',
+      },
+      'worlds.wvd.jpegQuality': {
+        type: 'integer', title: 'JPEG 质量', description: '帧编码质量。', minimum: 30, maximum: 95,
+      },
+      'worlds.wvd.engineTimeoutMs': {
+        type: 'integer', title: '引擎超时', description: '子进程一次请求的等待上限，毫秒。',
+      },
+      'worlds.wvd.pressHoldMs': {
+        type: 'integer', title: '按键时长', description: '每次按下保持的时间；30 fps 下 0 毫秒的按键会被丢弃。', minimum: 40, maximum: 500,
+      },
+      'worlds.wvd.escalationImageWidth': {
+        type: 'integer', title: '升级图像宽度', description: '发给模型前把帧缩到的宽度，像素。',
+      },
+      'worlds.wvd.mapOpenTimeoutMs': {
+        type: 'integer', title: '地图打开超时', description: '点击小地图后等待地图出现，毫秒。',
+      },
+      'worlds.wvd.automoveArrivalTimeoutMs': {
+        type: 'integer', title: '自动移动超时', description: '一直没到达就放弃，毫秒。',
+      },
+      'worlds.wvd.automoveStillSeconds': {
+        type: 'integer', title: '静止判定', description: '画面静止这么久即视为停下，秒。',
+      },
+      'worlds.wvd.hazardEscapeSteps': {
+        type: 'integer', title: '脱困步数', description: '用 WASD 脱出受阻的步数。',
+      },
+      'worlds.wvd.hazardEscapeHoldMs': {
+        type: 'integer', title: '脱困按键时长', description: '每一步保持的时间，毫秒。',
+      },
+      'worlds.wvd.resumeMaxAttempts': {
+        type: 'integer', title: '恢复尝试次数', description: '自动移动被打断后点击恢复的次数。',
+      },
+      'worlds.wvd.willpowerFloor': {
+        type: 'integer', title: '意志下限', description: '低于这个值的开箱者不选。',
+      },
+      'worlds.wvd.maxRerolls': {
+        type: 'integer', title: '重选上限', description: '每个宝箱的 QTE 重选次数，仅限地板上的宝箱。',
+      },
+      'worlds.wvd.rerollLeadRatio': {
+        type: 'number', title: '重选提前量比例', description: '提前量超过区间宽度的这个比例时重选。', minimum: 0, maximum: 1,
+      },
+      'worlds.wvd.qteLatencyMs': {
+        type: 'integer', title: 'QTE 输入延迟', description: '实测的输入延迟，毫秒。',
+      },
+      'worlds.wvd.qteDecelPxPerS2': {
+        type: 'integer', title: 'QTE 减速度', description: '拟合的滑行常数，像素/秒²；暂定值。',
+      },
+      'worlds.wvd.qteMinWindowMs': {
+        type: 'integer', title: 'QTE 最小窗口', description: '比这更窄的过法直接放弃，毫秒。',
+      },
+      'worlds.wvd.qteAttemptsFallback': {
+        type: 'integer', title: 'QTE 次数兜底', description: '读不出计数时使用。',
+      },
+      'worlds.wvd.lootTapIntervalMs': {
+        type: 'integer', title: '拾取间隔', description: '连续点击拾取的间隔，毫秒。',
+      },
+      'worlds.wvd.lootTapMax': {
+        type: 'integer', title: '拾取上限', description: '放弃前最多点击几次。',
+      },
+      'worlds.wvd.autoBattleEnableAttempts': {
+        type: 'integer', title: '自动战斗尝试次数', description: '尝试打开自动战斗的次数。',
+      },
+      'worlds.wvd.fightTimeoutMs': {
+        type: 'integer', title: '战斗超时', description: '超过这个时长视为停滞，毫秒。',
+      },
+      'worlds.wvd.escalateMaxPerHour': {
+        type: 'integer', title: '升级上限', description: '每小时模型调用次数，超过即结束会话。',
+      },
+      'worlds.wvd.escalateTimeoutMs': {
+        type: 'integer', title: '升级等待上限', description: '等待回答的时间，毫秒。',
+      },
+      'worlds.wvd.stopHotkey': {
+        type: 'string', title: '停止快捷键', description: '由子进程注册的全局停止键。',
+      },
+    },
+  },
+};
