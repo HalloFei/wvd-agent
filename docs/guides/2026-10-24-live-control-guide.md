@@ -91,25 +91,31 @@ The rows, top to bottom, are:
   | 移动至目的地 (move to destination) | **G** |
   | 切换指针模式 (toggle pointer mode) | **R** |
 
-- **G/Q/E keys do reach the game** (G opened the map, Q/E zoomed the world map). **L did not
-  trigger movement on the dungeon map in testing — open.**
-- Close the map with the `关闭` button at the bottom, about **(961, 1060)**. Pressing G on the map
-  did not close it in testing.
+- The legend is live: **L does move the party to a chest** (verified 2026-10-24 night, see §4.4).
+  The earlier "L did nothing" was a focus problem — the window was not foreground, so the engine
+  refused or the game ignored the key. `G` on the map is 移动至目的地, not close.
+- Close the map with `关闭` at about **(961, 1060)**, or `Esc`.
 
-### 4.4 Automove to a chest — **open, the current blocker**
+### 4.4 Automove to a chest — **solved**
 
-The verified *idea* (navigation spec §3a) is: click a chest tile → a small `自动移动` element
-appears beside it → double-click that element → the map closes and the party walks. On this build:
+Two ways, both verified live:
 
-1. **Toggle pointer mode first (R)**. Without it, clicking a map tile did nothing.
-2. A click on a map tile/chest icon (the purple orb markers on 第四区) then opened a `自动移动`
-   element — but at the **top-left of the map** (about 486–632 × 174–200), not beside the tile.
-3. That element did **not** start movement with a single click, the engine's double click
-   (2×60 ms), a fast native double-click (12 ms presses, 45 ms gap), or Enter.
+**Fast path — the key (use this).** With the map open, press **L** (移动至宝箱). The map closes and
+the party walks to a chest, fighting anything on the way; auto-battle resolves those. Measured
+during the night's run: `X:19 Y:21` → `X:11 Y:19` after one `L`, with two encounters fought on the
+route. The game chooses the chest — the command means "go to a chest", not "go to the chest I
+picked".
 
-Because of this, chest farming could not be exercised. The next person should capture the frames
-while performing one automove **by hand**, then fix the detector and the activation gesture. Until
-then, treat `自动移动` as an unresponsive control.
+**Slow path — pointer mode.** Press **R** first, click a chest tile, then click the `自动移动`
+element that appears. It is the way to reach a *specific* tile, but it needs two interactions and
+a detector for the element.
+
+Two facts that bound it:
+
+- **Automove does not cross floors.** It stays on the current floor; stairs and floor changes are
+  not reachable through it. To leave, the operator walks out or uses the altar teleporter.
+- **Opening the map takes `G` twice** from the 3D view: the first opens the menu (地图 `G`, 调查
+  `F`, 切换指针 `Tab`, 返回 `Esc`), the second opens the map.
 
 ### 4.5 What was left running
 
