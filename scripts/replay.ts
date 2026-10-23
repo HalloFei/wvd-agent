@@ -30,13 +30,16 @@
  *
  * - perception threw (a recogniser bug must not vanish behind `unknown`);
  * - perception returned no observation at all (the composite's contract says it always returns one);
+ * - it read `chest-qte` with a payload that has no readable zones (a recogniser may violate its
+ *   type at runtime; that is a named failure for frame N, not a crash);
  * - it read `chest-qte` with zones that do not fit the geometry `measurements.json` recorded for the
  *   recording — the "plausible garbage" the parser exists to refuse (research-qte-parser §10);
  * - the decoded stream ended with a partial frame, or ffmpeg produced a frame the harness could not
  *   turn into an image.
  *
  * A malformed or absent `measurements.json` disables only the geometry check (a recording may be
- * replayed before it has measurements); everything else still runs. A setup failure — no video,
+ * replayed before it has measurements); everything else still runs. It **warns** when it does so, so
+ * a switched-off cross-check cannot be mistaken for one that passed. A setup failure — no video,
  * `ffmpeg`/`ffprobe` missing, ffmpeg exiting non-zero — throws rather than returning a tally that
  * would look like a measurement.
  *
@@ -226,9 +229,15 @@ async function observeFrame(
   }
   screens[observation.screen] += 1;
 
-  if (observation.screen === 'chest-qte' && recordedBar) {
-    const problem = geometryProblem(observation.qte, recordedBar);
-    if (problem) failures.push(`frame ${index}: chest-qte ${problem}`);
+  if (observation.screen === 'chest-qte') {
+    if (!hasReadableZones(observation.qte)) {
+      failures.push(`frame ${index}: chest-qte observation carries no readable zones`);
+      return;
+    }
+    if (recordedBar) {
+      const problem = geometryProblem(observation.qte, recordedBar);
+      if (problem) failures.push(`frame ${index}: chest-qte ${problem}`);
+    }
   }
 }
 
@@ -255,7 +264,7 @@ function messageOf(error: unknown): string {
  * real work. `hazardGap` is read when present (it measures the danger gap, not the fill gap); where
  * a recording omits it, the adjacent zone edges imply it.
  */
-interface RecordedBar {
+export interface RecordedBar {
   readonly left: readonly [number, number];
   readonly right: readonly [number, number];
   /** The danger gap between them; adjacent rectangles imply it, a recording may state it. */
@@ -268,25 +277,37 @@ const GEOMETRY_WIDTH_SLACK_PX = 2 * GEOMETRY_EDGE_SLACK_PX;
 /** Centres are the thing a tap plan uses; measured spread was ±5.5 px. */
 const GEOMETRY_CENTRE_SLACK_PX = 10;
 
-async function readRecordedBar(dir: string): Promise<RecordedBar | null> {
+export async function readRecordedBar(dir: string): Promise<RecordedBar | null> {
   let text: string;
   try {
     text = await readFile(join(dir, 'measurements.json'), 'utf8');
   } catch {
-    return null; // No measurements: replay everything except the geometry cross-check.
+    warn(`no measurements.json in ${dir}; the chest-qte geometry cross-check is off`);
+    return null;
   }
+
+  let bar: RecordedBar | null = null;
   try {
     const parsed = JSON.parse(text) as {
       bar?: { leftZone?: unknown; hazardGap?: unknown; rightZone?: unknown };
     };
     const left = readablePair(parsed.bar?.leftZone);
     const right = readablePair(parsed.bar?.rightZone);
-    if (!left || !right) return null;
-    const gap = readablePair(parsed.bar?.hazardGap) ?? ([left[1], right[0]] as const);
-    return { left, right, gap };
+    if (left && right) {
+      const gap = readablePair(parsed.bar?.hazardGap) ?? ([left[1], right[0]] as const);
+      bar = { left, right, gap };
+    }
   } catch {
-    return null;
+    bar = null;
   }
+  if (!bar) {
+    warn(`measurements.json in ${dir} has no readable bar; the chest-qte geometry cross-check is off`);
+  }
+  return bar;
+}
+
+function warn(message: string): void {
+  console.warn(`replay: ${message}`);
 }
 
 function readablePair(value: unknown): readonly [number, number] | null {
@@ -297,8 +318,25 @@ function readablePair(value: unknown): readonly [number, number] | null {
   return [from, to];
 }
 
+/**
+ * The payload this harness dereferences, checked before it is touched. `QteState` says the zones
+ * are there; a recogniser is a separate module and can violate its own type at runtime, and the
+ * failure must stay a value for frame N (contracts §0.6), never a `TypeError` that kills the run.
+ */
+function hasReadableZones(value: unknown): value is QteState {
+  if (typeof value !== 'object' || value === null) return false;
+  const zones = (value as { zones?: unknown }).zones;
+  if (!Array.isArray(zones)) return false;
+  return zones.every((zone) => {
+    if (typeof zone !== 'object' || zone === null) return false;
+    const candidate = zone as { from?: unknown; to?: unknown };
+    return Number.isFinite(candidate.from) && Number.isFinite(candidate.to);
+  });
+}
+
 /** `null` when the zones fit the recording; otherwise the sentence that names what is wrong. */
-function geometryProblem(qte: QteState, bar: RecordedBar): string | null {
+export function geometryProblem(qte: unknown, bar: RecordedBar): string | null {
+  if (!hasReadableZones(qte)) return 'observation carries no readable zones';
   if (qte.zones.length !== 2) return `has ${qte.zones.length} zones, expected 2`;
 
   const recorded = [bar.left, bar.right] as const;
