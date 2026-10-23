@@ -106,7 +106,7 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
         type: 'integer', title: '按键时长', description: '每次按下保持的时间；30 fps 下 0 毫秒的按键会被丢弃。', minimum: 40, maximum: 500,
       },
       'worlds.wvd.escalationImageWidth': {
-        type: 'integer', title: '升级图像宽度', description: '发给模型前把帧缩到的宽度，像素。',
+        type: 'integer', title: '升级图像宽度', description: '发给模型前把帧缩到的宽度，像素。', minimum: 480, maximum: 1920,
       },
       'worlds.wvd.mapOpenTimeoutMs': {
         type: 'integer', title: '地图打开超时', description: '点击小地图后等待地图出现，毫秒。',

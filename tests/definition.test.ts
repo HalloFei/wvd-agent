@@ -62,24 +62,31 @@ describe('WVD World definition', () => {
     expect(createWorld().tools().map((tool) => tool.name)).toEqual(TOOL_NAMES);
   });
 
-  it('answers wvd_status with running false', async () => {
+  it('answers wvd_status in prose, because no session runs at mount', async () => {
     const status = createWorld().tools().find((tool) => tool.name === 'wvd_status')!;
     const result = await status.handler({}, callContext);
-    expect(JSON.parse(String(result))).toEqual({ running: false });
+    const text = typeof result === 'string' ? result : result.text;
+    expect(text).toContain('no session running');
   });
 
-  it('answers the three unwired tools with an unavailable failure', async () => {
+  it('wires the three escalation tools: each refuses, as a value, when there is nothing to answer', async () => {
     const world = createWorld();
-    for (const name of ['wvd_look', 'wvd_act', 'wvd_resume']) {
-      const tool = world.tools().find((candidate) => candidate.name === name)!;
-      expect(JSON.parse(String(await tool.handler({}, callContext)))).toEqual({ ok: false, reason: 'unavailable' });
-    }
+    const look = await world.tools().find((candidate) => candidate.name === 'wvd_look')!.handler({}, callContext);
+    expect(look).toMatchObject({ text: 'not captured: no session is running', failed: true });
+
+    const act = await world.tools().find((candidate) => candidate.name === 'wvd_act')!.handler({ kind: 'tap', x: 1, y: 1 }, callContext);
+    expect(act).toMatchObject({ text: 'not sent: no question is waiting; the loop is running on its own', failed: true });
+
+    const resume = await world.tools().find((candidate) => candidate.name === 'wvd_resume')!.handler({}, callContext);
+    expect(resume).toMatchObject({ text: 'not resumed: nothing is waiting for an answer', failed: true });
   });
 
-  it('describes every tool it can give and declares no events', () => {
+  it('describes every tool it can give and declares the events it pushes', () => {
     const describe = WVD_DEFINITION.describe!;
     expect(describe.tools.map((tool) => tool.name)).toEqual(TOOL_NAMES);
-    expect(describe.events).toEqual([]);
+    expect(describe.events.map((event) => event.type)).toEqual(['wvd.stuck', 'wvd.stopped']);
+    expect(describe.events.every((event) => event.trigger === 'flush')).toBe(true);
+    expect(describe.events.every((event) => event.tags?.includes('snapshot'))).toBe(true);
   });
 
   it('mounts and stops without waking the bot', async () => {

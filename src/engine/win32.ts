@@ -135,6 +135,35 @@ export class Win32Capture implements FrameSource {
   }
 }
 
+/** A JPEG exactly as the child encoded it, with the size it was encoded at. */
+export interface CapturedJpeg {
+  readonly bytes: Uint8Array;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The escalation snapshot (contracts §5): the child's newest frame, **re-encoded by nobody**.
+ *
+ * The World asks for a second capture rather than re-encoding `Frame.toRgba()` — that would spend
+ * ~100 ms undoing the encode the child already paid for, and lose a second generation of JPEG. The
+ * request carries `maxWidth` (`escalationImageWidth`) so a downscaling child costs the World nothing;
+ * **the child does not downscale yet**, so the bytes come back at native size and the returned size
+ * says so. The remaining work is child-side: `protocol.mjs`'s `decodeRequest` drops the field and
+ * `jpeg-worker.mjs` would encode the downscaled copy. Recorded in the Task 10 report.
+ *
+ * A failure is the same `EngineCaptureError` the plain capture throws: the caller decides whether a
+ * question without an image is still worth asking (it is — the text carries the perception line).
+ */
+export async function captureJpeg(engine: EngineRequester, maxWidth?: number): Promise<CapturedJpeg> {
+  const reply = await engine.request(maxWidth === undefined ? { op: 'capture' } : { op: 'capture', maxWidth });
+  if (!reply.ok) throw new EngineCaptureError(reply.error, reply.detail);
+  const { jpeg: base64, width, height, ageMs } = captureValue(reply.value);
+  // the same freshness rule as a perception capture: an old frame that looks new is worse than none
+  if (isStaleFrame(ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
+  return { bytes: Uint8Array.from(Buffer.from(base64, 'base64')), width, height };
+}
+
 /** The capture value a well-behaved child sends; anything else is the protocol lying. */
 function captureValue(value: unknown): EngineCapture {
   if (typeof value !== 'object' || value === null) throw new EngineCaptureError('unavailable', 'malformed-capture');
