@@ -3,43 +3,53 @@
  * `Observation` to the next `Intent`.
  *
  * It only knows what the contracts declare — the screen and its payload, the remaining willpower and
- * how many chests are left — never a parser's internals. The route procedure it encodes:
+ * how many chests are left — never a parser's internals. The procedure it encodes:
  *
  * - out of willpower is a stop: no member can open another chest;
  * - a battle is fought, not avoided;
- * - a chest's opener panel is opened; the QTE is the loop's business (it has the timing), so the
- *   route just waits while the bar is on screen;
- * - with the map open, walk to the nearest chest shown on it; once the chest budget is spent, leave
- *   by the exit (the cross-floor command, `移动至出口`);
- * - the map is the decision surface, so any other screen opens it while chests remain.
- *
- * Grid distance is Manhattan: the map's tiles are square and the command walks the grid.
+ * - the map is the one movement surface: with it open, walk to the nearest chest shown on it; once
+ *   the chest budget is spent, leave by the exit (the cross-floor command, `移动至出口`);
+ * - every other screen is a wait or a hand-off, never a click. The policy only acts on screens it
+ *   has identified: a blind click can silently move the party to another floor (navigation §3c).
  */
-import type { Intent, Point, RouteState } from '../contracts.ts';
+import type { FarmPolicy, Intent, Point, RouteState } from '../contracts.ts';
 
-/** How long to wait for a screen that is still settling: loading, or a QTE the loop is timing. */
+/**
+ * Below this the screen is not identified well enough to act on. 0.5, not 0: a parser that is half
+ * sure of a screen must not become a click, and only the `unknown` sentinel is allowed to sit at 0
+ * (contracts §2: `unknown` is a real answer, not a fallback to be smoothed over).
+ */
+const CONFIDENCE_FLOOR = 0.5;
+
+/** A wait that hands the decision back to the loop; the session classifier counts repeats. */
+const HANDOFF_MS = 250;
+
+/** A screen that is still settling: loading, or a QTE the loop is timing with its own clock. */
 const SETTLE_MS = 100;
 
 /**
  * The next thing to do. Pure and total: every `RouteState` yields an `Intent`; a condition the
- * route cannot act on is a `stop`, never a throw (contracts §0.6).
+ * route cannot act on is a `wait` or a `stop`, never a throw (contracts §0.6).
  */
 export function nextIntent(state: RouteState): Intent {
+  // The hard stop is <= 0, the only threshold RouteState supports. The chest spec bars any member
+  // below 60 willpower from opening, and this state carries no usable-opener signal — so between 0
+  // and 60 the chest module refuses the opener while the route cannot see why. That gap is not
+  // closed by widening a contract here: the loop must bound the retries and hand the stall to the
+  // session classifier (Task 10's obligation, recorded in the Task 7 report).
   if (state.willpower.length > 0 && state.willpower.every((willpower) => willpower <= 0)) {
     return { kind: 'stop', reason: 'willpower-exhausted' };
   }
 
   const observation = state.observation;
+  // A screen we did not identify is a wait, never a click.
+  if (observation.screen === 'unknown' || observation.confidence < CONFIDENCE_FLOOR) {
+    return { kind: 'wait', ms: HANDOFF_MS };
+  }
+
   switch (observation.screen) {
     case 'combat':
       return { kind: 'fight' };
-    case 'loading':
-      return { kind: 'wait', ms: SETTLE_MS };
-    case 'chest-open':
-      return { kind: 'open-chest' };
-    case 'chest-qte':
-      // the QTE needs the loop's measured tap timing; the route never guesses it
-      return { kind: 'wait', ms: SETTLE_MS };
     case 'dungeonmap': {
       if (state.chestsRemaining <= 0) return { kind: 'exit' };
       const chests = observation.map.icons
@@ -49,14 +59,35 @@ export function nextIntent(state: RouteState): Intent {
       // the floor shows no chest although one is budgeted: the exit is the next information source
       return { kind: 'exit' };
     }
+    case 'town':
+      // a dungeon route: nothing in town to farm
+      return { kind: 'exit' };
+    case 'loot':
+    case 'worldmap':
+      // the chest module owns loot; the loop owns the world map
+      return { kind: 'wait', ms: HANDOFF_MS };
+    case 'chest-open':
+      // the chest module owns the opener panel; the route does not click it blind
+      return { kind: 'wait', ms: HANDOFF_MS };
+    case 'chest-qte':
+    case 'loading':
+      return { kind: 'wait', ms: SETTLE_MS };
     default:
-      // the 3D view, town, world map, loot or an unknown screen: the map is the decision surface
-      return state.chestsRemaining > 0 ? { kind: 'open-map' } : { kind: 'exit' };
+      // every ScreenId above has a rule; a newly added screen lands here as a wait, never a click
+      return { kind: 'wait', ms: HANDOFF_MS };
   }
 }
 
+/** The contracts §9 binding: Task 10 consumes this, not a free function. */
+export const routePolicy: FarmPolicy = { next: nextIntent };
+
 const manhattan = (a: Point, b: Point) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 
+/**
+ * Nearest by Manhattan distance — a proxy for ordering only: the map contract carries no walls or
+ * reachability, so this is not "the command can walk there". Ties go to the lowest x, then the
+ * lowest y, so the same map always chooses the same chest.
+ */
 function nearest(from: Point, points: readonly Point[]): Point {
   let best = points[0]!;
   let bestDistance = manhattan(from, best);
@@ -65,6 +96,8 @@ function nearest(from: Point, points: readonly Point[]): Point {
     if (distance < bestDistance) {
       best = point;
       bestDistance = distance;
+    } else if (distance === bestDistance && (point.x < best.x || (point.x === best.x && point.y < best.y))) {
+      best = point;
     }
   }
   return best;
