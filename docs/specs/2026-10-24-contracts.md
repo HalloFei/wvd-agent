@@ -127,9 +127,11 @@ export interface Actuator {
 }
 ```
 
-Transport-specific facts stay inside the implementation: the Win32 actuator refuses with
-`{ ok:false, reason:'unavailable', detail:'not-foreground' }`. The contract says *unavailable*, and
-the detail carries why. A different transport reports its own detail without changing callers.
+Transport-specific facts stay inside the implementation. A refused precondition is `rejected`; a
+capability that cannot be exercised at all is `unavailable`. The Win32 actuator therefore answers
+`{ ok:false, reason:'rejected', detail:'not-foreground' }` when the game is not foreground, and
+`unavailable` when there is no window or no engine. A different transport reports its own detail
+without changing callers.
 
 Every action asserts its precondition first and sends nothing when it fails. A press is held at
 least 60 ms: a 0 ms press is dropped at 30 fps.
@@ -159,16 +161,23 @@ export type EngineEvent =
   | { kind: 'engineProblem'; detail: string };
 ```
 
-The child captures continuously on its own cadence and answers `capture` from its newest frame, so
-the World never waits for a capture. A successful `capture` reply's `value` is an `EngineCapture`; a
+The child captures continuously on its own cadence and answers `capture` from its newest frame
+rather than taking a new one. The reply's `ageMs` is the authority for what the frame shows; the round
+trip is latency, not freshness, and a loop that treats a short round trip as a fresh frame is wrong by
+the age. A successful `capture` reply's `value` is an `EngineCapture`; a
 frame older than three ticks (300 ms at the default tick) is `{ ok:false, error:'timeout' }` instead,
 because a stale frame that looks fresh is how a QTE tap lands in the hazard gap. `ageMs` is the
 duration from capture start to reply on the child's clock; the World stamps
 `atMs = performance.now() - ageMs`, so §0.4 holds: the child reports durations, never timestamps.
 
+Input is not free: the child answers `tap` and `key` with `{ inputMs }`, the duration from request
+receipt to the `SendInput` call completing, so a planner adds a measured leg instead of assuming one.
+`doubleTap` is one request, so its two clicks are timed inside the child.
+
 The child also sends events unsolicited: `stopHotkey` when the global stop key is pressed, and
 `engineProblem` with a `detail` when a capability is not available. An unregistered stop hotkey is
-`detail: 'stop-hotkey-unregistered'`; a session must not run believing the stop key works.
+`detail: 'stop-hotkey-unregistered'`; a slow encoder fallback is `detail: 'native-encoder-unavailable'`.
+A session must not run believing the stop key works, and must not time a QTE on a 5 fps frame path.
 
 ## 6. Policy
 
