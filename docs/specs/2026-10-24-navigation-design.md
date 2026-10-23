@@ -142,20 +142,24 @@ Driven through the engine with the operator's authorisation, on `B1F -巨坑-`:
   the key is inert.
 - **A tile click still needs `R` (pointer mode)**, shows 自动移动 beside the target, and needs a click
   on that element to confirm. It is a second, slower path to the same command.
-- **Automove does not cross floors** (operator, 2026-10-24). It stays on the current floor.
-- **Crossing is a tile, not a command.** A floor is left by standing on the special next-floor tile —
-  the white outlined cell on the map, which is how FFXI 4F is built (operator, 2026-10-24). So the
-  route is: farm the floor, `F` (移动至出口) to walk to the exit area, then **step onto the tile**.
-  Automove stops at the tile; the transition is a step, not an automove. The step itself has not yet
-  been observed from the engine, so its trigger (walk forward, or a confirm) is open.
+- **Crossing floors is the exit's job, not the chest's.** Automove to a chest never leaves the floor.
+  Automove to the **exit** (`F`) does: pressed on `B1F -巨坑-`, the party walked to the special
+  next-floor tile and the screen changed to `B2F -圣堂-`, `X:9 Y:1`, with no further input (observed
+  2026-10-24 night). So the transition tile is a map destination like any other — it is the
+  destination that crosses, not a special key.
+- The operator's constraint is narrower than "no crossing": the route must not expect automove to
+  reach a **previous** floor, and chest moves stay within one floor. Descending through the exit is
+  the mechanism FFXI 4F uses.
+- What is still unobserved: the reverse direction (back up), and whether a floor transition can be
+  triggered from a tile the party is already standing on.
 
 ## 4. What this means for the route policy
 
 - A chest run is: press `G` twice, press `L`, wait for the walk (and any battle it drags in), open
   the chest, press `L` again until no chests remain. No tile coordinates are needed for movement.
-- Automove is **single-floor**. Leaving the floor is not a map command: the route ends when the
-  chests are gone, and a human (or the altar menu) moves the party. Any plan that assumed automove
-  would climb stairs was wrong.
+- Chest moves are single-floor; the **exit move crosses down** (observed `B1F → B2F`). So a route can
+  descend by pressing `F` once the floor's chests are done, and the next floor starts a fresh sweep.
+  Going back up is not established.
 - No pathfinding, no corridor vision. The map is the only perception input for movement, and it is a
   high-contrast grid with a floor title and `X/Y` coordinates.
 - Because icons are random, every run is a fresh search; a recorded route is worthless as
