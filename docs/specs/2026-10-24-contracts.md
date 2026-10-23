@@ -73,6 +73,8 @@ export interface Point { readonly x: number; readonly y: number }
 export interface MapIcon { readonly kind: 'chest' | 'stairs' | 'hazard' | 'haken'; readonly at: Point }
 
 export interface MapState {
+  /** The Latin floor token, e.g. 'B1F'. The localized name beside it is not read: one sample is not
+   *  a reader, and a wrong title is worse than a token that only proves the floor. */
   readonly floorTitle: string;
   readonly player: Point;               // grid coordinates, e.g. {x:19,y:21}
   readonly icons: readonly MapIcon[];
