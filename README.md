@@ -8,7 +8,9 @@ from its extension directory. Coopanion itself is a sibling checkout, consumed u
 
 ## Status
 
-Design complete, implementation not started. Binding declarations live in
+Implementation under way: the engine child (capture, foreground-guarded input, native decode, stop
+hotkey), the frame ring, dungeon-map reading and the route state machine exist. The World loop, the
+automove command chain and the chest policy are still open. Binding declarations live in
 [`docs/specs/2026-10-24-contracts.md`](docs/specs/2026-10-24-contracts.md); the work is sequenced in
 [`docs/plans/2026-10-24-wvd-world-v1.md`](docs/plans/2026-10-24-wvd-world-v1.md).
 
@@ -18,6 +20,15 @@ Design complete, implementation not started. Binding declarations live in
 | [contracts](docs/specs/2026-10-24-contracts.md) | **Binding.** Types, engine protocol, configuration, ownership |
 | [chest policy](docs/specs/2026-10-24-chest-policy-design.md) | The QTE, willpower economy, reroll, timing model |
 | [navigation](docs/specs/2026-10-24-navigation-design.md) | The map command chain and its stop states |
+| [live control guide](docs/guides/2026-10-24-live-control-guide.md) | How to drive the game with this tool: the verified clicks, keys and coordinates, the engine API, and the open automove blocker |
+
+## Operating it live
+
+The [live control guide](docs/guides/2026-10-24-live-control-guide.md) is the operator's and the
+agent's procedure: starting the game, the world map, 北穿幽冥城, the target floor, the dungeon map,
+the key legend, and what is still unverified. Read its safety section first — input reaches the game
+only on an explicit request, and UU accelerator must not be driven from here (it runs elevated).
+
 
 ## How it reaches the app
 

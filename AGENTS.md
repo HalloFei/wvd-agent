@@ -42,6 +42,7 @@ fact, not the module that happens to use it.
 | `scripts/` | Replay harness and one-off tools |
 | `docs/specs/` | Design and decision records; `2026-10-24-contracts.md` is binding |
 | `docs/plans/` | The implementation plan being executed |
+| `docs/guides/` | The operating guidebook: live clicks, keys, coordinates and open blockers |
 | `testdata/` | Recorded frames and route logs used as fixtures |
 
 This repository is the submodule `wvd-agent` of the umbrella workspace `DeepSeek_Coopanion/`, which
@@ -54,6 +55,11 @@ directory; the source of truth stays here.
   operator. Default state: idle, hands off.
 - Never let the agent act while the operator is using the machine without announcing the session
   first; the World takes the foreground and must say so.
+- Operating the game by hand or by probe starts with
+  [`docs/guides/2026-10-24-live-control-guide.md`](docs/guides/2026-10-24-live-control-guide.md):
+  its safety section is binding too, and it records which steps are verified and which are open.
+- UU accelerator runs elevated and cannot be driven by this tool (Windows UIPI); leave it to the
+  operator.
 - Specs live in `docs/specs/` as `YYYY-MM-DD-<topic>-design.md`.
 - `src/contracts.ts` mirrors `docs/specs/2026-10-24-contracts.md` declaration for declaration; a
   change to one is a change to the other in the same commit.
