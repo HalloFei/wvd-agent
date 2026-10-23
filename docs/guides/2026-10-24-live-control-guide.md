@@ -106,9 +106,12 @@ during the night's run: `X:19 Y:21` → `X:11 Y:19` after one `L`, with two enco
 route. The game chooses the chest — the command means "go to a chest", not "go to the chest I
 picked".
 
-**Slow path — pointer mode.** Press **R** first, click a chest tile, then click the `自动移动`
-element that appears. It is the way to reach a *specific* tile, but it needs two interactions and
-a detector for the element.
+**Slow path — pointer mode.** Press **R** first, then click a **black tile**. Black is the road:
+the dark cells are walkable floor, the white lines are walls, and a click on anything that is not a
+road tile does nothing. The `自动移动` element then appears next to that tile — click it and the map
+closes and the party walks. Verified 2026-10-24 night: one click on a dark tile at `(878, 384)` in
+`B1F -巨坑-` started the move. Two interactions, and a detector for the element; that is the cost of
+choosing a *specific* tile rather than letting `L` choose.
 
 Two facts that bound it:
 
