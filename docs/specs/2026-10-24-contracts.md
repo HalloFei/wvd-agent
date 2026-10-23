@@ -221,6 +221,14 @@ that produces a valid `Observation` requires no policy change.
 ## 7. QTE timing
 
 ```ts
+/**
+ * `atMs` is a **delay from the frame that produced `markerX`**, not a timestamp — the signature carries
+ * no clock, and §0.4's one-clock rule is satisfied by the caller adding `frame.atMs`. A planner that
+ * compares it to `frame.atMs` instead of adding it is wrong by a whole session.
+ *
+ * It carries no `qteMinWindowMs` check either: a window shorter than the floor is refused by the
+ * **caller**, who is the only one that knows the configured floor.
+ */
 export interface TapPlan { readonly atMs: number; readonly target: number }
 
 /**
