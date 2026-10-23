@@ -29,8 +29,10 @@ export interface FrameSource {
 
 // §2 Screens
 
+/** `dungeon` is the 3D exploration view: party walking, HUD up, no map open. The route opens the map
+ *  from it; it is distinct from `unknown` (a black or uniform frame has no HUD at all). */
 export type ScreenId =
-  | 'town' | 'worldmap' | 'dungeonmap' | 'combat'
+  | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'loot' | 'loading' | 'unknown';
 
 // §3 Perception

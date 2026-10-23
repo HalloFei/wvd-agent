@@ -7,6 +7,7 @@
  *
  * - out of willpower is a stop: no member can open another chest;
  * - a battle is fought, not avoided;
+ * - in the 3D dungeon view, open the map while a chest remains, else leave;
  * - the map is the one movement surface: with it open, walk to the nearest chest shown on it; once
  *   the chest budget is spent, leave by the exit (the cross-floor command, `移动至出口`);
  * - every other screen is a wait or a hand-off, never a click. The policy only acts on screens it
@@ -50,6 +51,9 @@ export function nextIntent(state: RouteState): Intent {
   switch (observation.screen) {
     case 'combat':
       return { kind: 'fight' };
+    case 'dungeon':
+      // the 3D view: the map is the decision surface, and only while there is something to farm
+      return state.chestsRemaining > 0 ? { kind: 'open-map' } : { kind: 'exit' };
     case 'dungeonmap': {
       if (state.chestsRemaining <= 0) return { kind: 'exit' };
       const chests = observation.map.icons

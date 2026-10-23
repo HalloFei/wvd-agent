@@ -11,7 +11,7 @@ function routeState(observation: Observation, willpower: number[], chestsRemaini
 
 /** A screen with no payload, at any confidence. */
 function screen(
-  kind: 'town' | 'worldmap' | 'loot' | 'loading' | 'unknown',
+  kind: 'town' | 'worldmap' | 'dungeon' | 'loot' | 'loading' | 'unknown',
   confidence = CONFIDENCE,
 ): Observation {
   return { screen: kind, atMs: AT, confidence };
@@ -49,6 +49,16 @@ describe('the FFXI 4F route state machine', () => {
     expect(routePolicy.next(routeState(combat, [80], 3))).toEqual({ kind: 'fight' });
   });
 
+  it('opens the map from the 3D dungeon view while chests remain', () => {
+    expect(nextIntent(routeState(screen('dungeon'), [80], 1))).toEqual({ kind: 'open-map' });
+  });
+
+  it('leaves by the exit from the 3D dungeon view when the chest budget is spent', () => {
+    expect(nextIntent(routeState(screen('dungeon'), [80], 0))).toEqual({ kind: 'exit' });
+  });
+
+  // the pair with the test above and the one below is the point: a screen that shows a HUD acts,
+  // a frame that could not be identified waits
   it('waits on an unknown screen instead of opening the map', () => {
     expect(nextIntent(routeState(screen('unknown'), [80], 1))).toEqual(WAIT_SLOW);
   });
