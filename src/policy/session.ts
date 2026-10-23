@@ -8,11 +8,12 @@
  *
  * The verdicts:
  *
- * - `stop`: nothing was perceived (a uniform or black frame is `unknown` at confidence 0, contracts
- *   §2), or the hourly escalation budget is spent. With no budget left a session cannot ask for
- *   help, and §8.5 defines the cap as "model calls before the session stops". A missing window is
- *   an engine failure, not an observation: the loop must stop on it itself (§0.6) rather than ask
- *   for a verdict, because one `Observation` cannot say "no window".
+ * - `stop`: nothing was perceived — confidence 0 or less, whatever the screen label says (a uniform
+ *   or black frame is `unknown` at confidence 0, contracts §2, and a frame nobody identified must
+ *   never continue a session) — or the hourly escalation budget is spent. With no budget left a
+ *   session cannot ask for help, and §8.5 defines the cap as "model calls before the session stops".
+ *   A missing window is an engine failure, not an observation: the loop must stop on it itself
+ *   (§0.6) rather than ask for a verdict, because one `Observation` cannot say "no window".
  * - `escalate`: perception saw something it could not name (`unknown` with confidence > 0), or named
  *   a screen with too little confidence for the route to act on (below the route's 0.5 floor). A
  *   human can look at that frame and decide.
@@ -30,24 +31,23 @@ import type { RouteState, SessionVerdict } from '../contracts.ts';
  * The route's acting floor, mirrored because a module may not import another module's
  * implementation (contracts §0.1). The route treats a screen below 0.5 as not identified well
  * enough to act on, so below 0.5 is exactly the case where a human could usefully look.
+ * `tests/session.test.ts` cross-checks the two numbers through the two public functions so they
+ * cannot drift apart unnoticed.
  */
 const ACTING_CONFIDENCE_FLOOR = 0.5;
-
-/** Mirrors `escalateMaxPerHour`'s §8.5 default; the composition root should pass its configured cap. */
-const DEFAULT_ESCALATE_MAX_PER_HOUR = 20;
 
 /**
  * The verdict for one observation. `escalationsThisHour` is what the caller has already spent in
  * its own rolling hour — the window, its reset and the counting are the caller's business.
  *
- * `escalateMaxPerHour` is the caller's configured cap (§8.5), passed in because config belongs to
- * the composition root (§0.3). The default mirrors the spec's default so a two-argument call is
- * safe, but a tuned cap reaches this function only when it is passed.
+ * `escalateMaxPerHour` is the caller's configured cap (§8.5) and is deliberately required: config
+ * belongs to the composition root (§0.3), and a default here would silently replace the operator's
+ * tuned value with the spec's 20 (review, Important 1).
  */
 export function classify(
   state: RouteState,
   escalationsThisHour: number,
-  escalateMaxPerHour: number = DEFAULT_ESCALATE_MAX_PER_HOUR,
+  escalateMaxPerHour: number,
 ): SessionVerdict {
   // Checked first: a session that cannot ask for help must not run on, whatever the frame shows.
   // `>=`: `escalationsThisHour` counts calls already made, so at the cap the next one would exceed
@@ -56,8 +56,11 @@ export function classify(
 
   const { screen, confidence } = state.observation;
 
-  // A uniform or black frame: nothing was seen to act on or to ask about.
-  if (screen === 'unknown' && confidence <= 0) return 'stop';
+  // No confidence at all: nothing was perceived, so there is nothing to act on and nothing to ask
+  // a human about. One rule for every label (review, Minor 2): by contract only `unknown` sits at
+  // 0 (contracts §2), so a named screen at 0 is a perceiver bug — and a frame nobody identified
+  // must never continue the session, whether it was labelled or not.
+  if (confidence <= 0) return 'stop';
 
   // Something was seen but not named, so a human can look at the frame and name it.
   if (screen === 'unknown') return 'escalate';
