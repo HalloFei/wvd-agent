@@ -13,7 +13,7 @@ import type {
   FrameSource,
   RgbaImage,
 } from '../contracts.ts';
-import type { EngineCapture, EngineForeground } from './protocol.ts';
+import { isStaleFrame, type EngineCapture, type EngineForeground } from './protocol.ts';
 
 /** The part of the engine the World needs; `EngineClient` (./child.ts) satisfies it, tests fake it. */
 export interface EngineRequester {
@@ -64,12 +64,13 @@ export class Win32Capture implements FrameSource {
   constructor(private readonly engine: EngineRequester) {}
 
   async capture(): Promise<Frame> {
-    // the World's clock, read before the capture starts (contracts §0.4: the child reports no timestamps)
-    const atMs = performance.now();
     const reply = await this.engine.request({ op: 'capture' });
     if (!reply.ok) throw new EngineCaptureError(reply.error, reply.detail);
-    const { jpeg: base64, width, height } = captureValue(reply.value);
+    const { jpeg: base64, width, height, ageMs } = captureValue(reply.value);
+    if (isStaleFrame(ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
     const bytes = Uint8Array.from(Buffer.from(base64, 'base64'));
+    // the child reports a duration, never a timestamp (§0.4): the World stamps the frame from it
+    const atMs = performance.now() - ageMs;
     return {
       atMs,
       width,
@@ -85,13 +86,14 @@ export class Win32Capture implements FrameSource {
 /** The capture value a well-behaved child sends; anything else is the protocol lying. */
 function captureValue(value: unknown): EngineCapture {
   if (typeof value !== 'object' || value === null) throw new EngineCaptureError('unavailable', 'malformed-capture');
-  const { jpeg: base64, width, height } = value as Partial<EngineCapture>;
+  const { jpeg: base64, width, height, ageMs } = value as Partial<EngineCapture>;
   if (
     typeof base64 !== 'string'
     || typeof width !== 'number' || !Number.isInteger(width) || width <= 0
     || typeof height !== 'number' || !Number.isInteger(height) || height <= 0
+    || typeof ageMs !== 'number' || !Number.isFinite(ageMs) || ageMs < 0
   ) {
     throw new EngineCaptureError('unavailable', 'malformed-capture');
   }
-  return { jpeg: base64, width, height };
+  return { jpeg: base64, width, height, ageMs };
 }

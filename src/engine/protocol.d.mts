@@ -2,23 +2,13 @@
  * Types of the `.mjs` wire codec (protocol.mjs), so the World's TypeScript sees the same codec the
  * child runs. Kept beside the implementation; the two change together.
  */
-import type { EngineReply, EngineRequest } from '../contracts.ts';
+import type { EngineCapture, EngineEvent, EngineReply, EngineRequest } from '../contracts.ts';
 
-/** An unsolicited message from the child; the stop hotkey is the only one (R3). */
-export interface EngineEvent {
-  readonly kind: 'stopHotkey';
-}
+export type { EngineCapture, EngineEvent } from '../contracts.ts';
 
 /** The value of a `foreground` reply: whether the game window holds the foreground. */
 export interface EngineForeground {
   readonly foreground: boolean;
-}
-
-/** The value of a `capture` reply: the JPEG as base64, and the device pixels it covers. */
-export interface EngineCapture {
-  readonly jpeg: string;
-  readonly width: number;
-  readonly height: number;
 }
 
 /** A §5 request as it goes on the wire: the correlation id the child must echo. */
@@ -32,6 +22,11 @@ export type WireMessage =
   | { readonly request: WireRequest }
   | { readonly reply: EngineReply }
   | { readonly event: EngineEvent };
+
+/** Three ticks at the default 100 ms tick: a frame older than this is refused (ruling R11). */
+export declare const FRAME_MAX_AGE_MS: number;
+
+export declare function isStaleFrame(ageMs: number): boolean;
 
 export declare function encodeRequest(id: number, request: EngineRequest): string;
 

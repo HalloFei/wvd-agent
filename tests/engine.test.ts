@@ -1,7 +1,7 @@
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
-import type { EngineReply, EngineRequest } from '../src/contracts.ts';
-import { LineDecoder, decodeLine, encodeEvent, encodeReply, encodeRequest } from '../src/engine/protocol.ts';
+import type { EngineEvent, EngineReply, EngineRequest } from '../src/contracts.ts';
+import { FRAME_MAX_AGE_MS, LineDecoder, decodeLine, encodeEvent, encodeReply, encodeRequest } from '../src/engine/protocol.ts';
 import { connectEngine, startEngine } from '../src/engine/child.ts';
 import { sendInput, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
 
@@ -38,6 +38,11 @@ describe('engine protocol', () => {
 
   it('round-trips the stop-hotkey event', () => {
     expect(decodeLine(encodeEvent({ kind: 'stopHotkey' }))).toEqual({ event: { kind: 'stopHotkey' } });
+  });
+
+  it('round-trips an engineProblem event with its detail', () => {
+    const event = { kind: 'engineProblem', detail: 'stop-hotkey-unregistered' } as const;
+    expect(decodeLine(encodeEvent(event))).toEqual({ event });
   });
 
   it('drops malformed lines instead of turning them into messages', () => {
@@ -107,14 +112,15 @@ describe('Win32Capture', () => {
   // a colour the JPEG round trip keeps: black/white edges would hide a channel swap
   const RGBA = new Uint8Array(Array.from({ length: WIDTH * HEIGHT }, () => [40, 120, 200, 255]).flat());
   const JPEG = jpeg.encode({ data: RGBA, width: WIDTH, height: HEIGHT }, 95).data;
-  const captureReply = (): EngineReply => ({
+  const captureReply = (ageMs = 0): EngineReply => ({
     id: 2,
     ok: true,
-    value: { jpeg: Buffer.from(JPEG).toString('base64'), width: WIDTH, height: HEIGHT },
+    value: { jpeg: Buffer.from(JPEG).toString('base64'), width: WIDTH, height: HEIGHT, ageMs },
   });
 
   it('returns a frame whose atMs precedes the capture and whose size the engine reports', async () => {
-    const engine = new FakeEngine((request) => (request.op === 'capture' ? captureReply() : { id: 1, ok: false, error: 'unavailable' }));
+    // the frame is 50 ms old when the reply arrives, so its capture instant is before the request
+    const engine = new FakeEngine((request) => (request.op === 'capture' ? captureReply(50) : { id: 1, ok: false, error: 'unavailable' }));
 
     const frame = await new Win32Capture(engine).capture();
 
@@ -145,9 +151,75 @@ describe('Win32Capture', () => {
     await expect(new Win32Capture(engine).capture())
       .rejects.toMatchObject({ reason: 'unavailable', detail: 'window-not-found' });
   });
+
+  it('stamps atMs from the reported age at reply time, not from the request time', async () => {
+    const AGE_MS = 120;
+    const DELAY_MS = 25;
+    const before = performance.now();
+    const engine: EngineRequester = {
+      async request() {
+        await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+        return captureReply(AGE_MS);
+      },
+    };
+
+    const frame = await new Win32Capture(engine).capture();
+    const after = performance.now();
+
+    // atMs = the reply instant minus ageMs, which cannot be the request instant 25 ms earlier
+    // (5 ms of slack for timer rounding; request-time semantics would be 25 ms below the bound)
+    expect(frame.atMs).toBeGreaterThanOrEqual(before + DELAY_MS - AGE_MS - 5);
+    expect(frame.atMs).toBeLessThanOrEqual(after - AGE_MS);
+  });
+
+  it('refuses a frame older than three ticks', async () => {
+    const engine = new FakeEngine(captureReply(FRAME_MAX_AGE_MS + 1));
+
+    await expect(new Win32Capture(engine).capture())
+      .rejects.toMatchObject({ reason: 'timeout', detail: 'stale-frame' });
+  });
+
+  it('serves a frame exactly at the three-tick boundary', async () => {
+    const engine = new FakeEngine(captureReply(FRAME_MAX_AGE_MS));
+
+    const frame = await new Win32Capture(engine).capture();
+
+    expect(frame.width).toBe(WIDTH);
+  });
+
+  it('refuses a capture value that carries no ageMs', async () => {
+    const engine = new FakeEngine({
+      id: 1,
+      ok: true,
+      value: { jpeg: Buffer.from(JPEG).toString('base64'), width: WIDTH, height: HEIGHT },
+    });
+
+    await expect(new Win32Capture(engine).capture())
+      .rejects.toMatchObject({ reason: 'unavailable', detail: 'malformed-capture' });
+  });
 });
 
 describe('engine child process', () => {
+  it.skipIf(process.platform !== 'win32')('reports an unregistered stop hotkey as engineProblem', async () => {
+    const engine = connectEngine(
+      startEngine({ title: `__wvd_no_such_window_${process.pid}__`, hotkey: 'NotAKey' }),
+      { timeoutMs: 15000 },
+    );
+    try {
+      const problem = await new Promise<EngineEvent>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no engineProblem event')), 10000);
+        engine.onEvent((event) => {
+          if (event.kind !== 'engineProblem') return;
+          clearTimeout(timer);
+          resolve(event);
+        });
+      });
+      expect(problem).toEqual({ kind: 'engineProblem', detail: 'stop-hotkey-unregistered' });
+    } finally {
+      engine.close();
+    }
+  }, 30000);
+
   it.skipIf(process.platform !== 'win32')('starts under this Node and answers the protocol without a window', async () => {
     const engine = connectEngine(
       startEngine({ title: `__wvd_no_such_window_${process.pid}__`, hotkey: '' }),

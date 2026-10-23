@@ -137,6 +137,13 @@ least 60 ms: a 0 ms press is dropped at 30 fps.
 ## 5. Engine protocol (World ↔ child)
 
 ```ts
+export interface EngineCapture {
+  readonly jpeg: string;   // base64, encoded in the child
+  readonly width: number;  // device pixels of the window's client area
+  readonly height: number;
+  readonly ageMs: number;  // capture start → reply, on the child's clock
+}
+
 export type EngineRequest =
   | { op: 'capture' }
   | { op: 'foreground' }
@@ -146,7 +153,22 @@ export type EngineRequest =
 export type EngineReply =
   | { id: number; ok: true; value: unknown }
   | { id: number; ok: false; error: ActionFailure; detail?: string };
+
+export type EngineEvent =
+  | { kind: 'stopHotkey' }
+  | { kind: 'engineProblem'; detail: string };
 ```
+
+The child captures continuously on its own cadence and answers `capture` from its newest frame, so
+the World never waits for a capture. A successful `capture` reply's `value` is an `EngineCapture`; a
+frame older than three ticks (300 ms at the default tick) is `{ ok:false, error:'timeout' }` instead,
+because a stale frame that looks fresh is how a QTE tap lands in the hazard gap. `ageMs` is the
+duration from capture start to reply on the child's clock; the World stamps
+`atMs = performance.now() - ageMs`, so §0.4 holds: the child reports durations, never timestamps.
+
+The child also sends events unsolicited: `stopHotkey` when the global stop key is pressed, and
+`engineProblem` with a `detail` when a capability is not available. An unregistered stop hotkey is
+`detail: 'stop-hotkey-unregistered'`; a session must not run believing the stop key works.
 
 ## 6. Policy
 

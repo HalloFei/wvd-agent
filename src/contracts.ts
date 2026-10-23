@@ -89,6 +89,15 @@ export interface Actuator {
 
 // §5 Engine protocol (World ↔ child)
 
+/** The value of a successful `capture` reply. The child captures on its own cadence and serves its
+ *  newest frame; `ageMs` is the duration from capture start to reply on the child's clock. */
+export interface EngineCapture {
+  readonly jpeg: string;   // base64, encoded in the child
+  readonly width: number;  // device pixels of the window's client area
+  readonly height: number;
+  readonly ageMs: number;  // capture start → reply, on the child's clock
+}
+
 export type EngineRequest =
   | { op: 'capture' }
   | { op: 'foreground' }
@@ -98,6 +107,12 @@ export type EngineRequest =
 export type EngineReply =
   | { id: number; ok: true; value: unknown }
   | { id: number; ok: false; error: ActionFailure; detail?: string };
+
+/** Unsolicited child → World messages. An unregistered stop hotkey is
+ *  `{ kind:'engineProblem', detail:'stop-hotkey-unregistered' }`. */
+export type EngineEvent =
+  | { kind: 'stopHotkey' }
+  | { kind: 'engineProblem'; detail: string };
 
 // §6 Policy
 

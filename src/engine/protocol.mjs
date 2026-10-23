@@ -16,8 +16,19 @@
 const OPS = new Set(['capture', 'foreground', 'tap', 'key']);
 const FAILURES = new Set(['unavailable', 'rejected', 'timeout']);
 
+/**
+ * Three ticks at the default 100 ms tick (contracts §0.5/§0.7). The child refuses to serve a frame
+ * older than this: a stale frame that looks fresh is how a QTE tap lands in the hazard gap (R11).
+ */
+export const FRAME_MAX_AGE_MS = 300;
+
 const isObject = (value) => typeof value === 'object' && value !== null;
 const isInteger = (value) => typeof value === 'number' && Number.isInteger(value);
+
+/** Whether a frame's age makes it too old to serve. `ageMs` is a duration on the child's clock. */
+export function isStaleFrame(ageMs) {
+  return !Number.isFinite(ageMs) || ageMs > FRAME_MAX_AGE_MS;
+}
 
 export function encodeRequest(id, request) {
   return `${JSON.stringify({ id, request })}\n`;
@@ -91,7 +102,12 @@ function decodeReply(reply) {
 }
 
 function decodeEvent(event) {
-  return isObject(event) && event.kind === 'stopHotkey' ? { kind: 'stopHotkey' } : null;
+  if (!isObject(event)) return null;
+  if (event.kind === 'stopHotkey') return { kind: 'stopHotkey' };
+  if (event.kind === 'engineProblem' && typeof event.detail === 'string') {
+    return { kind: 'engineProblem', detail: event.detail };
+  }
+  return null;
 }
 
 /** Splits a stream of chunks into whole lines; the leftovers wait for the next chunk. */
