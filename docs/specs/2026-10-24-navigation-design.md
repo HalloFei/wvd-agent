@@ -128,18 +128,40 @@ automove gesture succeeding — performed by the operator, or driven with explic
 recorded — before its detector and activation can be written. Until then the route stops at "standing
 on the map".
 
+## 3d. The command set, verified live 2026-10-24 night
+
+Driven through the engine with the operator's authorisation, on `B1F -巨坑-`:
+
+- **From the 3D view, `G` opens the menu; `G` again opens the dungeon map** (the menu lists 地图 `G`,
+  调查 `F`, 切换指针 `Tab`, 返回 `Esc`). Clicking the minimap also opens the map.
+- **On the map, keys are the commands, not buttons.** The right-hand list is a legend:
+  移动至宝箱 `L`, 移动至标记 `Q`, 移动至出口 `F`, 移动至目的地 `G`, 切换指针模式 `R`, 关闭 `X`.
+- **`L` works and is the whole movement command**: it closed the map and the party walked to a chest,
+  fighting two encounters on the way with auto-battle already on, and the readout changed from
+  `X:19 Y:21` to `X:11 Y:19`. The earlier attempt failed because the map had no focus, not because
+  the key is inert.
+- **A tile click still needs `R` (pointer mode)**, shows 自动移动 beside the target, and needs a click
+  on that element to confirm. It is a second, slower path to the same command.
+- **Automove does not cross floors** (operator, 2026-10-24). It stays on the current floor; stairs,
+  the exit and any floor change are not reachable through it. The altar teleporter is the only
+  floor-change mechanism seen so far.
+
 ## 4. What this means for the route policy
 
-- A chest run is: G, find the nearest reachable chest icon, click its tile, double-click automove,
-  wait, open the chest, repeat until no chests remain, then change floors via the exit.
-- No pathfinding, no keys, no corridor vision. The map is the only perception input for movement,
-  and it is a high-contrast grid with a floor title and `X/Y` coordinates.
+- A chest run is: press `G` twice, press `L`, wait for the walk (and any battle it drags in), open
+  the chest, press `L` again until no chests remain. No tile coordinates are needed for movement.
+- Automove is **single-floor**. Leaving the floor is not a map command: the route ends when the
+  chests are gone, and a human (or the altar menu) moves the party. Any plan that assumed automove
+  would climb stairs was wrong.
+- No pathfinding, no corridor vision. The map is the only perception input for movement, and it is a
+  high-contrast grid with a floor title and `X/Y` coordinates.
 - Because icons are random, every run is a fresh search; a recorded route is worthless as
   coordinates but valuable as a procedure.
-- Combat is not avoidable, so battle policy is on the critical path for any long route: every
-  enemy that touches the party must be fought.
-- The command is two clicks plus a popup, so the World must recognise the popup and the automove
-  control inside it, not just the tile.
+- Combat is not avoidable, so battle policy is on the critical path for any long route: every enemy
+  that touches the party must be fought, and the party's auto-battle does that unaided today.
+- `L` chooses the chest; the World does not. The policy's target is therefore advisory — it says "go
+  to a chest", and the game picks which one. A policy that needs a *specific* chest must use the
+  pointer-mode path and accept its two extra interactions.
 
 ## 5. Remaining questions
 
