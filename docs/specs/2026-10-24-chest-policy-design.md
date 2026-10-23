@@ -39,8 +39,13 @@ Measured on two chests; the second recorded at 30 fps (`testdata/chest/`).
 - Zones are **random per chest**: ~694–922 and 997–1223 on both samples, which is two samples, not a
   guarantee.
 - The marker **bounces** at the bar's ends and eases near them, so a prediction that crosses a
-  reversal is invalid.
-- The marker **brakes after the tap**: about 44 px of travel over ~300 ms in the recorded stop.
+  reversal is invalid. Its core centre reverses at **656.5 and 1261.5** — roughly 40 px outside each
+  zone, off the bar's end caps — not at the zone edges. A clamp at 694/1224 is wrong by one zone's
+  margin and would refuse reachable passes.
+- The marker's white core is **6–9 px wide**; the 13–17 px run around it is the hole it punches in the
+  zone's fill. Any run-length floor above 9 finds nothing.
+- The marker **brakes after the tap**: from the last full-speed frame it travels **68 px over ~500 ms**
+  to rest. An earlier reading of 44 px started from a frame already easing.
 
 The tap condition:
 
@@ -49,15 +54,16 @@ lead      = v * L + v * v / (2 * a)     # inertia + sliding distance
 tap when  x_now + lead == zone_centre    # i.e. x_now == zone_centre - lead
 ```
 
-`L` is 48.7–67.2 ms, measured on this machine. `a` is not yet fitted: the recorded stop gives
-44–84 px of slide depending on which frame the operator's click landed on. It must be fitted from
-taps the agent time-stamps itself.
+`L` is 48.7–67.2 ms, measured on this machine. `a` is not fitted per chest: the recorded stop implies
+**2740–3100 px/s²**, and it must be refined from taps the agent time-stamps itself. Speed itself needs
+**three frames spanning at least 66 ms** — two consecutive 30 fps frames carry a 20 px step and a
+5.8 % worst-case velocity error, and duplicate frames in a recording turn a naive pair into 0 then
+1215 px/s.
 
-The provisional value shipped in `qteDecelPxPerS2` is **3000 px/s²**, chosen so that the 44–84 px
-slide at ~600 px/s comes out in the right range (v²/2a = 60 px). It is a placeholder with a known
-error of a factor of two in either direction, not a measurement. Every tap the agent stamps refines
-it; until then, `planTap` must keep its refusal threshold (`qteMinWindowMs`) ahead of the error this
-constant can introduce.
+`qteDecelPxPerS2` ships as **3000 px/s²**, which the recorded stop now supports to within 10 % (the
+fitted range is 2740–3100). The 44 px reading would have implied 4228, so the constant was right for
+the wrong reason. Every tap the agent stamps refines it; until then, `planTap` must keep its refusal
+threshold (`qteMinWindowMs`) ahead of the error this constant can introduce.
 
 At 500 px/s the lead is ~80 px; at 1200 px/s it is ~330 px, wider than a zone. Fast chests are
 tapped **before the marker reaches the zone**, which is why the decision must be made within the
@@ -115,19 +121,30 @@ the route. The chest is consumed.
 
 Each of these cost a live attempt to discover, so they are recorded rather than rediscovered:
 
-- The cursor's white run is only **10–16 px tall**, not the 40 px the bar suggests. A threshold of
-  18 px finds nothing.
+- The bar occupies **rows 36–82** of a 1920×1080 frame, identical across 199 recorded frames and both
+  chests. It is a fixed HUD anchor: do not search for it vertically.
+- The marker's white core is **6–9 px wide**. A width floor of 18 px finds nothing.
+- Clip to **x 645–1275 before any run logic**. Without the window the lit wall yields 126–148 px runs,
+  which sit inside the zone-width tolerance and pass every shape test — the window is what stops it,
+  not the width rule.
 - Several **static** white runs sit on the bar (borders, segment edges). Eliminate runs present in
-  both frames before matching; the survivor is the cursor.
-- The bar is **centred on the screen**, about 960 ± 280 px, across all three chests seen. Searching
-  wider picks up the lit wall as a "zone".
+  both frames before matching; the survivor is the marker.
 - Each zone is **150–300 px wide** and the hazard gap **50–120 px**; a pair outside those bounds is
   scenery, not the bar.
-- The **解除 button** sits at the bar's centre x, at y 630–690 — not 553, where the chest's own gold
-  highlight fools a colour search. Its white hand glyph is the reliable anchor.
+- The **解除 button** sits at the bar's centre x — the midpoint between the two zones — at
+  **y = round(0.613·H)**, which is 662 at 1080. Not 553: the chest's own gold highlight is 109 px
+  above it, and a colour search there is the measured failure. Its white hand glyph is the anchor.
+- The button has an **enabled and a dimmed state**, readable as glyph-box contrast: 66–73 live, 20–32
+  after the tap. Scheduling a tap only while it is enabled separates "the QTE is live" from "the QTE
+  is resolved" without waiting for the screen to change.
+- The attempt count is a 10×16 px red numeral that has only ever been seen as 3. **Return `null`** and
+  use `qteAttemptsFallback`; an unvalidated OCR is worse than an admitted gap.
 - The slide term carries the **sign of motion**: `lead = v·L + sign(v)·v²/(2a)`.
 - When no zone is reachable in the current pass, **wait for the next pass**; the marker bounces
   forever and passes are free until an attempt is spent.
+- Slice **before** thresholding. A whole-frame pass costs ~85 ms; the band and the button window
+  together cost 0.8 ms. A TypeScript port that iterates 2 073 600 pixels breaks the half-tick rule on
+  its own.
 
 ## 9. What the implementation must do, in order
 
