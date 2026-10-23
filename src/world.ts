@@ -9,6 +9,14 @@
  *
  * The rulings that shape the tick:
  *
+ * - **One command at a time.** The policy is stateless, so it re-derives the same intent on every
+ *   tick; the loop is what remembers that it just pressed a key. After a command is sent the loop
+ *   stops deciding until the screen answers it (or the command gives up), and a command that timed
+ *   out is not sent again until the farm has advanced. Without that, `dungeon` (the walking view)
+ *   gets a second `G` 100 ms after the first, and `exit` fires at 10 Hz.
+ * - **Progress is state, not screen identity.** The party's position and the chest count on the map
+ *   are what say the farm advanced; a dungeon ↔ map alternation at the same position is not
+ *   progress, however many screens it cycles through.
  * - **One clock.** `atMs` is `performance.now()`; the engine reports `ageMs` only, and
  *   `Win32Capture` already subtracts it. A decision is dated by `frame.atMs`, never by "just
  *   received".
@@ -41,6 +49,7 @@ import type {
   Intent,
   Observation,
   Perceiver,
+  Point,
   RouteState,
   ScreenId,
   SessionVerdict,
@@ -102,7 +111,13 @@ export interface WvdWorldOptions {
 
 /** Capture failures retried before the engine is treated as absent: warm-up, not failure (§5). */
 const WARMUP_TICKS = 3;
-/** The loop escalates at this fraction of `stallStopSeconds`, and stops at all of it. */
+/**
+ * **Deliberate choice, not a spec value.** No contracts §8 key fixes how long a stall waits before
+ * the loop asks for help. A quarter of `stallStopSeconds` leaves the model the other three quarters
+ * to answer — 30 s at the defaults — which is also exactly `stallStopSeconds - escalateTimeoutMs`
+ * (120 − 90), so an unanswered question still lands inside the session. Changing either key moves
+ * this threshold; if that relationship matters, it belongs in the next spec revision.
+ */
 const STALL_ESCALATE_DIVISOR = 4;
 /** Below this a stall-escalate floor would ask a question about a screen that is still settling. */
 const MIN_STALL_ESCALATE_MS = 500;
@@ -116,8 +131,15 @@ const MAX_ACT_HOLD_MS = 2000;
 const MOVEMENT_SCAN: Readonly<Record<string, number>> = { w: 0x11, a: 0x1e, s: 0x1f, d: 0x20 };
 /** What the loop does when nobody answers: the route's own recovery (contracts §6). */
 const FALLBACK_INTENT: Intent = { kind: 'exit' };
-/** Before any map has been read, one chest is budgeted so the first move is to open the map. */
+/**
+ * **Deliberate choice, not a spec value.** Contracts §6's `RouteState` needs a chest budget and
+ * contracts §8 has no key for one, so the loop uses "what the last map read showed". Before the
+ * first map read there is no count, and 1 is the smallest number that makes the first decision
+ * `open-map` rather than `exit`.
+ */
 const INITIAL_CHEST_BUDGET = 1;
+/** The intents that press a key, as opposed to the ones that only hand the decision back. */
+const COMMAND_KINDS: ReadonlySet<Intent['kind']> = new Set<Intent['kind']>(['open-map', 'move', 'exit']);
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -170,8 +192,9 @@ export const WVD_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
     description:
       'Answer the waiting question and let the farming loop run again. Call it once, after wvd_act and '
       + 'wvd_look have done what you want. intent is the decision for the loop; leave it out and the loop '
-      + 'reads the screen again and lets the route policy decide. The loop stays paused until this call or '
-      + 'its own timeout, and then it takes its own fallback.',
+      + 'reads the screen again and lets the route policy decide. "move" walks to the next chest and the '
+      + 'game chooses which chest that is — there is no tile to name. "wait" lets the loop look again. '
+      + 'The loop stays paused until this call or its own timeout, and then it takes its own fallback.',
     tags: ['flow'],
     barrierAfter: true,
     endsTurn: true,
@@ -185,10 +208,7 @@ export const WVD_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
           description: 'What the loop should do as soon as it resumes.',
           properties: {
             kind: { type: 'string', enum: ['open-map', 'move', 'open-chest', 'fight', 'exit', 'wait', 'stop'] },
-            x: { type: 'integer', description: 'move: target tile, grid X as the map readout shows it.' },
-            y: { type: 'integer', description: 'move: target tile, grid Y.' },
-            ms: { type: 'integer', minimum: 0, description: 'wait: how long.' },
-            reason: { type: 'string', description: 'stop: why.' },
+            reason: { type: 'string', description: 'stop only: why the session should end.' },
           },
           required: ['kind'],
         },
@@ -201,7 +221,14 @@ export const WVD_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
 /** An intent the model named, or why it could not be read. A value, not a throw. */
 export type ParsedIntent = { readonly ok: true; readonly intent: Intent | null } | { readonly ok: false; readonly detail: string };
 
-/** Map `wvd_resume`'s `intent` argument onto contracts §6's closed union. */
+/**
+ * Map `wvd_resume`'s `intent` argument onto contracts §6's closed union.
+ *
+ * Only `kind` — and a stop's `reason` — is read. 移动至宝箱 cannot be aimed and `wait`'s duration is
+ * the loop's cadence, so the schema carries no coordinate and no duration and none is invented here.
+ * The two fields contracts §6 requires anyway are filled with a placeholder the caller replaces:
+ * `move`'s target comes from the loop's last map read, `wait`'s duration from nothing at all.
+ */
 export function parseIntent(value: unknown): ParsedIntent {
   if (value === undefined || value === null) return { ok: true, intent: null };
   if (typeof value !== 'object' || Array.isArray(value)) return { ok: false, detail: 'intent must be an object' };
@@ -212,16 +239,12 @@ export function parseIntent(value: unknown): ParsedIntent {
     case 'fight':
     case 'exit':
       return { ok: true, intent: { kind: record.kind } };
-    case 'move': {
-      const { x, y } = record;
-      if (!Number.isInteger(x) || !Number.isInteger(y)) return { ok: false, detail: 'move needs x and y' };
-      return { ok: true, intent: { kind: 'move', target: { x: x as number, y: y as number } } };
-    }
-    case 'wait': {
-      const { ms } = record;
-      if (!Number.isInteger(ms) || (ms as number) < 0) return { ok: false, detail: 'wait needs ms' };
-      return { ok: true, intent: { kind: 'wait', ms: ms as number } };
-    }
+    // The game chooses the chest; the placeholder target is replaced by `#moveTarget()`.
+    case 'move':
+      return { ok: true, intent: { kind: 'move', target: { x: 0, y: 0 } } };
+    // The tick cadence is the wait; contracts §6 requires a duration and nothing reads it.
+    case 'wait':
+      return { ok: true, intent: { kind: 'wait', ms: 0 } };
     case 'stop':
       return {
         ok: true,
@@ -237,6 +260,24 @@ export function parseIntent(value: unknown): ParsedIntent {
   }
 }
 
+/** A command that has been sent and whose screen has not answered it yet. */
+interface InFlight {
+  readonly kind: Intent['kind'];
+  /** The screen the key was pressed on: any other screen means the command took effect. */
+  readonly fromScreen: ScreenId;
+  /** The last screen seen while the command was in flight, and when it last changed. */
+  lastScreen: ScreenId;
+  readonly sinceMs: number;
+  stillSinceMs: number;
+}
+
+/** What the last map read said: the loop's only measure of whether the farm advanced. */
+interface MapRead {
+  readonly floor: string;
+  readonly player: Point;
+  readonly chests: readonly Point[];
+}
+
 export class WvdWorld implements World {
   readonly id = WVD_ID;
 
@@ -244,20 +285,28 @@ export class WvdWorld implements World {
   #session: WvdSession | null = null;
   #unsubscribe: (() => void) | null = null;
   #running = false;
+  #starting = false;
   #ticking = false;
+  /** Every tick call gets an id, so a session that ends mid-tick cannot clear a later tick's flag. */
+  #tickId = 0;
   #timer: ReturnType<typeof setTimeout> | null = null;
 
   #sessionStartedAtMs = 0;
   #lastProgressAtMs = 0;
   #lastScreen: ScreenId | null = null;
+  #lastMapRead: MapRead | null = null;
   #lastIntent: { readonly intent: Intent; readonly atMs: number } | null = null;
   #lastObservation: Observation | null = null;
   #ticks = 0;
   #captureFailures = 0;
   #willpower: readonly number[] = [];
   #chestsRemaining = INITIAL_CHEST_BUDGET;
-  #hourStartMs = -1;
-  #escalationsThisHour = 0;
+  /** Commands sent and waiting for their screen to answer (one at a time). */
+  #inFlight: InFlight | null = null;
+  /** Commands that changed nothing on this screen epoch: never re-sent until the farm advances. */
+  #failed: Set<Intent['kind']> = new Set();
+  /** Push timestamps inside the hourly window; the count is a query, not a counter. */
+  #escalationPushes: number[] = [];
   #escalationCooldownUntilMs = 0;
   #nextEscalationId = 1;
   #engineProblem: string | null = null;
@@ -321,45 +370,54 @@ export class WvdWorld implements World {
   /**
    * Open a session: build the engine's collaborators, reset the session's counters and start the
    * loop. Returns false when there is nothing to run, with the reason kept for `wvd_status`.
+   * A second call while one is opening returns false rather than spawning a second child.
    */
   async startSession(): Promise<boolean> {
     if (this.#running) return true;
+    if (this.#starting) return false;
     if (!this.#host || !this.#openSession) {
       this.#lastStopReason = 'no engine is wired to this World';
       return false;
     }
-    let session: WvdSession | null = null;
+    this.#starting = true;
     try {
-      session = await this.#openSession();
-    } catch (error) {
-      this.#lastStopReason = `the engine could not be started: ${message(error)}`;
-      return false;
-    }
-    if (!session) {
-      this.#lastStopReason = 'the engine child did not start';
-      return false;
-    }
+      let session: WvdSession | null = null;
+      try {
+        session = await this.#openSession();
+      } catch (error) {
+        this.#lastStopReason = `the engine could not be started: ${message(error)}`;
+        return false;
+      }
+      if (!session) {
+        this.#lastStopReason = 'the engine child did not start';
+        return false;
+      }
 
-    this.#session = session;
-    const now = this.#now();
-    this.#running = true;
-    this.#ticking = false;
-    this.#sessionStartedAtMs = now;
-    this.#lastProgressAtMs = now;
-    this.#lastScreen = null;
-    this.#lastIntent = null;
-    this.#lastObservation = null;
-    this.#ticks = 0;
-    this.#captureFailures = 0;
-    this.#willpower = [];
-    this.#chestsRemaining = INITIAL_CHEST_BUDGET;
-    this.#escalationCooldownUntilMs = 0;
-    this.#lastStopReason = null;
-    this.#unsubscribe = session.onEngineEvent?.((event) => {
-      void this.onEngineEvent(event);
-    }) ?? null;
-    if (this.#autoTick) this.#schedule();
-    return true;
+      this.#session = session;
+      const now = this.#now();
+      this.#running = true;
+      this.#sessionStartedAtMs = now;
+      this.#lastProgressAtMs = now;
+      this.#lastScreen = null;
+      this.#lastMapRead = null;
+      this.#lastIntent = null;
+      this.#lastObservation = null;
+      this.#ticks = 0;
+      this.#captureFailures = 0;
+      this.#willpower = [];
+      this.#chestsRemaining = INITIAL_CHEST_BUDGET;
+      this.#inFlight = null;
+      this.#failed = new Set();
+      this.#escalationCooldownUntilMs = 0;
+      this.#lastStopReason = null;
+      this.#unsubscribe = session.onEngineEvent?.((event) => {
+        void this.onEngineEvent(event);
+      }) ?? null;
+      if (this.#autoTick) this.#schedule();
+      return true;
+    } finally {
+      this.#starting = false;
+    }
   }
 
   /**
@@ -371,13 +429,14 @@ export class WvdWorld implements World {
     const session = this.#session;
     if (!session) return;
     this.#ticking = true;
+    const id = ++this.#tickId;
     try {
       await this.#step(session);
     } catch (error) {
       // A module threw across its boundary (contracts §0.6): that is the loop's failure to handle.
       await this.#endSession(`a module failed: ${message(error)}`, { report: true });
     } finally {
-      this.#ticking = false;
+      if (this.#tickId === id) this.#ticking = false;
     }
   }
 
@@ -401,11 +460,7 @@ export class WvdWorld implements World {
     const now = this.#now();
     this.#lastObservation = observation;
     this.#track(observation);
-    if (observation.screen !== this.#lastScreen) {
-      // The screen is what progress means: an action that changed nothing is not progress.
-      this.#lastScreen = observation.screen;
-      this.#lastProgressAtMs = now;
-    }
+    this.#measureProgress(observation, now);
 
     if (this.#cfg.sessionMaxMinutes > 0 && now - this.#sessionStartedAtMs >= this.#cfg.sessionMaxMinutes * 60_000) {
       await this.#endSession('the session time limit was reached', { report: true });
@@ -416,6 +471,10 @@ export class WvdWorld implements World {
       await this.#endSession(`nothing changed for ${this.#cfg.stallStopSeconds} s`, { report: true });
       return;
     }
+
+    // One command at a time: a sent command owns the loop until the screen answers it. The verdict
+    // is still taken — a stalled action has to be able to escalate — but nothing new is sent.
+    const waiting = this.#advanceInFlight(observation, now);
 
     const state: RouteState = {
       observation,
@@ -434,9 +493,19 @@ export class WvdWorld implements World {
         await this.#escalate(session, frame, observation, now);
         return;
       case 'ok':
-        await this.#execute(this.#policy.next(state));
-        return;
+        break;
     }
+
+    if (waiting) return;
+
+    const intent = this.#policy.next(state);
+    if (COMMAND_KINDS.has(intent.kind) && this.#failed.has(intent.kind)) {
+      // A blind retry is not a decision: `openMap`'s second `G` on an already-open map is
+      // 移动至目的地. The stall clock turns this into an escalation instead.
+      this.#host?.log.warn(`wvd: ${intent.kind} already changed nothing on this screen; not sending it again`);
+      return;
+    }
+    await this.#execute(intent, observation.screen);
   }
 
   /** Warm-up aware capture: a failure is a skipped tick until the retries are spent (§5). */
@@ -468,6 +537,89 @@ export class WvdWorld implements World {
       // The map is the only chest count the loop has: what the map still shows is the budget.
       this.#chestsRemaining = observation.map.icons.filter((icon) => icon.kind === 'chest').length;
     }
+  }
+
+  /**
+   * Whether the farm advanced. **State, not screen identity**: the party's position, the floor and
+   * the chest count are the map readout's facts, and entering a screen a walk produces is the other
+   * signal. A dungeon ↔ map cycle at the same position therefore counts for nothing, which is what
+   * stops an alternation masquerading as progress (Task 10 review, Critical).
+   */
+  #measureProgress(observation: Observation, now: number): void {
+    let advanced = false;
+    switch (observation.screen) {
+      case 'dungeonmap': {
+        const read: MapRead = {
+          floor: observation.map.floorTitle,
+          player: observation.map.player,
+          chests: observation.map.icons.filter((icon) => icon.kind === 'chest').map((icon) => icon.at),
+        };
+        const previous = this.#lastMapRead;
+        if (
+          previous === null
+          || previous.floor !== read.floor
+          || previous.player.x !== read.player.x
+          || previous.player.y !== read.player.y
+          || previous.chests.length !== read.chests.length
+        ) {
+          advanced = true;
+        }
+        this.#lastMapRead = read;
+        break;
+      }
+      case 'chest-open':
+      case 'chest-qte':
+      case 'loot':
+      case 'combat':
+        // A screen a walk produces. Staying on one is not progress, so a fight that never ends stalls.
+        advanced = this.#lastScreen !== observation.screen;
+        break;
+      default:
+        // `dungeon`, `loading`, `town`, `worldmap`, `unknown`: the map readout is the measure.
+        break;
+    }
+    this.#lastScreen = observation.screen;
+    if (advanced) {
+      this.#lastProgressAtMs = now;
+      // The farm moved on: a command that failed before may be worth sending again.
+      this.#failed.clear();
+    }
+  }
+
+  /**
+   * Book-keeping for the command sent on an earlier tick. Returns true while it is still waiting.
+   *
+   * `automoveStillSeconds` is "the scene stopped moving but nothing happened"; `automoveArrivalTimeoutMs`
+   * is the hard give-up. Either way the command is recorded as failed, so the same intent is not
+   * re-sent on the same screen until the farm advances.
+   */
+  #advanceInFlight(observation: Observation, now: number): boolean {
+    const inFlight = this.#inFlight;
+    if (!inFlight) return false;
+    if (observation.screen !== inFlight.lastScreen) {
+      inFlight.lastScreen = observation.screen;
+      inFlight.stillSinceMs = now;
+    }
+    if (observation.screen !== inFlight.fromScreen) {
+      this.#inFlight = null;
+      this.#host?.log.info(`wvd: ${inFlight.kind} took effect: the screen is now ${observation.screen}`);
+      return false;
+    }
+    const stillMs = now - inFlight.stillSinceMs;
+    const waitedMs = now - inFlight.sinceMs;
+    if (
+      stillMs >= Math.max(1, this.#cfg.automoveStillSeconds * 1000)
+      || waitedMs >= Math.max(1, this.#cfg.automoveArrivalTimeoutMs)
+    ) {
+      this.#inFlight = null;
+      this.#failed.add(inFlight.kind);
+      this.#host?.log.warn(
+        `wvd: ${inFlight.kind} did not change the screen; not sending it again until the farm advances`,
+        { stillMs, waitedMs },
+      );
+      return false;
+    }
+    return true;
   }
 
   // --- the escalation ------------------------------------------------------------------------
@@ -524,8 +676,7 @@ export class WvdWorld implements World {
       timeoutMs,
       onPush: () => {
         // The count arms the cap at the push, not at the answer: an unanswered question is spent.
-        this.#escalationsThisHour = spent + 1;
-        if (this.#hourStartMs < 0) this.#hourStartMs = now;
+        this.#recordEscalation(now);
       },
     });
 
@@ -538,7 +689,8 @@ export class WvdWorld implements World {
         if (outcome.intent) {
           // The model redirected the loop: that is progress, whatever the screen does next.
           this.#lastProgressAtMs = this.#now();
-          await this.#execute(outcome.intent);
+          this.#failed.clear();
+          await this.#execute(outcome.intent, this.#lastObservation?.screen ?? null);
         }
         // No intent is a diagnosis only: the loop re-reads the screen, as promised by the receipt.
         return;
@@ -547,7 +699,7 @@ export class WvdWorld implements World {
         // One wait's worth of cooldown: a screen that stays unknown must not spend the hour in a
         // minute (research §5.2).
         this.#escalationCooldownUntilMs = this.#now() + Math.max(1, timeoutMs);
-        await this.#execute(FALLBACK_INTENT);
+        await this.#execute(FALLBACK_INTENT, this.#lastObservation?.screen ?? null);
         return;
       case 'cancelled':
         return;
@@ -586,37 +738,46 @@ export class WvdWorld implements World {
     return Math.max(MIN_STALL_ESCALATE_MS, (this.#cfg.stallStopSeconds * 1000) / STALL_ESCALATE_DIVISOR);
   }
 
-  /** `escalateMaxPerHour`'s window: a rolling hour owned here, because `classify` is stateless. */
+  /**
+   * `escalateMaxPerHour`'s window, a rolling hour: the count is a query over the push timestamps, so
+   * reading it cannot move the window (and `wvd_status` cannot spend the budget by being asked).
+   */
   #spentThisHour(now: number): number {
-    if (this.#hourStartMs < 0) this.#hourStartMs = now;
-    if (now - this.#hourStartMs >= HOUR_MS) {
-      this.#hourStartMs = now;
-      this.#escalationsThisHour = 0;
+    let spent = 0;
+    for (const pushedAt of this.#escalationPushes) {
+      if (pushedAt <= now && now - pushedAt < HOUR_MS) spent += 1;
     }
-    return this.#escalationsThisHour;
+    return spent;
+  }
+
+  #recordEscalation(now: number): void {
+    this.#escalationPushes = this.#escalationPushes.filter((pushedAt) => now - pushedAt < HOUR_MS);
+    this.#escalationPushes.push(now);
   }
 
   // --- acting --------------------------------------------------------------------------------
 
   /** The one path from an `Intent` to an `Actuator` call: the escalation must not grow a second. */
-  async #execute(intent: Intent): Promise<void> {
+  async #execute(intent: Intent, fromScreen: ScreenId | null): Promise<void> {
     this.#lastIntent = { intent, atMs: this.#now() };
     switch (intent.kind) {
       case 'open-map':
         // Never blind-retry this one: if the second G failed, the menu is already open and a retry
         // presses G on the map, which is 移动至目的地 — an unintended automove. Re-perceive instead.
-        await this.#press('open the map', () => this.#commands.openMap());
+        await this.#press('open-map', fromScreen, () => this.#commands.openMap());
         return;
       case 'move':
-        await this.#press('walk to the nearest chest', () => this.#commands.automoveToChest());
+        await this.#press('move', fromScreen, () => this.#commands.automoveToChest());
         return;
       case 'exit':
-        await this.#press('walk to the exit', () => this.#commands.automoveToExit());
+        await this.#press('exit', fromScreen, () => this.#commands.automoveToExit());
         return;
       case 'open-chest':
-        // The chest module's QTE control is not wired into the loop yet (post-v1): the loop will
-        // re-observe, stall, and ask a human rather than gamble a tap on an unread bar.
-        this.#host?.log.info('wvd: a chest is open and this loop has no QTE control yet');
+        // Follow-up task: **the QTE caller.** `ChestPerceiver` + `planTap` + `actuator.tap` wire in
+        // here and nowhere else — this branch is the single seam. Until then the loop opens no chest:
+        // a chest QTE therefore stalls, escalates and asks Coo instead of gambling a tap on an unread
+        // bar (Task 10 review, Important 2).
+        this.#host?.log.info('wvd: a chest is open and the QTE caller is not wired yet');
         return;
       case 'fight':
         this.#host?.log.info('wvd: a battle is on screen; auto-battle is a later module');
@@ -632,20 +793,28 @@ export class WvdWorld implements World {
     }
   }
 
-  async #press(what: string, command: () => Promise<ActionResult>): Promise<void> {
+  /**
+   * Send one key command and record that it is now in flight. A refused or failed press is recorded
+   * as failed immediately (nothing was sent, so nothing will arrive) and never retried here.
+   */
+  async #press(
+    kind: 'open-map' | 'move' | 'exit',
+    fromScreen: ScreenId | null,
+    command: () => Promise<ActionResult>,
+  ): Promise<void> {
     if (this.#cfg.dryRun) {
-      this.#host?.log.info(`wvd: dry run, would ${what}`);
+      this.#host?.log.info(`wvd: dry run, would ${kind}`);
       return;
     }
     const result = await command();
     if (!result.ok) {
-      // A refused or failed input is never retried here: the next tick re-perceives. A retry of a
-      // half-applied command is how a farm walks somewhere nobody asked it to.
-      this.#host?.log.warn(`wvd: could not ${what}`, {
-        reason: result.reason,
-        detail: result.detail ?? null,
-      });
+      this.#failed.add(kind);
+      this.#host?.log.warn(`wvd: could not ${kind}`, { reason: result.reason, detail: result.detail ?? null });
+      return;
     }
+    if (fromScreen === null) return;
+    const now = this.#now();
+    this.#inFlight = { kind, fromScreen, lastScreen: fromScreen, sinceMs: now, stillSinceMs: now };
   }
 
   // --- stopping ------------------------------------------------------------------------------
@@ -686,6 +855,10 @@ export class WvdWorld implements World {
     const wasRunning = this.#running;
     this.#running = false;
     this.#lastStopReason = reason;
+    // The session that owned the in-flight tick is gone; a later session's tick owns the flag now.
+    this.#ticking = false;
+    this.#tickId += 1;
+    this.#inFlight = null;
     // A paused tick nobody settles holds the host's whole 20 s stop deadline (research §4.3).
     this.#supervisor.cancel();
     if (this.#timer !== null) {
@@ -774,6 +947,7 @@ export class WvdWorld implements World {
       const age = Math.max(0, Math.round((now - this.#lastIntent.atMs) / 1000));
       parts.push(`last intent ${this.#lastIntent.intent.kind} ${age} s ago`);
     }
+    if (this.#inFlight) parts.push(`waiting for ${this.#inFlight.kind} to change the screen`);
     if (this.#lastObservation) parts.push(`last observation ${observationLine(this.#lastObservation)}`);
     const open = this.#supervisor.open;
     if (open) {
@@ -880,13 +1054,38 @@ export class WvdWorld implements World {
     return { text: `not sent: ${result.reason}${detail}`, failed: true };
   }
 
-  /** `wvd_resume`: validate, then settle the paused tick. The receipt is written after the close. */
+  /** `wvd_resume`: is anything waiting, then validate, then settle. The receipt is written last. */
   async #resume(args: Record<string, unknown>): Promise<ToolOutcome> {
+    // The open check comes first: a late answer must hear "nothing is waiting", not a schema lesson.
+    if (!this.#supervisor.isOpen()) {
+      return { text: this.#supervisor.lateReceipt().text, failed: true };
+    }
     const parsed = parseIntent(args.intent);
     if (!parsed.ok) return { text: `not resumed: ${parsed.detail}`, failed: true };
+    const intent = parsed.intent === null || parsed.intent.kind !== 'move'
+      ? parsed.intent
+      // 移动至宝箱 cannot be aimed: the game chooses the chest. The target is the nearest chest the
+      // last map read showed, because contracts §6 requires one; no executor reads it.
+      : { kind: 'move' as const, target: this.#moveTarget() };
     const note = typeof args.note === 'string' ? args.note : null;
-    const receipt = this.#supervisor.answer(parsed.intent, note);
+    const receipt = this.#supervisor.answer(intent, note);
     return receipt.ok ? { text: receipt.text } : { text: receipt.text, failed: true };
+  }
+
+  /** The nearest chest of the last map read, or the party's own tile: never aimed at by the game. */
+  #moveTarget(): Point {
+    const read = this.#lastMapRead;
+    if (read === null || read.chests.length === 0) return read?.player ?? { x: 0, y: 0 };
+    const distance = (point: Point): number => Math.abs(point.x - read.player.x) + Math.abs(point.y - read.player.y);
+    let best = read.chests[0]!;
+    for (const chest of read.chests) {
+      const toChest = distance(chest);
+      const toBest = distance(best);
+      if (toChest < toBest || (toChest === toBest && (chest.x < best.x || (chest.x === best.x && chest.y < best.y)))) {
+        best = chest;
+      }
+    }
+    return best;
   }
 }
 

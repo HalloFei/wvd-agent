@@ -182,6 +182,7 @@ const dungeonMap: Observation = {
 const unknownButSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0.2 };
 const nothingSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0 };
 const waiting: Observation = { screen: 'loading', atMs: 100, confidence: 0.9 };
+const dungeonView: Observation = { screen: 'dungeon', atMs: 100, confidence: 0.9 };
 
 function makeWorld(options: {
   cfg?: Partial<WvdConfigSection>;
@@ -191,6 +192,8 @@ function makeWorld(options: {
   screenshot?: ((maxWidth?: number) => { bytes: Uint8Array; width: number; height: number } | null) | null;
   /** Held open to keep an escalation inside its snapshot capture while the test acts. */
   snapshotGate?: Promise<void>;
+  /** Held open to keep two concurrent startSession calls overlapping. */
+  openSessionGate?: Promise<void>;
   host?: FakeHost;
 } = {}) {
   const source = options.source ?? new ScriptedSource();
@@ -217,6 +220,7 @@ function makeWorld(options: {
   const cfg: WvdConfigSection = { ...structuredClone(WVD_DEFAULTS), enabled: false, tickMs: 50, ...options.cfg };
   const host = options.host ?? new FakeHost();
   const clock = new TestClock();
+  let openSessionCalls = 0;
   const world = new WvdWorld({
     cfg,
     timezone: 'Asia/Shanghai',
@@ -227,11 +231,18 @@ function makeWorld(options: {
       automoveToChest: () => automoveToChest(actuator),
       automoveToExit: () => automoveToExit(actuator),
     },
-    openSession: async () => session,
+    openSession: async () => {
+      openSessionCalls += 1;
+      if (options.openSessionGate) await options.openSessionGate;
+      return session;
+    },
     autoTick: false,
     now: clock.now,
   });
-  return { world, host, source, perceiver, actuator, cfg, snapshotCalls, clock };
+  return {
+    world, host, source, perceiver, actuator, cfg, snapshotCalls, clock,
+    openSessionCalls: () => openSessionCalls,
+  };
 }
 
 async function started(world: WvdWorld, host: FakeHost): Promise<WvdWorld> {
@@ -271,6 +282,48 @@ describe('the tick', () => {
     // dungeonmap with a chest and a budget → move → 移动至宝箱 (L)
     expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
     expect(host.pushed).toEqual([]);
+  });
+
+  it('sends one command and waits for the screen to answer it', async () => {
+    const { world, host, actuator, perceiver, clock } = makeWorld();
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+
+    // The route re-derives 'move' on the next tick; the loop must not press L again while the map
+    // is still on screen. This is the defect the review found: a stateless policy is not a memory.
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+
+    // automoveStillSeconds passes with the screen unchanged: the command gave up and is not re-sent.
+    clock.advance(5000);
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+
+    // The farm advanced — the party is somewhere else on the map — so a command may be sent again.
+    perceiver.observation = {
+      ...dungeonMap,
+      map: { ...dungeonMap.map, player: { x: 12, y: 18 } },
+    };
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`, `key ${SCAN.L} 60`]);
+  });
+
+  it('does not open a second engine for a second concurrent startSession', async () => {
+    let release = (): void => {};
+    const openSessionGate = new Promise<void>((resolve) => { release = resolve; });
+    const { world, host, openSessionCalls } = makeWorld({ openSessionGate });
+    await world.start(host as unknown as WorldHost);
+
+    const first = world.startSession();
+    expect(await world.startSession()).toBe(false);
+    release();
+
+    expect(await first).toBe(true);
+    expect(openSessionCalls()).toBe(1);
   });
 
   it('skips a tick rather than queueing it', async () => {
@@ -383,6 +436,24 @@ describe('the stall policy', () => {
     expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stopped')).toHaveLength(1);
   });
 
+  it('does not count an alternating screen as progress', async () => {
+    const { world, host, perceiver, clock } = makeWorld({
+      cfg: { stallStopSeconds: 4, escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+    await world.tick(); // map read #1: progress, one command sent
+
+    // The screen alternates, but the party never moves and no chest disappears. A loop that calls
+    // that progress never asks for help, however stuck the farm is.
+    for (const next of [dungeonView, dungeonMap, dungeonView]) {
+      perceiver.observation = next;
+      clock.advance(400);
+      await world.tick();
+    }
+
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(1);
+  });
+
   it('cooldowns after a timeout instead of asking again on the next tick', async () => {
     const { world, host, clock } = makeWorld({
       observation: waiting,
@@ -461,6 +532,21 @@ describe('the escalation exchange', () => {
     expect(stuck.event.text.toLowerCase()).toContain('cannot');
   });
 
+  it('says so when the screenshot could not be captured at all', async () => {
+    const { world, host } = makeWorld({
+      observation: unknownButSeen,
+      cfg: { escalateTimeoutMs: 20 },
+      screenshot: () => null,
+    });
+    await started(world, host);
+
+    await world.tick();
+
+    const stuck = host.pushed.find((pushed) => pushed.event.type === 'wvd.stuck')!;
+    expect(stuck.event.blobs).toBeUndefined();
+    expect(stuck.event.text).toContain('could not be captured');
+  });
+
   it('does not wait when the host archived the event instead of delivering it', async () => {
     const host = new FakeHost();
     host.delivery = 'archive-only';
@@ -534,9 +620,10 @@ describe('the escalation exchange', () => {
     // the intent the model named, not the fallback
     expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
 
-    const late = outcome(await resume.handler({}, CTX));
+    // a late answer hears "nothing is waiting" before its arguments are even looked at
+    const late = outcome(await resume.handler({ intent: { kind: 'dance' } }, CTX));
     expect(late.failed).toBe(true);
-    expect(late.text).toContain('nothing is waiting');
+    expect(late.text).toBe('not resumed: nothing is waiting for an answer');
   });
 
   it('names the fallback when an answer arrives after the timeout', async () => {
@@ -643,23 +730,27 @@ describe('the tools', () => {
     await tick;
   });
 
-  it('wvd_resume validates the intent it is given', async () => {
-    const { world, host } = makeWorld({ observation: unknownButSeen, cfg: { escalateTimeoutMs: 5000 } });
+  it('wvd_resume validates the intent it is given, and move needs no tile', async () => {
+    const { world, host, actuator } = makeWorld({ observation: unknownButSeen, cfg: { escalateTimeoutMs: 5000 } });
     await started(world, host);
     const tick = world.tick();
     await until(() => host.pushed.length === 1, 'the question');
 
     const resume = tool(world, 'wvd_resume');
-    const bad = outcome(await resume.handler({ intent: { kind: 'move' } }, CTX));
-    expect(bad.failed).toBe(true);
-    expect(bad.text).toBe('not resumed: move needs x and y');
-
     const unknown = outcome(await resume.handler({ intent: { kind: 'dance' } }, CTX));
     expect(unknown.failed).toBe(true);
-    expect(unknown.text).toContain('not resumed');
+    expect(unknown.text).toBe('not resumed: unknown intent kind: dance');
 
-    await resume.handler({}, CTX);
+    const notObject = outcome(await resume.handler({ intent: 'open-map' }, CTX));
+    expect(notObject.failed).toBe(true);
+    expect(notObject.text).toBe('not resumed: intent must be an object');
+
+    // 移动至宝箱 cannot be aimed: the game chooses the chest, so there is no tile to name.
+    const moved = outcome(await resume.handler({ intent: { kind: 'move' }, note: 'walk to the chest' }, CTX));
+    expect(moved.failed).toBeUndefined();
+    expect(moved.text).toBe('resumed: the loop takes move');
     await tick;
+    expect(actuator.calls).toContain(`key ${SCAN.L} 60`);
   });
 });
 

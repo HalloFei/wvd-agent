@@ -101,7 +101,11 @@ export function stuckEvent(input: StuckInput): WvdEvent {
     `[wvd.stuck ${stamp(input.timezone, input.at)}] Loop paused. ${observationLine(input.observation)}; `
       + `${input.ticksStuck} ticks in a row.`,
   ];
-  if (!input.imageVisible) {
+  if (input.image === null) {
+    // Two different reasons for no image, and the model is told which: the capture failed, or the
+    // endpoint cannot show one. Silence would look like the image is there when it is not.
+    lines.push('The screenshot for this question could not be captured, so this line is what there is to judge from.');
+  } else if (!input.imageVisible) {
     lines.push('The active endpoint cannot show images, so this line is what there is to judge from.');
   }
   lines.push(`Question: ${input.question}`);

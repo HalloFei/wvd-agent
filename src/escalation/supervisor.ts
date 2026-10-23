@@ -215,26 +215,32 @@ export class Supervisor {
     host.log?.info('wvd: the escalation was delivered', { id: pending.open.id, cursor: envelope.cursor });
   }
 
+  /**
+   * The receipt for an answer that arrives with no question open. Pure: it reads what the last
+   * question did and settles nothing, so a caller may ask before validating its arguments.
+   */
+  lateReceipt(): ResumeReceipt {
+    const last = this.#last;
+    if (last?.outcome.kind === 'timeout') {
+      const seconds = Math.max(1, Math.round((this.now() - last.atMs) / 1000));
+      return {
+        ok: false,
+        text: `not resumed: this question expired ${seconds} s ago; the loop ${fallbackWord(last.fallback)}`,
+      };
+    }
+    if (last?.outcome.kind === 'undelivered') {
+      return {
+        ok: false,
+        text: `not resumed: the question never reached the session (${last.outcome.why}); the loop ${fallbackWord(last.fallback)}`,
+      };
+    }
+    return { ok: false, text: 'not resumed: nothing is waiting for an answer' };
+  }
+
   /** `wvd_resume`: close first, then release the paused tick. Never called for a closed question. */
   answer(intent: Intent | null, note: string | null): ResumeReceipt {
     const pending = this.#pending;
-    if (!pending) {
-      const last = this.#last;
-      if (last?.outcome.kind === 'timeout') {
-        const seconds = Math.max(1, Math.round((this.now() - last.atMs) / 1000));
-        return {
-          ok: false,
-          text: `not resumed: this question expired ${seconds} s ago; the loop ${fallbackWord(last.fallback)}`,
-        };
-      }
-      if (last?.outcome.kind === 'undelivered') {
-        return {
-          ok: false,
-          text: `not resumed: the question never reached the session (${last.outcome.why}); the loop ${fallbackWord(last.fallback)}`,
-        };
-      }
-      return { ok: false, text: 'not resumed: nothing is waiting for an answer' };
-    }
+    if (!pending) return this.lateReceipt();
     const waitedMs = this.now() - pending.open.atMs;
     pending.settle({ kind: 'answered', intent, note, waitedMs, actions: pending.open.actions });
     this.host()?.log?.info('wvd: the escalation was answered', { id: pending.open.id, intent: intent?.kind ?? null, note, waitedMs });
