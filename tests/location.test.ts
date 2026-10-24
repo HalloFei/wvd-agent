@@ -28,6 +28,7 @@ const NOT_TOWN = [
   'testdata/screens/2026-10-24-ffxi/prompt.jpg',
   'testdata/nav-2026-10-24-ffxi4f/third-floor.jpg',
   'testdata/worldmap/2026-10-24/14.jpg',
+  'testdata/screens/2026-10-24-ffxi/dungeon-select.jpg',
 ];
 const WORLD_MAP = [
   'testdata/worldmap/2026-10-24/07.jpg',

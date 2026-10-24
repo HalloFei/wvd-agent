@@ -39,7 +39,7 @@ const PILLAR_LEFT = { x: 0, y: 0, width: 400, height: 1_080 } as const;
 const PILLAR_RIGHT = { x: 1_520, y: 0, width: 400, height: 1_080 } as const;
 const MAP_FIELD = { x: 500, y: 100, width: 1_000, height: 800 } as const;
 const PILLAR_MEAN_MAX = 8;
-const FIELD_MEAN_MIN = 60;
+const FIELD_MEAN_MIN = 90;
 const WORLD_MAP_CONFIDENCE = 0.9;
 
 export class TownPerceiver implements Perceiver {
