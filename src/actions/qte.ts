@@ -30,23 +30,28 @@
  *
  * ## What bounds the call
  *
- * `budgetMs` bounds the pre-press loop: a bar that outlives it yields a refusal, and the World's
+ * `budgetMs` is the **pre-press** budget: a bar that outlives it yields a refusal, and the World's
  * next tick may try again (the marker bounces forever and passes are free, chest spec §8a). The
- * rest read after a successful press has its own `REST_READ_MS` bound — the recorded marker settles
- * in ~500 ms — so a press is not held to a budget it has already spent. `minWindowMs` is the
- * caller's floor over `plan.atMs`: a pass tighter than that is dropped and the next reading
- * re-plans (contracts §7 keeps the floor here, not in the planner). A dimmed 解除 button is
- * `resolved`, not a live pass (chest spec §8a) — nothing is pressed, because this pass was already
- * answered.
+ * rest read after a successful press adds its own settle window, `REST_READ_MS`, and is clamped to
+ * `budgetMs + REST_READ_MS` from the call's start — so the whole call is bounded by the pre-press
+ * budget plus the rest read, never by the budget alone. `minWindowMs` is the caller's floor over
+ * `plan.atMs`: a pass tighter than that is dropped and the next reading re-plans (contracts §7
+ * keeps the floor here, not in the planner). A dimmed 解除 button is `resolved`, not a live pass
+ * (chest spec §8a) — nothing is pressed, because this pass was already answered.
  *
  * ## The refusals
  *
- * `bar-gone` is a refused sample; `resolved` a dimmed button; `press-refused` the actuator's
- * answer. The three that end a spent budget are split by what the loop had: `no-velocity` when
- * fewer than three readings arrived (a speed needs three), `no-reachable-zone` when speeds came but
- * `planTap` never found a centre inside the horizon, and `budget-spent` otherwise — including the
- * stream whose readings never form a steady velocity, which is what the recording's duplicate
- * frames produce.
+ * `bar-gone` is a sample that looked for the bar and did not find it; `capture-failed` is a sample
+ * that could not look at all (a capture or a parse that threw). They are different facts on
+ * purpose — only the second may reach the tick's failure accounting — and neither is retried here:
+ * the World's own capture path owns warm-up retries and the session-end decision, and it runs on
+ * the very next tick. `resolved` is a dimmed button; `press-refused` the actuator's answer;
+ * `misconfigured` a non-finite or non-positive budget (or non-finite clock) refused before the
+ * first sample, in the same spirit as `planTap`'s own input guards. The three that end a spent
+ * budget are split by what the loop had: `no-velocity` when fewer than three readings arrived (a
+ * speed needs three), `no-reachable-zone` when speeds came but `planTap` never found a centre
+ * inside the horizon, and `budget-spent` otherwise — including the stream whose readings never
+ * form a steady velocity, which is what the recording's duplicate frames produce.
  */
 import type { ActionResult, Frame, FrameSource, Point, QteZone } from '../contracts.ts';
 import { parseQte, qteWindow } from '../perception/chest.ts';
@@ -58,17 +63,23 @@ import { planTap, qteVelocity, type QteSample } from '../policy/qte.ts';
 
 /**
  * How long the rest read may take. It is the recorded marker's observed settle time (~500 ms; the
- * bar outlives the tap by ~3 s), and a module constant rather than config because `budgetMs`
- * already bounds the call: a second key would be a second opinion on the same fact.
+ * bar outlives the tap by ~3 s), and a module constant rather than config because it bounds only
+ * the rest read: `budgetMs` already bounds the pre-press loop, and the whole call is the budget
+ * plus this read.
  */
 const REST_READ_MS = 600;
+
+/** The spacing of rest polls: the settle window is measured in reads, not in a hot spin. */
+const REST_POLL_MS = 16;
 
 /** Two consecutive readings this close mean the marker has parked. */
 const REST_SETTLE_PX = 2;
 
 /**
- * The only frame size the bar's anchors were measured at (contracts §0.5). A window of another
- * size is refused, never re-scaled: the rectangle below would not be where the bar is.
+ * The frame size the bar's anchors were measured at (contracts §0.5). The rectangle below is asked
+ * for in these coordinates whatever the client area is: `qteWindow` cannot see the game window, so
+ * the 1920×1080 client-size invariant is the composition root's to assert (Task 7), not something
+ * this module can promise.
  */
 const REFERENCE_FRAME = { width: 1920, height: 1080 } as const;
 
@@ -89,19 +100,29 @@ export interface BarReading {
 
 export type BarSample =
   | { readonly ok: true; readonly reading: BarReading }
-  | { readonly ok: false; readonly reason: 'bar-gone' };   // the QTE screen is not there any more
+  | {
+      readonly ok: false;
+      /**
+       * `bar-gone`: the sample looked for the bar and it is not there. `capture-failed`: the sample
+       * could not look at all (a capture or a parse threw) — a different fact, and the one the
+       * tick's failure accounting must see.
+       */
+      readonly reason: 'bar-gone' | 'capture-failed';
+    };
 
 export interface QteSampler {
   sample(previousMarkerX?: number): Promise<BarSample>;
 }
 
 export type QteRefusal =
-  | 'bar-gone'
+  | 'bar-gone'          // a sample looked for the bar and did not find it
+  | 'capture-failed'    // the capture or parse threw: we could not look, which is not the same fact
   | 'resolved'          // the 解除 button reads dimmed: this pass was already answered
-  | 'no-velocity'       // samples came, but no three spanned a steady 66 ms before the budget ran out
-  | 'no-reachable-zone' // no zone centre can be reached in the current pass, inside the horizon
-  | 'budget-spent'      // the bar outlived `budgetMs`
-  | 'press-refused';    // the actuator declined the press (not foreground, engine gone)
+  | 'no-velocity'       // fewer than three readings arrived before the budget ran out
+  | 'no-reachable-zone' // speeds came, but no zone centre was reachable inside the horizon
+  | 'budget-spent'      // three readings or more, no press, and nothing more specific to report
+  | 'press-refused'     // the actuator declined the press (not foreground, engine gone)
+  | 'misconfigured';    // non-finite/non-positive budget or non-finite clock: refused before sampling
 
 export interface QteTiming {
   readonly ok: true;
@@ -114,6 +135,11 @@ export interface QteTiming {
 
 export type QteOutcome = QteTiming | { readonly ok: false; readonly reason: QteRefusal };
 
+/**
+ * `budgetMs` is the **pre-press** budget. The rest read that follows a successful press adds
+ * `REST_READ_MS`, so the whole call is bounded by `budgetMs + REST_READ_MS`; a non-finite or
+ * non-positive budget is refused as `misconfigured` rather than run unbounded.
+ */
 export interface QteTimingOptions {
   readonly sampler: QteSampler;
   readonly press: () => Promise<ActionResult>;
@@ -132,12 +158,20 @@ export interface QteTimingOptions {
 /**
  * Sample the bar until a plan is reachable, sleep to the instant it named, press exactly once, and
  * read where the marker parked. Every path returns a value; nothing throws into the control loop
- * (contracts §0.6). `press` is called at most once, on the single path that survives every gate.
+ * (contracts §0.6) — a sampler that throws is `capture-failed`, never a retry. `press` is called at
+ * most once, on the single path that survives every gate. The call is bounded by the pre-press
+ * budget plus the rest read's settle window.
  */
 export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
   const { sampler, press, now, wait, latencyMs, decelPxPerS2, minWindowMs, budgetMs } = options;
 
+  // A mis-typed number must not become a press, and an unbounded loop is the one failure this
+  // module could not report as a value: refuse both before the first sample.
+  if (!Number.isFinite(budgetMs) || budgetMs <= 0) return { ok: false, reason: 'misconfigured' };
   const startedAtMs = now();
+  if (!Number.isFinite(startedAtMs)) return { ok: false, reason: 'misconfigured' };
+  const restDeadlineLimitMs = startedAtMs + budgetMs + REST_READ_MS;
+
   /** The rolling window `qteVelocity` reads; at most three readings. */
   const lastThree: QteSample[] = [];
   let previousMarkerX: number | undefined;
@@ -152,8 +186,15 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
       return { ok: false, reason: 'budget-spent' };
     }
 
-    const sample = await sampler.sample(previousMarkerX);
-    if (!sample.ok) return { ok: false, reason: 'bar-gone' };
+    let sample: BarSample;
+    try {
+      sample = await sampler.sample(previousMarkerX);
+    } catch {
+      // "We could not look" is not "the bar is gone": the World's capture path owns warm-up retries
+      // and the session-end decision, and it runs on the very next tick. No retry here.
+      return { ok: false, reason: 'capture-failed' };
+    }
+    if (!sample.ok) return { ok: false, reason: sample.reason };
     const reading = sample.reading;
     // The dimmed button separates "the QTE is live" from "this pass is answered" without waiting
     // for the screen to change (chest spec §8a).
@@ -194,7 +235,7 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
     const pressed = await press();
     if (!pressed.ok) return { ok: false, reason: 'press-refused' };
 
-    const restX = await readRest(sampler, previousMarkerX, now);
+    const restX = await readRest(sampler, previousMarkerX, now, wait, restDeadlineLimitMs);
     return { ok: true, v, atMs: plan.atMs, target: plan.target, tapX: reading.markerX, restX };
   }
 }
@@ -202,24 +243,35 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
 /**
  * Where the marker parked after the press, or `null` when the bar stopped being readable. Two
  * readings within `REST_SETTLE_PX` mean it has settled; a still-moving marker is reported at the
- * `REST_READ_MS` deadline, where it was last seen. A refusal is not the press's failure: the press
- * happened, the bar just went away (contracts §0.6). This read ignores `enabled` on purpose — the
- * 解除 button reading dimmed is exactly what a successful press looks like.
+ * deadline, where it was last seen. The deadline is the settle window clamped to
+ * `budgetMs + REST_READ_MS` from the call's start, so the whole call stays bounded; polls are
+ * spaced by `REST_POLL_MS`, so an instant sampler on a frozen clock cannot turn this into a hot
+ * spin. A refusal or a throw is not the press's failure: the press happened, the bar just went away
+ * (contracts §0.6). This read ignores `enabled` on purpose — the 解除 button reading dimmed is
+ * exactly what a successful press looks like.
  */
 async function readRest(
   sampler: QteSampler,
   previousMarkerX: number | undefined,
   now: () => number,
+  wait: (ms: number) => Promise<void>,
+  deadlineLimitMs: number,
 ): Promise<number | null> {
-  const deadlineMs = now() + REST_READ_MS;
+  const deadlineMs = Math.min(now() + REST_READ_MS, deadlineLimitMs);
   let lastX: number | null = null;
   while (now() <= deadlineMs) {
-    const sample = await sampler.sample(previousMarkerX);
+    let sample: BarSample;
+    try {
+      sample = await sampler.sample(previousMarkerX);
+    } catch {
+      return null;
+    }
     if (!sample.ok) return null;
     const markerX = sample.reading.markerX;
     previousMarkerX = markerX;
     if (lastX !== null && Math.abs(markerX - lastX) <= REST_SETTLE_PX) return markerX;
     lastX = markerX;
+    await wait(REST_POLL_MS);
   }
   return lastX;
 }
@@ -232,11 +284,17 @@ async function readRest(
  * The production sampler: a band capture when the source has one, the QTE window, and `parseQte`.
  *
  * With a source that can crop, the rectangle asked for is the QTE window of the reference frame —
- * the band plus the 解除 annulus — and the perceiver's size gate makes the crop's origin safe: a
- * crop of another size is `unsupported-size`, never read with the anchors at the wrong place. A
- * source without `captureBand` keeps working: its full frame is parsed at its own origin, and a
- * frame of another size is refused the same way (contracts §0.5). Every refusal — including a
- * foreign window — is one fact to this loop: the bar is not readable.
+ * the band plus the 解除 annulus — and that rectangle's top-left becomes `parseQte`'s `origin`. A
+ * source without `captureBand` keeps working: its full frame is parsed at its own origin. A
+ * `QteParse` refusal — including `unsupported-size` — is `bar-gone`: the bar was looked for and is
+ * not there.
+ *
+ * A capture that throws is **not** `bar-gone`. `parseQte` with an origin checks the crop's size
+ * against the reference window, not the game window's, so a 2560×1440 client area is cropped at the
+ * 1920-anchored rectangle and parsed — the 1920×1080 client-size invariant belongs to the
+ * composition root, which asserts it (Task 7). Every engine failure — a refused crop, a stale
+ * frame, a dead child — is the separate fact `capture-failed`, and this sampler never rethrows it:
+ * failure is a value (contracts §0.6).
  *
  * `atMs` is the frame's clock, never `now()`: a reading that lied about its age would be planned
  * against the wrong instant (contracts §7).
@@ -244,18 +302,24 @@ async function readRest(
 export function bandSampler(source: FrameSource): QteSampler {
   return {
     async sample(previousMarkerX?: number): Promise<BarSample> {
-      const { frame, origin } = await readFrame(source);
-      const parsed = await parseQte(frame, previousMarkerX, origin);
-      if (!parsed.ok) return { ok: false, reason: 'bar-gone' };
-      return {
-        ok: true,
-        reading: {
-          atMs: frame.atMs,
-          markerX: parsed.qte.markerX,
-          zones: parsed.qte.zones,
-          enabled: parsed.enabled,
-        },
-      };
+      try {
+        const { frame, origin } = await readFrame(source);
+        const parsed = await parseQte(frame, previousMarkerX, origin);
+        if (!parsed.ok) return { ok: false, reason: 'bar-gone' };
+        return {
+          ok: true,
+          reading: {
+            atMs: frame.atMs,
+            markerX: parsed.qte.markerX,
+            zones: parsed.qte.zones,
+            enabled: parsed.enabled,
+          },
+        };
+      } catch {
+        // "We could not look" is not "the bar is gone" — two facts, and only this one belongs to
+        // the tick's failure accounting.
+        return { ok: false, reason: 'capture-failed' };
+      }
     },
   };
 }
