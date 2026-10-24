@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import { connectEngine } from '../src/engine/child.ts';
+import { captureWarm } from './fixtures/warmup-capture.ts';
 
 const CHILD = fileURLToPath(new URL('../src/engine/child.mjs', import.meta.url));
 const LOADER = new URL('./fixtures/fake-win32-loader.mjs', import.meta.url).href;
@@ -24,12 +25,15 @@ describe('engine child snapshot path (no window)', () => {
     });
     const engine = connectEngine(child, { timeoutMs: 15000, logger: () => {} });
     try {
-      const native = await engine.request({ op: 'capture' });
+      // a fresh child's first frame may still be warming up: retry the contract's no-frame (§5)
+      const native = await captureWarm(engine);
       expect(native).toMatchObject({ ok: true });
       const nativeValue = (native as { value: { jpeg: string; width: number; height: number; ageMs: number } }).value;
       expect(nativeValue.width).toBe(192);
       expect(nativeValue.height).toBe(108);
       expect(nativeValue.ageMs).toBeGreaterThanOrEqual(0);
+      expect(nativeValue.ageMs).toBeLessThanOrEqual(300);
+      expect(nativeValue).not.toHaveProperty('crop');
 
       const snapshot = await engine.request({ op: 'capture', maxWidth: 96 });
       expect(snapshot).toMatchObject({ ok: true });
@@ -61,7 +65,7 @@ describe('engine child snapshot path (no window)', () => {
     });
     const engine = connectEngine(child, { timeoutMs: 15000, logger: () => {} });
     try {
-      await engine.request({ op: 'capture' }); // warm the render threads
+      await captureWarm(engine); // warm the render threads; a cold child may reply no-frame (§5)
       const reply = await engine.request({ op: 'capture', crop: { x: 96, y: 54, width: 96, height: 54 } });
       expect(reply).toMatchObject({ ok: true });
       const value = (reply as { value: { jpeg: string; width: number; height: number; crop: unknown } }).value;
@@ -87,7 +91,7 @@ describe('engine child snapshot path (no window)', () => {
     });
     const engine = connectEngine(child, { timeoutMs: 15000, logger: () => {} });
     try {
-      await engine.request({ op: 'capture' }); // warm the render threads
+      await captureWarm(engine); // warm the render threads; a cold child may reply no-frame (§5)
       const reply = await engine.request({ op: 'capture', crop: { x: 100, y: 0, width: 100, height: 10 } });
       expect(reply).toMatchObject({ ok: false, error: 'rejected', detail: 'crop-out-of-frame' });
     } finally {
