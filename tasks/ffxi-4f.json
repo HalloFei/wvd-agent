@@ -7,9 +7,10 @@
     "steps": [
       { "op": "expect", "screen": "town", "timeoutMs": 20000 },
       { "op": "travel", "to": "ffxi-gcn" },
-      { "op": "tap", "at": [1082, 520] },
+      { "op": "wait", "ms": 8000 },
+      { "op": "tap", "at": [1082, 535] },
       { "op": "expect", "screen": "dungeon", "timeoutMs": 45000 },
-      { "op": "tap", "at": [1849, 110] },
+      { "op": "tap", "at": [1787, 96] },
       { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },
       { "op": "expectFloor", "timeoutMs": 5000 }
     ]

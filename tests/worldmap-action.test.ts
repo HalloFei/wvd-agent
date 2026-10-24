@@ -48,6 +48,7 @@ class Session implements WorldMapEnv {
   dragCount = 0;
   mapFrame: Frame;
   foundOnZoom: number | null = null;
+  foundOnZoomIn = false;
   foundOnDrag = false;
   tapResult: ActionResult = { ok: true };
   holdResult: ActionResult = { ok: true };
@@ -73,7 +74,12 @@ class Session implements WorldMapEnv {
   };
   now = (): number => this.clock;
   sleep = async (ms: number): Promise<void> => { this.clock += ms; };
+  captureFailures = 0;
   capture = async (): Promise<Frame> => {
+    if (this.captureFailures > 0) {
+      this.captureFailures -= 1;
+      throw new Error('capture timeout: stale-frame');
+    }
     if (this.forced !== null) return this.forced;
     if (this.left) return this.fixtures.townDown;
     if (this.mapOpen) return this.mapFrame;
@@ -97,8 +103,12 @@ class Session implements WorldMapEnv {
       if (!this.holdResult.ok) return this.holdResult;
       this.keys.push(scan);
       if (this.mapOpen) {
-        this.zoom += 1;
-        if (this.foundOnZoom !== null && this.zoom >= this.foundOnZoom) this.mapFrame = this.fixtures.mapVnh;
+        if (scan === 0x10) {
+          this.zoom += 1;
+          if (this.foundOnZoom !== null && this.zoom >= this.foundOnZoom) this.mapFrame = this.fixtures.mapVnh;
+        } else if (scan === 0x12 && this.foundOnZoomIn) {
+          this.mapFrame = this.fixtures.mapVnh;
+        }
       }
       return { ok: true };
     },
@@ -121,14 +131,14 @@ describe('openWorldMap', () => {
     expect(await openWorldMap(session)).toEqual({ ok: true });
     expect(session.taps).toHaveLength(2);
     expect(near(session.taps[0]!, { x: 697, y: 799 })).toBe(true);
-    expect(near(session.taps[1]!, { x: 1194, y: 1024 })).toBe(true);
+    expect(near(session.taps[1]!, { x: 1177, y: 1012 })).toBe(true);
   });
 
   it('taps the icon directly when the panel is already down', async () => {
     const session = new Session(await fixtures(), { start: 'town-down' });
     expect(await openWorldMap(session)).toEqual({ ok: true });
     expect(session.taps).toHaveLength(1);
-    expect(near(session.taps[0]!, { x: 1194, y: 1024 })).toBe(true);
+    expect(near(session.taps[0]!, { x: 1177, y: 1012 })).toBe(true);
   });
 
   it('refuses a screen with neither control, without tapping', async () => {
@@ -173,8 +183,17 @@ describe('travelTo', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('location-not-found');
     expect(session.taps).toEqual([]);
-    expect(session.keys).toHaveLength(3);
+    expect(session.keys).toEqual([0x10, 0x10, 0x10, 0x12, 0x12]);
     expect(session.drags).toHaveLength(8);
+  });
+
+  it('zooms in after the drags when the neighbour was hiding the node', async () => {
+    const session = new Session(await fixtures(), { start: 'map' });
+    session.foundOnZoomIn = true;
+    expect(await travelTo('vnh', session)).toEqual({ ok: true });
+    expect(session.keys).toEqual([0x10, 0x10, 0x10, 0x12]);
+    expect(session.drags).toHaveLength(8);
+    expect(near(session.taps[0]!, { x: 960, y: 469 })).toBe(true);
   });
 
   it('refuses a clipped node (score below 0.8) rather than clicking it', async () => {
@@ -208,6 +227,23 @@ describe('travelTo', () => {
     expect(await travelTo('vnh', session)).toEqual({ ok: true });
     expect(session.taps).toEqual([]);
     expect(session.keys).toEqual([]);
+  });
+
+  it('retries a stale capture and still travels', async () => {
+    const session = new Session(await fixtures(), { start: 'map' });
+    session.mapFrame = (await fixtures()).mapVnh;
+    session.captureFailures = 1;
+    expect(await travelTo('vnh', session)).toEqual({ ok: true });
+    expect(session.taps).toHaveLength(1);
+  });
+
+  it('fails capture-unavailable after three stale captures, without tapping', async () => {
+    const session = new Session(await fixtures(), { start: 'map' });
+    session.captureFailures = 3;
+    const result = await travelTo('vnh', session);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('capture-unavailable');
+    expect(session.taps).toEqual([]);
   });
 
   it('cancels before the first capture on an aborted signal', async () => {

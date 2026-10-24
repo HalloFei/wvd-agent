@@ -26,6 +26,7 @@ export interface WorldMapEnv {
 export type TravelReason =
   | ActionFailure
   | 'cancelled'
+  | 'capture-unavailable'
   | 'unknown-location'
   | 'world-map-control-not-found'
   | 'location-not-found';
@@ -36,6 +37,8 @@ export type TravelResult =
 
 /** Q — 缩小 on the world map (the legend's 移动至标记 code; there it also zooms out). */
 const ZOOM_OUT_SCAN = 0x10;
+/** E — 放大: after a drag to the right area, zooming in separates 北穿 from 诺村. */
+const ZOOM_IN_SCAN = 0x12;
 const PRESS_MS = 60;
 /** The parchment between the letterboxed pillars; all nodes live inside it. */
 const MAP_AREA = { x: 450, y: 0, width: 1_200, height: 1_080 } as const;
@@ -53,6 +56,7 @@ const DRAG_STEP = 400;
 const DRAG_MS = 300;
 const MAX_ZOOMS = 3;
 const MAX_DRAGS = 8;
+const MAX_ZOOM_INS = 2;
 /** Least-edge patch for a drag: the map's empty parchment, away from labels and controls. */
 const SAFE_INSET = { x: 550, y: 150, width: 950, height: 800 } as const;
 
@@ -122,7 +126,7 @@ async function openFrom(
     }
   }
 
-  const pressed = await env.actuator.tap(centre(icon));
+  const pressed = await env.actuator.tap(centre(icon, LOCATIONS.get('world-map-icon')!.anchor));
   if (!pressed.ok) return failure(pressed.reason, pressed.detail);
   const opened = await poll(env, (screen) => screen === 'worldmap', OPEN_TIMEOUT_MS, now);
   if (!opened.ok) return opened;
@@ -149,6 +153,7 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
 
   let zooms = 0;
   let drags = 0;
+  let zoomsIn = 0;
   for (;;) {
     if (env.abort?.aborted) return { ok: false, reason: 'cancelled' };
     const view = await captureAndObserve(env);
@@ -161,7 +166,7 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
     const match = findTemplate(image, MAP_AREA, entry.template);
 
     if (match !== null) {
-      const pressed = await env.actuator.tap(centre(match));
+      const pressed = await env.actuator.tap(centre(match, entry.anchor));
       if (!pressed.ok) return failure(pressed.reason, pressed.detail);
       const left = await poll(env, (screen) => screen !== 'worldmap', LEAVE_TIMEOUT_MS, now, 'location-not-found');
       if (!left.ok) return left;
@@ -187,6 +192,16 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
       await pause(env, DRAG_SETTLE_MS);
       continue;
     }
+    if (zoomsIn < MAX_ZOOM_INS) {
+      // The last drags brought 诺村's area into view; 北穿 sits next to it and can be separated by
+      // zooming in. Zooming re-centres on the cursor, which the last drag left in the area.
+      zoomsIn += 1;
+      const zoomed = await env.actuator.holdKey(ZOOM_IN_SCAN, PRESS_MS);
+      if (!zoomed.ok) return failure(zoomed.reason, zoomed.detail);
+      env.log?.(`wvd: zoomed in to separate ${entry.label} (${zoomsIn}/${MAX_ZOOM_INS})`);
+      await pause(env, ZOOM_SETTLE_MS);
+      continue;
+    }
     return { ok: false, reason: 'location-not-found', detail: `${entry.label} was not found on the map` };
   }
 }
@@ -199,19 +214,34 @@ function failure(reason: ActionFailure, detail?: string): TravelResult {
   return detail === undefined ? { ok: false, reason } : { ok: false, reason, detail };
 }
 
-function centre(match: Match): Point {
-  return { x: match.at.x + match.width / 2, y: match.at.y + match.height / 2 };
+function centre(match: Match, anchor?: Point): Point {
+  return {
+    x: match.at.x + match.width / 2 + (anchor?.x ?? 0),
+    y: match.at.y + match.height / 2 + (anchor?.y ?? 0),
+  };
 }
 
 async function pause(env: WorldMapEnv, ms: number): Promise<void> {
   await env.sleep(ms);
 }
 
+/** The loop's own capture policy (§5): three attempts, 200 ms apart, then a typed refusal. */
+const CAPTURE_ATTEMPTS = 3;
+const CAPTURE_RETRY_MS = 200;
+
 async function captureAndObserve(env: WorldMapEnv): Promise<{ ok: true; frame: Frame; observation: Observation } | { ok: false; reason: TravelReason; detail?: string }> {
-  if (env.abort?.aborted) return { ok: false, reason: 'cancelled' };
-  const frame = await env.capture();
-  const observation = await env.observe(frame);
-  return { ok: true, frame, observation };
+  for (let attempt = 0; attempt < CAPTURE_ATTEMPTS; attempt += 1) {
+    if (env.abort?.aborted) return { ok: false, reason: 'cancelled' };
+    try {
+      const frame = await env.capture();
+      const observation = await env.observe(frame);
+      return { ok: true, frame, observation };
+    } catch {
+      // A warming child misses a frame; a real stall is the third failure (contracts §5).
+      await env.sleep(CAPTURE_RETRY_MS);
+    }
+  }
+  return { ok: false, reason: 'capture-unavailable', detail: 'capture failed three times' };
 }
 
 async function decode(frame: Frame): Promise<RgbaImage | null> {

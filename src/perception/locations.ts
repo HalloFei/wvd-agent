@@ -5,6 +5,7 @@
  * excluded from `TRAVEL_IDS`; a task file may only `travel` to a world-map or dungeon-select node.
  * Labels are what people read in a console line or a report; the ids are stable.
  */
+import type { Point } from '../contracts.ts';
 import { RAW_TEMPLATES } from './location-templates.ts';
 import type { MatchTemplate } from './match.ts';
 
@@ -15,9 +16,11 @@ export interface LocationEntry {
   readonly label: string;
   readonly kind: LocationKind;
   readonly template: MatchTemplate;
+  /** Added to the template's centre to reach the control's hit point; absent means the centre. */
+  readonly anchor?: Point;
 }
 
-function entry(id: string, label: string, kind: LocationKind): LocationEntry {
+function entry(id: string, label: string, kind: LocationKind, anchor?: Point): LocationEntry {
   const raw = RAW_TEMPLATES[id]!;
   return {
     id,
@@ -28,11 +31,14 @@ function entry(id: string, label: string, kind: LocationKind): LocationEntry {
       height: raw.height,
       gray: Uint8Array.from(Buffer.from(raw.gray, 'base64')),
     },
+    ...(anchor === undefined ? {} : { anchor }),
   };
 }
 
 const entries: readonly LocationEntry[] = [
-  entry('world-map-icon', 'world map control', 'control'),
+  // Measured live 2026-10-24: the template's centre is 17 px right and 12 px below the clickable
+  // button; a tap at the centre did nothing, a tap here opened the map.
+  entry('world-map-icon', 'world map control', 'control', { x: -17, y: -12 }),
   entry('panel-chevron', 'party panel collapse', 'control'),
   entry('inn', '旅店', 'control'),
   entry('city-royal', '都卢库纳里亚', 'worldmap'),
