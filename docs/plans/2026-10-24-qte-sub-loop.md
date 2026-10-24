@@ -420,17 +420,39 @@ git commit -m "feat(engine): FrameSource.captureBand (§1)"
 
 ### Task 6: The sub-loop — `timeQte`
 
+> **Ruling (controller, mid-run):** this task takes an injected **sampler**, not a `FrameSource`.
+> The plan first said "a fake source whose `toRgba()` returns a rendered bar", which cannot work:
+> `parseQte` is a real pixel parser (warm runs, a 55 %-lit row profile, a 6–9 px white core, a
+> bright-gap test, a button annulus), so a test that renders a bar the parser accepts would copy the
+> perception module's knowledge of what a bar looks like into the test. The sub-loop's own subject is
+> *timing*, and the sampler is the seam that isolates it. `bandSampler` is the production sampler and
+> the one place the crop, its origin and `parseQte` meet.
+
 **Files:**
 - Create: `src/actions/qte.ts`
 - Test: `tests/qte-loop.test.ts`
 
 **Interfaces:**
-- Consumes: `planTap`, `qteVelocity` (`src/policy/qte.ts`), `parseQte` + `qteWindow` (Task 4), `FrameSource.captureBand?` (Task 5), `Actuator`-free: the press arrives as a callback.
+- Consumes: `planTap`, `qteVelocity` (`src/policy/qte.ts`); `parseQte` + `qteWindow` (Task 4);
+  `FrameSource.captureBand?` (Task 5); `Actuator`-free — the press arrives as a callback.
 - Produces:
 
 ```ts
+/** One reading of the bar, on the frame's own clock (contracts §0.4 — timing is data). */
+export interface BarReading {
+  readonly atMs: number;
+  readonly markerX: number;                       // full-frame device pixels
+  readonly zones: readonly QteZone[];             // full-frame device pixels
+  readonly enabled: boolean;                      // the 解除 button; false means this pass is answered
+}
+export type BarSample =
+  | { readonly ok: true; readonly reading: BarReading }
+  | { readonly ok: false; readonly reason: 'bar-gone' };   // the QTE screen is not there any more
+
+export interface QteSampler { sample(previousMarkerX?: number): Promise<BarSample>; }
+
 export type QteRefusal =
-  | 'bar-gone'          // a sample refused: the QTE screen is not there any more
+  | 'bar-gone'
   | 'resolved'          // the 解除 button reads dimmed: this pass was already answered
   | 'no-velocity'       // samples came, but no three spanned a steady 66 ms before the budget ran out
   | 'no-reachable-zone' // no zone centre can be reached in the current pass, inside the horizon
@@ -439,19 +461,19 @@ export type QteRefusal =
 
 export interface QteTiming {
   readonly ok: true;
-  readonly v: number;         // px/s, signed
-  readonly atMs: number;      // the delay planTap asked for, from the sample that produced it
-  readonly target: number;    // the zone centre the plan aimed at
-  readonly tapX: number;      // the marker's position on the planning sample
-  readonly restX: number | null; // where it parked, when the bar was still there to read
+  readonly v: number;             // px/s, signed
+  readonly atMs: number;          // the delay planTap asked for, from the reading that produced it
+  readonly target: number;        // the zone centre the plan aimed at
+  readonly tapX: number;          // the marker's position on the planning reading
+  readonly restX: number | null;  // where it parked, when the bar was still there to read
 }
 export type QteOutcome = QteTiming | { readonly ok: false; readonly reason: QteRefusal };
 
 export interface QteTimingOptions {
-  readonly source: FrameSource;
+  readonly sampler: QteSampler;
+  readonly press: () => Promise<ActionResult>;
   readonly now: () => number;
   readonly wait: (ms: number) => Promise<void>;
-  readonly press: () => Promise<ActionResult>;
   readonly latencyMs: number;
   readonly decelPxPerS2: number;
   readonly minWindowMs: number;
@@ -459,25 +481,28 @@ export interface QteTimingOptions {
 }
 
 export function timeQte(options: QteTimingOptions): Promise<QteOutcome>;
+
+/** The production sampler: a band capture when the source has one, the QTE window, and `parseQte`. */
+export function bandSampler(source: FrameSource): QteSampler;
 ```
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/qte-loop.test.ts`, with a fake source that returns scripted frames (each frame's `toRgba()` returns a rendered bar at the scripted marker x) and a fake `wait` that advances a virtual clock:
+`tests/qte-loop.test.ts`, with a scripted sampler and a `wait` that advances a virtual clock:
 
 ```ts
 it('presses once, at the instant the plan named, and reports the fit sample', async () => {
-  // marker 20 px per 33 ms → 606 px/s; the left zone centre is 694+114 = 808
+  // marker 20 px per 33 ms → 606 px/s; the left zone's centre is 808
   const clock = virtualClock(0);
-  const source = bandSource([
+  const sampler = scriptedSampler([
     { atMs: 0, markerX: 700 },
     { atMs: 33, markerX: 720 },
     { atMs: 66, markerX: 740 },
     { atMs: 400, markerX: 900 },   // the rest read
-  ], clock);
+  ]);
   const presses: number[] = [];
   const out = await timeQte({
-    source, now: clock.now, wait: clock.wait,
+    sampler, now: clock.now, wait: clock.wait,
     press: async () => { presses.push(clock.now()); return { ok: true }; },
     latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
   });
@@ -485,109 +510,53 @@ it('presses once, at the instant the plan named, and reports the fit sample', as
   if (!out.ok) return;
   expect(out.v).toBeCloseTo(606, 0);
   expect(presses).toHaveLength(1);
-  expect(presses[0]).toBeCloseTo(66 + out.atMs, 0);   // the sample's clock plus the plan's delay
+  expect(presses[0]).toBeCloseTo(66 + out.atMs, 0);   // the reading's clock plus the plan's delay
   expect(out.restX).not.toBeNull();
-});
-
-it('does not press when the plan is shorter than the minimum window, and presses on the next pass', async () => {
-  // The marker sits 6 px short of the left zone centre at 606 px/s: the plan is ~10 ms, under the
-  // 150 ms floor, so the first opportunity must be refused and nothing pressed.
-  const clock = virtualClock(0);
-  const source = bandSource([
-    { atMs: 0, markerX: 700 },
-    { atMs: 33, markerX: 720 },
-    { atMs: 66, markerX: 780 },   // now a real distance away: this plan is over the floor
-    { atMs: 400, markerX: 900 },
-  ], clock);
-  const presses: number[] = [];
-  const out = await timeQte({
-    source, now: clock.now, wait: clock.wait,
-    press: async () => { presses.push(clock.now()); return { ok: true }; },
-    latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
-  });
-  expect(out.ok).toBe(true);
-  expect(presses).toHaveLength(1);
-  // the first plan was refused: the press is later than the first sample's own plan would have been
-  expect(presses[0]).toBeGreaterThan(66 + 10);
-});
-
-it('stops with bar-gone when a sample refuses', async () => {
-  const clock = virtualClock(0);
-  const source = bandSource([{ atMs: 0, markerX: 700 }, { atMs: 33, markerX: 720 }, { atMs: 66, noBar: true }], clock);
-  const presses: number[] = [];
-  const out = await timeQte({
-    source, now: clock.now, wait: clock.wait,
-    press: async () => { presses.push(clock.now()); return { ok: true }; },
-    latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
-  });
-  expect(out).toEqual({ ok: false, reason: 'bar-gone' });
-  expect(presses).toHaveLength(0);
-});
-
-it('does not press a bar whose 解除 button is dimmed', async () => {
-  // Review Focus 5: the loop re-enters on a bar a previous press already answered.
-  const clock = virtualClock(0);
-  const source = bandSource([
-    { atMs: 0, markerX: 700, enabled: false },
-    { atMs: 33, markerX: 720, enabled: false },
-    { atMs: 66, markerX: 740, enabled: false },
-  ], clock);
-  const presses: number[] = [];
-  const out = await timeQte({
-    source, now: clock.now, wait: clock.wait,
-    press: async () => { presses.push(clock.now()); return { ok: true }; },
-    latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
-  });
-  expect(out).toEqual({ ok: false, reason: 'resolved' });
-  expect(presses).toHaveLength(0);
-});
-
-it('stops with budget-spent when every plan is unreachable', async () => {
-  // The marker never moves toward a zone: `planTap` keeps refusing, the budget runs out.
-  const clock = virtualClock(0);
-  const source = bandSource(
-    Array.from({ length: 40 }, (_, i) => ({ atMs: i * 33, markerX: 700 + (i % 2) })),
-    clock,
-  );
-  const out = await timeQte({
-    source, now: clock.now, wait: clock.wait,
-    press: async () => ({ ok: true }),
-    latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 1000,
-  });
-  expect(out).toEqual({ ok: false, reason: 'budget-spent' });
-});
-
-it('does not read a rest position when the press is refused', async () => {
-  const clock = virtualClock(0);
-  const source = bandSource([
-    { atMs: 0, markerX: 700 }, { atMs: 33, markerX: 720 }, { atMs: 66, markerX: 740 },
-  ], clock);
-  const out = await timeQte({
-    source, now: clock.now, wait: clock.wait,
-    press: async () => ({ ok: false, reason: 'rejected', detail: 'not-foreground' }),
-    latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
-  });
-  expect(out).toEqual({ ok: false, reason: 'press-refused' });
 });
 ```
 
-`virtualClock` (a `now`/`wait` pair over a mutable number, where `wait(ms)` advances it), `bandSource` (a `FrameSource` whose `captureBand` serves the scripted sample and whose `capture` serves a full frame) and the one-pixel bar renderer are local helpers in this test file.
+The remaining five tests, in the same style:
+
+- **`'does not press when the plan is shorter than the minimum window, and presses on the next pass'`** — the marker sits 6 px short of the zone centre on the third reading (a ~10 ms plan, under the floor), then a real distance away on the fourth; `expect(presses).toHaveLength(1)` and `expect(presses[0]).toBeGreaterThan(66 + 10)`.
+- **`'stops with bar-gone when a sample refuses'`** — the third reading refuses; `expect(out).toEqual({ ok: false, reason: 'bar-gone' })`, no press.
+- **`'does not press a bar whose 解除 button is dimmed'`** — every reading has `enabled: false`; `expect(out).toEqual({ ok: false, reason: 'resolved' })`, no press.
+- **`'stops with budget-spent when every plan is unreachable'`** — 40 readings alternating between two neighbouring x values (so `qteVelocity` keeps refusing), `budgetMs: 1000`; `expect(out).toEqual({ ok: false, reason: 'budget-spent' })`.
+- **`'does not read a rest position when the press is refused'`** — `press` resolves `{ ok: false, reason: 'rejected', detail: 'not-foreground' }`; `expect(out).toEqual({ ok: false, reason: 'press-refused' })`.
+
+And one test for the production sampler, using a real fixture rather than a rendered bar:
+
+```ts
+it('bandSampler reads the shipped still through its crop', async () => {
+  const full = await jpegFrame('frame-3.jpg', 1_000, FIXTURES);   // marker 889.5, the fixture's zones
+  const source = bandOnlySource(full);                            // captureBand answers the crop of `full`
+  const sample = await bandSampler(source).sample();
+  expect(sample).toMatchObject({
+    ok: true,
+    reading: { markerX: 889.5, zones: [{ from: 696, to: 920 }, { from: 999, to: 1223 }], enabled: true },
+  });
+  if (sample.ok) expect(sample.reading.atMs).toBe(1_000);
+});
+```
+
+`virtualClock`, `scriptedSampler` and `bandOnlySource` are local helpers in the test file; `jpegFrame`/`FIXTURES` are the existing helpers in `tests/qte.test.ts` — copy the two-line loader, do not import from another test file.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `pnpm vitest run tests/qte-loop.test.ts`
 Expected: FAIL — `Failed to resolve import "../src/actions/qte.ts"`.
 
-- [ ] **Step 3: Implement `timeQte`**
+- [ ] **Step 3: Implement `timeQte` and `bandSampler`**
 
-The loop: take a sample (`source.captureBand?.(qteWindow(frame))` when available, else `capture()` — the first full frame supplies the window), `parseQte` it, and keep the last three readings as `QteSample`s. A sample that refuses is `bar-gone`; a sample whose `parseQte` reported `enabled: false` is `resolved` — the button's dimmed state is how the parser separates "the QTE is live" from "this pass is answered" without waiting for the screen to change (`chest.ts:286`, chest spec §8a). `qteVelocity` over three samples; while it is `null`, keep sampling (that is the "walking the first 66 ms" case). With a velocity, `planTap`, then gate on `minWindowMs`: under the floor, drop the sample and re-plan on the next; over it, `await wait(max(0, planDueAt − now()))`, then `press()`. After a successful press, watch for the rest position for up to `REST_READ_MS` (600) by sampling until two consecutive readings agree within 2 px, and report it; a sample that refuses first means the bar vanished — `restX: null`, still `ok`. The whole function stops at `budgetMs` and returns `budget-spent` if nothing was pressed, `no-velocity` if the budget ends with samples but no speed.
+The loop: `sampler.sample(previousMarkerX)`; refuse on `bar-gone`; refuse `resolved` when `reading.enabled` is false — the button's dimmed state is how the parser separates "the QTE is live" from "this pass is answered" without waiting for the screen to change (chest spec §8a). Keep the last three readings as `QteSample`s; `qteVelocity` over three, and while it is `null` keep sampling (the "walking the first 66 ms" case). With a velocity, `planTap`; gate on `minWindowMs` — under the floor, drop the reading and re-plan on the next; over it, `await wait(max(0, planDueAt - now()))` then `press()`. After a successful press, sample until two consecutive readings agree within 2 px (or `REST_READ_MS` = 600 elapses) and report that as `restX`; a refusal first means the bar vanished — `restX: null`, still `ok`. `budgetMs` bounds the whole call: `budget-spent` if nothing was pressed, `no-velocity` if readings came without a speed.
 
-Module doc: why this is an action and not a policy (it owns a clock, and the policy is pure), and that `planTap`'s `atMs` is a delay from the sample's `frame.atMs`, not from `now()` — contracts §7's one trap.
+`bandSampler(source)`: take one reading per call — `source.captureBand?.(window)` when the source has one (with `window = qteWindow({ width: 1920, height: 1080 })`, and the perceiver's size gate refusing a foreign window), else `source.capture()` — then `parseQte(frame, previousMarkerX, origin)` and map `{ atMs: frame.atMs, markerX, zones, enabled }`. A `QteParse` refusal maps to `{ ok: false, reason: 'bar-gone' }`. **`atMs` is the frame's clock, never `now()`** — contracts §7's one trap.
+
+Module doc: why this is an action and not a policy (it owns a clock; the policy is pure), and why the sampler is injected.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `pnpm vitest run tests/qte-loop.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
