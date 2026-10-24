@@ -1358,8 +1358,13 @@ export class WvdWorld implements World {
           return session.actuator.holdKey(DISARM_SCAN, cfg.pressHoldMs);
         },
         now: () => this.#now(),
+        // The wait must not hold the process open: `stop()` clears the scheduler's timer, but a
+        // sleep already in flight cannot be settled without new state for one waiter, so the handle
+        // is `unref`'d exactly as `#schedule`'s is. The session re-check after the await is what
+        // keeps a stop that lands during the wait from pressing — liveness and safety, separately.
         wait: (ms) => new Promise<void>((resolve) => {
-          setTimeout(resolve, ms);
+          const timer = setTimeout(resolve, ms);
+          timer.unref?.();
         }),
         latencyMs: cfg.qteLatencyMs,
         decelPxPerS2: cfg.qteDecelPxPerS2,
