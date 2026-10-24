@@ -113,6 +113,9 @@ describe('WVD World definition', () => {
     expect(properties['worlds.wvd.tickMs']).toMatchObject({ type: 'integer', minimum: 50, maximum: 1000 });
     expect(properties['worlds.wvd.jpegQuality']).toMatchObject({ type: 'integer', minimum: 30, maximum: 95 });
     expect(properties['worlds.wvd.pressHoldMs']).toMatchObject({ type: 'integer', minimum: 40, maximum: 500 });
+    // `timeQte` refuses a budget below 1 as `misconfigured`; the schema is where a bad setting is
+    // caught before the World has to run it.
+    expect(properties['worlds.wvd.qteSubLoopMs']).toMatchObject({ type: 'integer', minimum: 1 });
     expect(properties['worlds.wvd.rerollLeadRatio']).toMatchObject({ type: 'number', minimum: 0, maximum: 1 });
     // the snapshot width is the one value the child refuses outside the wire bounds; the schema is
     // where a bad setting is caught, not a 5 s engine timeout that never names the field

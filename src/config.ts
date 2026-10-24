@@ -168,7 +168,8 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.wvd.qteSubLoopMs': {
         type: 'integer', title: 'QTE 计时预算',
-        description: '开箱 QTE 的计时子循环最多占用多久，毫秒；超过即放弃这一拍。',
+        description: '开箱 QTE 的计时子循环最多占用多久，毫秒；最小 1，更小的预算连一次采样都放不下，超过即放弃这一拍。',
+        minimum: 1,
       },
       'worlds.wvd.lootTapIntervalMs': {
         type: 'integer', title: '拾取间隔', description: '连续点击拾取的间隔，毫秒。',
