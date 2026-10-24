@@ -114,6 +114,17 @@ export const TEARDOWN_GRACE_MS = 1_200;
 
 // §5 Engine protocol (World ↔ child)
 
+/** A rectangle in the frame's own device pixels: the origin is the window's client top-left. A crop
+ *  must lie inside the frame (`x + width <= frameWidth`, `y + height <= frameHeight`), and that fit
+ *  is the child's check because the codec does not know the frame; the codec only requires a
+ *  non-negative integer origin and a positive integer size. */
+export interface PixelRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 /** The value of a successful `capture` reply. The child captures on its own cadence and serves its
  *  newest frame; `ageMs` is the duration from capture start to reply on the child's clock. */
 export interface EngineCapture {
@@ -121,10 +132,19 @@ export interface EngineCapture {
   readonly width: number;  // device pixels of the window's client area
   readonly height: number;
   readonly ageMs: number;  // capture start → reply, on the child's clock
+  /** The rectangle the child actually cropped, absent when it sent the whole frame. It is what lets
+   *  the World detect a child that ignored the request and answered with the native frame: a caller
+   *  that asked for a band must never parse a full frame as one. */
+  readonly crop?: PixelRect;
 }
 
 export type EngineRequest =
-  | { op: 'capture'; maxWidth?: number }
+  /** `maxWidth` asks for a downscaled JPEG (the escalation snapshot); absent means native size, which
+   *  is what perception needs. `crop` asks for one rectangle of the frame, copied before the encode:
+   *  a QTE sample is the bar's own rectangle, and cropping before the encode is what makes the sample
+   *  cheap enough to take three times a pass. `crop` and `maxWidth` together is malformed, because
+   *  they ask for different output sizes. */
+  | { op: 'capture'; maxWidth?: number; crop?: PixelRect }
   | { op: 'foreground' }
   | { op: 'tap'; x: number; y: number; count: 1 | 2 }
   | { op: 'key'; scan: number; holdMs: number };

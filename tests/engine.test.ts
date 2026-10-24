@@ -84,6 +84,37 @@ describe('engine protocol', () => {
     }
   });
 
+  it('carries a crop rectangle on capture and drops a malformed one', () => {
+    const line = encodeRequest(9, { op: 'capture', crop: { x: 645, y: 36, width: 631, height: 699 } });
+    expect(decodeLine(line)).toEqual({
+      request: { id: 9, request: { op: 'capture', crop: { x: 645, y: 36, width: 631, height: 699 } } },
+    });
+  });
+
+  it.each([
+    ['a missing field', { x: 0, y: 0, width: 10 }],
+    ['a fractional value', { x: 0, y: 0, width: 10.5, height: 10 }],
+    ['a negative origin', { x: -1, y: 0, width: 10, height: 10 }],
+    ['a zero size', { x: 0, y: 0, width: 0, height: 10 }],
+    ['a non-object', 42],
+  ])('refuses a crop with %s', (_label, crop) => {
+    expect(decodeLine(JSON.stringify({ id: 3, request: { op: 'capture', crop } }))).toBeNull();
+  });
+
+  it('accepts a band-only crop well under the maxWidth floor, since a crop has bounds of its own', () => {
+    const crop = { x: 645, y: 36, width: 10, height: 47 };
+    expect(decodeLine(JSON.stringify({ id: 5, request: { op: 'capture', crop } })))
+      .toEqual({ request: { id: 5, request: { op: 'capture', crop } } });
+  });
+
+  it('drops a capture that asks for both a crop and a maxWidth, since they size the output differently', () => {
+    const line = JSON.stringify({
+      id: 4,
+      request: { op: 'capture', maxWidth: 1280, crop: { x: 0, y: 0, width: 10, height: 10 } },
+    });
+    expect(decodeLine(line)).toBeNull();
+  });
+
   it('splits a byte stream into lines across chunk boundaries', () => {
     const decoder = new LineDecoder();
     const wire = encodeRequest(1, { op: 'capture' }) + encodeRequest(2, { op: 'foreground' });

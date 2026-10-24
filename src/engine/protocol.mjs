@@ -81,11 +81,20 @@ function decodeRequest(request) {
   if (!isObject(request) || typeof request.op !== 'string' || !OPS.has(request.op)) return null;
   switch (request.op) {
     case 'capture': {
-      // absent is native size, which is what perception needs; present must be a sane integer
-      if (request.maxWidth === undefined) return { op: 'capture' };
-      const maxWidth = request.maxWidth;
-      if (!isInteger(maxWidth) || maxWidth < MIN_CAPTURE_WIDTH || maxWidth > MAX_CAPTURE_WIDTH) return null;
-      return { op: 'capture', maxWidth };
+      // absent maxWidth is native size, which is what perception needs; present must be a sane integer
+      if (request.maxWidth !== undefined
+        && (!isInteger(request.maxWidth) || request.maxWidth < MIN_CAPTURE_WIDTH || request.maxWidth > MAX_CAPTURE_WIDTH)) {
+        return null;
+      }
+      const crop = request.crop === undefined ? undefined : decodeCrop(request.crop);
+      if (request.crop !== undefined && crop === null) return null;
+      // a crop asks for the QTE bar's own rectangle and a maxWidth for a downscale; they size the
+      // output differently, so a caller sending both is a bug the codec names by dropping the line
+      if (crop && request.maxWidth !== undefined) return null;
+      const capture = { op: 'capture' };
+      if (request.maxWidth !== undefined) capture.maxWidth = request.maxWidth;
+      if (crop) capture.crop = crop;
+      return capture;
     }
     case 'foreground':
       return { op: 'foreground' };
@@ -101,6 +110,24 @@ function decodeRequest(request) {
     default:
       return null;
   }
+}
+
+/**
+ * The `capture.crop` rectangle, or `null` when it is not one. The bounds are the crop's own, in
+ * device pixels (contracts §5): a non-negative integer origin and a positive integer size — not
+ * `MIN_CAPTURE_WIDTH`'s floor, because a band-only crop is legitimately 631 wide by 47 tall. Whether
+ * the rectangle fits the frame is **not** checkable here: the codec does not know the frame, so
+ * `x + width <= frameWidth` and `y + height <= frameHeight` are the child's check. Nothing is
+ * clamped: a nonsense rectangle is a caller bug, not something to guess at.
+ */
+function decodeCrop(crop) {
+  if (!isObject(crop)) return null;
+  const { x, y, width, height } = crop;
+  if (!isInteger(x) || x < 0) return null;
+  if (!isInteger(y) || y < 0) return null;
+  if (!isInteger(width) || width < 1) return null;
+  if (!isInteger(height) || height < 1) return null;
+  return { x, y, width, height };
 }
 
 function decodeReply(reply) {
