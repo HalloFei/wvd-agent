@@ -13,6 +13,7 @@ import type {
   EngineRequest,
   Frame,
   FrameSource,
+  PixelRect,
   RgbaImage,
 } from '../contracts.ts';
 import { decodeJpeg } from './gdiplus.mjs';
@@ -100,12 +101,37 @@ export class Win32Capture implements FrameSource {
   }
 
   async capture(): Promise<Frame> {
-    const reply = await this.engine.request({ op: 'capture' });
+    return this.frameFrom(await this.engine.request({ op: 'capture' }));
+  }
+
+  /**
+   * The next frame cropped to `rect` (contracts §1). The request is refused here, before the wire,
+   * when `rect` is not a legal crop: the codec would drop the line, the child would send no reply,
+   * and the World would wait out `engineTimeoutMs` without ever naming the field — the same refusal
+   * `captureJpeg` makes for `maxWidth`. A reply that is not the band asked for is refused by
+   * `frameFrom`, because a full frame parsed as a band is silently wrong rather than merely missing.
+   */
+  async captureBand(rect: PixelRect): Promise<Frame> {
+    if (!isCropRect(rect)) throw new EngineCaptureError('rejected', 'crop-out-of-range');
+    return this.frameFrom(await this.engine.request({ op: 'capture', crop: rect }), rect);
+  }
+
+  /**
+   * The one body `capture()` and `captureBand()` share — the `atMs` stamp, the stale-frame refusal
+   * and the lazy decode — so the two can never drift apart. With a `band` given, the reply must
+   * prove it is that band: no echoed `crop` at all is an older child that ignored the request and
+   * sent the native frame.
+   */
+  private frameFrom(reply: EngineReply, band?: PixelRect): Frame {
     // stamped at the reply, before the base64 decode: decoding is work after the observation, and
     // charging it to the frame's age would make every frame older than it is
     const receivedAt = performance.now();
     if (!reply.ok) throw new EngineCaptureError(reply.error, reply.detail);
-    const { jpeg: base64, width, height, ageMs } = captureValue(reply.value);
+    const value = captureValue(reply.value);
+    if (band !== undefined && !isEchoedBand(value, band)) {
+      throw new EngineCaptureError('unavailable', 'malformed-capture');
+    }
+    const { jpeg: base64, width, height, ageMs } = value;
     if (isStaleFrame(ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
     // the child reports a duration, never a timestamp (§0.4): the World stamps the frame from it
     const atMs = receivedAt - ageMs;
@@ -175,10 +201,38 @@ export async function captureJpeg(engine: EngineRequester, maxWidth?: number): P
   return { bytes: Uint8Array.from(Buffer.from(base64, 'base64')), width, height };
 }
 
+/** Whether a value is a legal `capture.crop`: four integers, a non-negative origin and a positive
+ *  size — exactly what the wire codec accepts, so this is the check that keeps a bad rectangle from
+ *  becoming a dropped line nobody answers. */
+function isCropRect(value: unknown): value is PixelRect {
+  if (typeof value !== 'object' || value === null) return false;
+  const { x, y, width, height } = value as Record<string, unknown>;
+  return typeof x === 'number' && Number.isInteger(x) && x >= 0
+    && typeof y === 'number' && Number.isInteger(y) && y >= 0
+    && typeof width === 'number' && Number.isInteger(width) && width >= 1
+    && typeof height === 'number' && Number.isInteger(height) && height >= 1;
+}
+
+/**
+ * Whether a reply is exactly the band that was asked for: the echoed `crop` present and equal field
+ * for field, with the reply's own `width`/`height` equal to it too. Anything else — no `crop` (an
+ * older child that ignored the request and sent the native frame), a different rectangle, mismatched
+ * dimensions — must never be parsed as a band: the crop's coordinates are the whole point, and a
+ * full frame read as one is silently wrong rather than merely late.
+ */
+function isEchoedBand(reply: EngineCapture, rect: PixelRect): boolean {
+  const crop: unknown = reply.crop;
+  if (typeof crop !== 'object' || crop === null) return false;
+  const echoed = crop as Partial<PixelRect>;
+  return echoed.x === rect.x && echoed.y === rect.y
+    && echoed.width === rect.width && echoed.height === rect.height
+    && reply.width === rect.width && reply.height === rect.height;
+}
+
 /** The capture value a well-behaved child sends; anything else is the protocol lying. */
 function captureValue(value: unknown): EngineCapture {
   if (typeof value !== 'object' || value === null) throw new EngineCaptureError('unavailable', 'malformed-capture');
-  const { jpeg: base64, width, height, ageMs } = value as Partial<EngineCapture>;
+  const { jpeg: base64, width, height, ageMs, crop } = value as Partial<EngineCapture>;
   if (
     typeof base64 !== 'string'
     || typeof width !== 'number' || !Number.isInteger(width) || width <= 0
@@ -187,5 +241,6 @@ function captureValue(value: unknown): EngineCapture {
   ) {
     throw new EngineCaptureError('unavailable', 'malformed-capture');
   }
-  return { jpeg: base64, width, height, ageMs };
+  // the echoed crop is judged only by `captureBand`; a plain capture ignores it, as it always has
+  return { jpeg: base64, width, height, ageMs, crop };
 }

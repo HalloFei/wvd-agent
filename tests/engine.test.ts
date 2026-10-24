@@ -333,6 +333,82 @@ describe('Win32Capture', () => {
     expect(second.width).toBe(WIDTH);
     expect(problems).toEqual([{ kind: 'engineProblem', detail: 'native-decoder-unavailable' }]);
   });
+
+  it('asks for a band and refuses a reply that is not the band it asked for', async () => {
+    const engine = new FakeEngine({
+      id: 1,
+      ok: true,
+      value: { jpeg: Buffer.from([0xff, 0xd8]).toString('base64'), width: 1920, height: 1080, ageMs: 4 },
+    });
+    const source = new Win32Capture(engine, { decode: () => ({ data: new Uint8Array(4), width: 1, height: 1 }) });
+    await expect(source.captureBand({ x: 645, y: 36, width: 631, height: 699 })).rejects.toMatchObject({
+      reason: 'unavailable',
+      detail: 'malformed-capture',
+    });
+  });
+
+  it('returns the band when the child echoes the rectangle', async () => {
+    const engine = new FakeEngine({
+      id: 1,
+      ok: true,
+      value: {
+        jpeg: Buffer.from([0xff, 0xd8]).toString('base64'),
+        width: 631,
+        height: 699,
+        ageMs: 4,
+        crop: { x: 645, y: 36, width: 631, height: 699 },
+      },
+    });
+    const source = new Win32Capture(engine, { decode: () => ({ data: new Uint8Array(4), width: 1, height: 1 }) });
+    const frame = await source.captureBand({ x: 645, y: 36, width: 631, height: 699 });
+    expect(frame.width).toBe(631);
+    expect(frame.height).toBe(699);
+    expect(engine.seen[0]).toEqual({ op: 'capture', crop: { x: 645, y: 36, width: 631, height: 699 } });
+  });
+
+  it('refuses a malformed band rectangle before the wire', async () => {
+    const engine = new FakeEngine({ id: 1, ok: true, value: { jpeg: 'AA==', width: 2, height: 1, ageMs: 0 } });
+    const source = new Win32Capture(engine);
+
+    for (const rect of [
+      { x: -1, y: 0, width: 1, height: 1 },
+      { x: 0, y: -1, width: 1, height: 1 },
+      { x: 0, y: 0, width: 0, height: 1 },
+      { x: 0, y: 0, width: 1, height: 0 },
+      { x: 0.5, y: 0, width: 1, height: 1 },
+      { x: 0, y: 0, width: 1 },
+    ]) {
+      await expect(source.captureBand(rect as never), JSON.stringify(rect)).rejects.toMatchObject({
+        reason: 'rejected',
+        detail: 'crop-out-of-range',
+      });
+    }
+    // a bad rectangle never reaches the child, where the codec would drop the line and no reply
+    // would come: the World would wait out engineTimeoutMs and never learn why
+    expect(engine.seen).toEqual([]);
+  });
+
+  it('refuses a reply that echoes any part of the rectangle differently', async () => {
+    const rect = { x: 645, y: 36, width: 631, height: 699 };
+    const source = (value: object) => new Win32Capture(
+      new FakeEngine({ id: 1, ok: true, value: { jpeg: 'AA==', ageMs: 4, width: 631, height: 699, crop: rect, ...value } }),
+      { decode: () => ({ data: new Uint8Array(4), width: 1, height: 1 }) },
+    );
+
+    for (const value of [
+      { crop: { ...rect, x: 646 } },
+      { crop: { ...rect, y: 37 } },
+      { crop: { ...rect, width: 630 } },
+      { crop: { ...rect, height: 698 } },
+      { width: 1920 },
+      { height: 1080 },
+    ]) {
+      await expect(source(value).captureBand(rect), JSON.stringify(value)).rejects.toMatchObject({
+        reason: 'unavailable',
+        detail: 'malformed-capture',
+      });
+    }
+  });
 });
 
 describe('stop hotkey parser', () => {

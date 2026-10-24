@@ -25,6 +25,11 @@ export interface Frame {
 
 export interface FrameSource {
   capture(): Promise<Frame>;
+  /** A band of the next frame: `rect`'s own rectangle, in the frame's device pixels. Optional, so
+   *  every existing realizer still conforms and the QTE sub-loop falls back to `capture()`. The
+   *  returned Frame is the crop — its `width`/`height` are the rect's — and its `atMs` is stamped
+   *  as `capture()` stamps one. */
+  captureBand?(rect: PixelRect): Promise<Frame>;
 }
 
 // §2 Screens
