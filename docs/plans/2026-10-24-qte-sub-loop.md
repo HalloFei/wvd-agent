@@ -37,6 +37,7 @@ Inputs and conditions the spec implies but no single task's happy-path test cove
 
 **Files:**
 - Create: `src/engine/crop.mjs`
+- Create: `src/engine/crop.d.mts` — the TypeScript declaration, in the style of `scale.d.mts`: the test imports the `.mjs` and `tsc` refuses a consumed `.mjs` without one
 - Test: `tests/engine-crop.test.ts`
 
 **Interfaces:**
