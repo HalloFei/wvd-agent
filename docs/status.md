@@ -41,6 +41,30 @@ Last updated 2026-10-24 12:22, on `main`.
   reason and exactly one `wvd.stopped`. A held key cannot outlive the process: the hold ceiling and the
   teardown grace are declared side by side in `src/contracts.ts`.
 
+## Farm tasks as data (2026-10-24, after v1)
+
+`tasks/ffxi-4f.json` now declares a location's entry script, the floor to verify and the exit
+script; `src/tasks/` parses, runs and decorates it. Contracts §10 has the declarations, and
+`Intent.run-script` is the policy's only new word. The World runs `enter` before the first tick,
+`exit` when the policy says leave, and re-enters for `cfg.cycles` cycles.
+
+Measured live the same day, and binding for the next attempt:
+
+- **`MapState.titleKey`** (R27a): the FFXI floors print a Chinese title where the Latin slots
+  expect `B1F`; `readMap` refused the whole map. The 32-hex fingerprint makes it readable —
+  `000000007f3ffe007f7efe00220ba600` on `第四区-城内2F深处-`, stable across four frames.
+- **The FFXI map's icons are not the B1F icons.** On `第四区` the map parses (title, player,
+  `X:11 Y:23`) but yields **zero icons**; `L` (移动至宝箱) is inert on both FFXI floors. The route
+  policy therefore sees "no chests" and would leave, so a task session cannot farm there yet.
+- **`第三区-城内2F-` does not parse at all**: the X/Y readout gate refuses that frame, so the
+  title fingerprint never gets a chance. Fixture: `testdata/nav-2026-10-24-ffxi4f/`.
+- **The harken is the white sparkle** (wvd's `harken.png` matches it), and the altar's `移动` menu
+  (`第一区` / `第二区` / `第三区` / `归还` / `什么也不做`) is its teleporter. Standing on the
+  sparkle does not open it; arriving by 自动移动 does.
+- **The stairs were not triggered.** 自动移动 walks to the tile under the map's arch and stops; a
+  forward key press and the map's `G` (移动至目的地) do nothing there. How the party climbs on the
+  PC build is open.
+
 ## Known gaps — declared, not hidden
 
 1. **The opener panel `由谁打开?` has no parser.** There is no fixture for it anywhere in `testdata/`,
