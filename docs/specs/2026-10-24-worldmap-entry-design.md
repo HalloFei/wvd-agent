@@ -59,7 +59,8 @@ is 900×1600 mobile, but the PC build draws the same UI at 1080/1600 = 0.675 and
 
 FFXI 4F (`resources/quest/quest.json`): `_EOT = [intoWorldMap → FFXI/GCN → FFXI/ZONE3]`,
 `_RTT = City_RoyalCityLuknalia`, targets `stair_zone4`, `chest`, `leaveDung`. The rest town is
-per-quest data, not a constant; the task file's equivalent is a `travel` step.
+per-quest data, not a constant; the task file's equivalent is a `travel` step. **This task's rest town
+is 诺森霍洛村 (`vnh`), chosen by the operator on 2026-10-24 in place of the legacy capital.**
 
 This design implements the entry leg and the `travel` primitive. The exit and rest legs reuse them.
 
@@ -185,9 +186,9 @@ mid-entry.
 ```
 
 The two world-map taps leave the file; the dungeon-select tap stays (fixed list, 第三区 at y≈520).
-`exit` is unchanged in this slice; `{ "op": "travel", "to": "city-royal" }` is added when the
-归还 exit is verified (board p0). The entry is defined from town: a session started mid-dungeon stops
-at the first step instead of clicking a map it is not on.
+`exit` is unchanged in this slice; `{ "op": "travel", "to": "vnh" }` is added when the 归还 exit
+is verified (board p0), so the next cycle starts in 诺森霍洛村. The entry is defined from town: a
+session started mid-dungeon stops at the first step instead of clicking a map it is not on.
 
 ## 9. Contracts
 
@@ -250,5 +251,5 @@ at the first step instead of clicking a map it is not on.
   measure on the live game.
 - The `anchor` for each node: the clickable hitbox may not be the template centre.
 - The extraction script's source list and whether the `_fortress`/`_waterway` chevrons are needed.
-- The rest-town id in the FFXI task file: `city-royal` follows the legacy `_RTT`; if the operator
-  wants 诺森霍洛村, it is another catalog entry.
+- The rest-town id in the FFXI task file: settled as `vnh` (诺森霍洛村); `city-royal` stays in the
+  catalog for quests that follow the legacy `_RTT`.
