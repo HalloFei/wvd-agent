@@ -63,6 +63,14 @@ repository root:
     pnpm remove cortico-world-wvd
     pnpm add "C:/Personal/game/DeepSeek_Coopanion/wvd-agent"
 
+**No publishing step is needed, and none is involved.** The loader enumerates
+`build/data/extensions/package.json` dependencies, resolves each name under
+`node_modules/<name>/package.json`, and imports the package's entry — so a `link:` to this checkout is a
+first-class install. Publishing only matters for Coopanion's extension store/search. An entry whose
+`package.json` cannot be read is dropped **silently** (no `扩展导入失败` warning is logged in that
+case), which is what a link pointing at a checkout being rewritten looks like from the app's side: the
+World simply does not appear.
+
 The console was verified against the running app on 2026-10-24: `/api/worlds` reports the World's lamp
 and badges (`state`, `escalations used/cap`), and the panel answers under
 `/api/webui/providers/world%3Awvd/panels/wvd-console/{status,log}` — `status` returns the six-state
