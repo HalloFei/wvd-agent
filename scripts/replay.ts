@@ -40,9 +40,10 @@
  *   turn into an image.
  *
  * The plan check (`options.planCheck`) is the one thing that is **not** a `failures` entry: a plan
- * that crosses a reversal, names a delay outside the horizon or targets a point outside the
- * recording's zones is our planning model's answer, not perception's, so it is named in its own
- * `planViolations` list. `planned` says how many plans the model returned at all.
+ * whose target misses the recording's zones, that crosses the planner's own reversal, or whose
+ * predicted press position disagrees with the recording is our planning model's answer, not
+ * perception's, so it is named in its own `planViolations` list. `planned` says how many plans the
+ * model returned at all; `planPositions` how many of those the recording could actually check.
  *
  * A malformed or absent `measurements.json` disables only the geometry check — and the plan check,
  * which needs the same bar to judge a plan against; a recording may be replayed before it has
@@ -66,7 +67,6 @@ import type {
   Frame,
   Observation,
   QteState,
-  QteZone,
   RgbaImage,
   ScreenId,
   TapPlan,
@@ -76,7 +76,7 @@ import { ChestPerceiver, parseQte, qteWindow } from '../src/perception/chest.ts'
 import { CompositePerceiver } from '../src/perception/composite.ts';
 import { HudPerceiver } from '../src/perception/hud.ts';
 import { MapPerceiver } from '../src/perception/map.ts';
-import { planTap, qteVelocity } from '../src/policy/qte.ts';
+import { BOUNCE_LEFT_X, BOUNCE_RIGHT_X, planTap, qteVelocity } from '../src/policy/qte.ts';
 
 // ---------------------------------------------------------------------------------------------
 // The public shape
@@ -95,7 +95,17 @@ export interface ReplayReport {
   readonly bandMismatches: number;
   /** Plans `planTap` returned from the recording's own readings; 0 when `planCheck` is off. */
   readonly planned: number;
-  /** Plans that crossed a reversal, missed a recorded zone or named an impossible delay. */
+  /**
+   * Plans whose predicted press position was actually compared with a recorded reading; at most
+   * `planned`, 0 when `planCheck` is off. A plan is unchecked when the recording has no reading
+   * within one frame of its press instant, or when the recording's own press had already braked
+   * the marker; those are not violations.
+   */
+  readonly planPositions: number;
+  /**
+   * Plans whose target missed a recorded zone, crossed the planner's reversal, or whose predicted
+   * press position disagreed with the recording beyond `PLAN_PRESS_TOLERANCE_PX`.
+   */
   readonly planViolations: string[];
 }
 
@@ -110,9 +120,10 @@ export interface ReplayOptions {
   /**
    * Also feed the planning model the recording's own `chest-qte` observations — the last three
    * readings at their own `atMs`, `qteVelocity`, then `planTap` with the contracts' defaults — and
-   * check every returned plan against `measurements.json`: a finite delay inside the horizon, a
-   * target inside a recorded zone, and no reversal crossed in the direction of travel. This is the
-   * only check of the planning model against recorded marker motion (design acceptance 5); off when
+   * check every returned plan: its target must lie inside a zone `measurements.json` recorded, it
+   * must not cross the planner's own reversal, and the press position it predicts must agree with
+   * the recording's nearest reading within `PLAN_PRESS_TOLERANCE_PX`. This is the only check of
+   * the planning model against recorded marker motion (design acceptance 5); off when
    * `measurements.json` has no readable bar, since there is nothing to check a plan against.
    */
   readonly planCheck?: boolean;
@@ -137,7 +148,7 @@ export function replayTools(): ReplayTools {
  * Replay the first `.mp4` in `dir` (sorted, so the choice is deterministic) through perception.
  * `measurements.json` beside it, when present and well formed, supplies the bar geometry against
  * which `chest-qte` zones are checked. `options.bandCheck` adds the crop cross-check;
- * `options.planCheck` adds the planning model's check against the recorded zones and bounce.
+ * `options.planCheck` adds the planning model's check against the recorded zones and marker motion.
  */
 export async function replay(dir: string, options: ReplayOptions = {}): Promise<ReplayReport> {
   const tools = replayTools();
@@ -154,10 +165,22 @@ export async function replay(dir: string, options: ReplayOptions = {}): Promise<
   const screens = emptyScreens();
   const failures: string[] = [];
   const band: BandTally = { frames: 0, mismatches: 0 };
-  // The plan check needs the recording's zones and bounce to judge a plan; without a readable bar
-  // there is nothing independent to check it against (readRecordedBar has already warned).
+  // The plan check needs the recording's zones to judge a target, and the recording's readings to
+  // judge the press position; without a readable bar there is nothing independent to check it
+  // against (readRecordedBar has already warned).
   const plan: PlanTally | null =
-    planCheck && recordedBar ? { bar: recordedBar, readings: [], planned: 0, violations: [] } : null;
+    planCheck && recordedBar
+      ? {
+          zones: [recordedBar.left, recordedBar.right],
+          recent: [],
+          markers: [],
+          plans: [],
+          planned: 0,
+          positions: 0,
+          violations: [],
+          frameMs: 1_000 / info.fps,
+        }
+      : null;
   const composite = new CompositePerceiver([
     { perceiver: new ChestPerceiver(), floor: 0.5 },
     { perceiver: new MapPerceiver(), floor: 0.5 },
@@ -251,6 +274,10 @@ export async function replay(dir: string, options: ReplayOptions = {}): Promise<
     );
   }
 
+  // The plans are judged here, not as they are made: a plan's press instant is later than its own
+  // reading, so the recorded reading nearest that instant only exists once the decode is done.
+  if (plan) judgePlans(plan);
+
   return {
     frames,
     screens,
@@ -258,6 +285,7 @@ export async function replay(dir: string, options: ReplayOptions = {}): Promise<
     bandFrames: band.frames,
     bandMismatches: band.mismatches,
     planned: plan?.planned ?? 0,
+    planPositions: plan?.positions ?? 0,
     planViolations: plan?.violations ?? [],
   };
 }
@@ -408,37 +436,90 @@ function messageOf(error: unknown): string {
 // The plan check
 // ---------------------------------------------------------------------------------------------
 
-/** One `chest-qte` reading the plan check keeps: the composite's own numbers, never a re-parse. */
-interface PlanReading {
+/** A `chest-qte` marker reading: the composite's own numbers, never a re-parse. */
+interface PlanSample {
   readonly atMs: number;
   readonly markerX: number;
-  readonly zones: readonly QteZone[];
+}
+
+/** One plan's own reading, carrying the speed measured at it and the zones its target is judged against. */
+export interface PlanReading extends PlanSample {
+  /** Signed speed measured from the three readings ending here, px/s. */
+  readonly v: number;
+  /**
+   * The recorded zone columns a valid target must fall inside — `measurements.json`'s bar, not the
+   * parsed fill interiors the planner was handed. The parser's fills sat 0–11 px inside these
+   * columns (research-qte-parser §4) and `geometryProblem` pins each parsed centre to them, so a
+   * target is judged against the recording's own drawing rather than against `planTap`'s input.
+   */
+  readonly zones: readonly (readonly [number, number])[];
+}
+
+/** A plan the recording produced, kept until every reading is in (the press instant is later). */
+interface RecordedPlan {
+  readonly index: number;
+  readonly reading: PlanReading;
+  readonly plan: TapPlan;
 }
 
 interface PlanTally {
-  /** The recording's zones and bounce, the independent facts a plan is judged against. */
-  readonly bar: RecordedBar;
-  /** The last three readings, oldest first: what `qteVelocity` reads and no more. */
-  readonly readings: PlanReading[];
+  /** The recording's zones, the independent fact a target is judged against. */
+  readonly zones: readonly (readonly [number, number])[];
+  /** The last three samples, oldest first: what `qteVelocity` reads and no more. */
+  readonly recent: PlanSample[];
+  /** Every `chest-qte` marker reading, for the nearest-press-instant lookup. */
+  readonly markers: PlanSample[];
+  readonly plans: RecordedPlan[];
   planned: number;
+  /** Plans whose predicted press position a recorded reading actually checked. */
+  positions: number;
   readonly violations: string[];
+  /** One video frame in ms; the press-instant lookup may not reach further than this. */
+  readonly frameMs: number;
 }
 
 /**
  * The contracts' defaults for the three `planTap` inputs (`WVD_DEFAULTS`, contracts §7):
  * `measurements.json` records none of them, so there is no measured value to read. The numbers it
- * *does* record — the zones and the bounce — reach the check through `RecordedBar`, which is what
- * makes the target test an independent fact rather than `planTap`'s own input.
+ * *does* record — the zones — reach the check through `PlanReading.zones`; the output side, the
+ * marker's motion, comes from the recording's own readings.
  */
 const PLAN_LATENCY_MS = 75;
 const PLAN_DECEL_PX_PER_S2 = 3000;
 const PLAN_HORIZON_MS = 1000;
 
 /**
+ * How far a plan's predicted press position may sit from the marker the recording actually shows
+ * at that instant, in px.
+ *
+ * The comparison can only use a whole recorded frame: at 30 fps and the recorded 610 px/s the
+ * marker moves 20.4 px between frames, so one frame of travel is the resolution of the check. The
+ * recording's 44 free-flight plans were measured against this formula and their residuals were
+ * 0.9–15.8 px; the worst (15.8 px) is a plan where the two-frame velocity estimate ran 4 % high,
+ * and it still sits inside 20 px — the frame quantum, which is therefore the tolerance. The seven
+ * other plans fall after the recording's own press, when the marker is braking rather than flying,
+ * so they are unchecked (see `inFreeFlight`).
+ *
+ * This is the check a wrong sign or a wrong speed cannot survive across the recording's plans: a
+ * sign error displaces a long plan's prediction by `2·v·d` — hundreds of px — and a 10 % speed
+ * error moves a 450 ms plan ~27 px, both outside the bound (the short plans alone could not tell).
+ */
+export const PLAN_PRESS_TOLERANCE_PX = 20;
+
+/**
+ * The slowest recorded step that still counts as free flight: the research's easing threshold
+ * (§5), below 10 px of travel in a 30 fps frame, ~300 px/s. `qteVelocity` refuses a speed below
+ * the same floor.
+ */
+const RECORDED_FLIGHT_MIN_PX_PER_S = 300;
+
+/**
  * Feed one `chest-qte` observation to the planning model exactly as the sub-loop would: its own
  * `atMs`, its own marker and its own zones. With three readings in hand, measure the speed; a
  * refusal is legitimate (a triple that straddles a bounce, or the easing near one, carries no
- * velocity), so only a *plan* is counted and checked.
+ * velocity), so only a *plan* is counted. The plan's check waits for the decode to finish: the
+ * press instant is later than the reading, so the recorded reading nearest it does not exist yet
+ * (see `judgePlans`).
  *
  * Design acceptance 5 asks for exactly this: the sub-loop, fed the recording's frames at their own
  * timestamps, plans presses that land inside the recorded zones. The unit tests drive `planTap` with
@@ -446,11 +527,13 @@ const PLAN_HORIZON_MS = 1000;
  * motion.
  */
 function checkPlan(plan: PlanTally, atMs: number, qte: QteState, index: number): void {
-  plan.readings.push({ atMs, markerX: qte.markerX, zones: qte.zones });
-  if (plan.readings.length > 3) plan.readings.shift();
-  if (plan.readings.length < 3) return;
+  const sample = { atMs, markerX: qte.markerX };
+  plan.recent.push(sample);
+  plan.markers.push(sample);
+  if (plan.recent.length > 3) plan.recent.shift();
+  if (plan.recent.length < 3) return;
 
-  const v = qteVelocity(plan.readings[0]!, plan.readings[1]!, plan.readings[2]!);
+  const v = qteVelocity(plan.recent[0]!, plan.recent[1]!, plan.recent[2]!);
   if (v === null) return;
   const tap = planTap({
     markerX: qte.markerX,
@@ -462,43 +545,130 @@ function checkPlan(plan: PlanTally, atMs: number, qte: QteState, index: number):
   });
   if (tap === null) return;
   plan.planned += 1;
-  for (const problem of planProblems(tap, v, plan.bar)) {
-    plan.violations.push(`frame ${index}: ${problem}`);
-  }
+  plan.plans.push({ index, reading: { ...sample, v, zones: plan.zones }, plan: tap });
 }
 
 /**
- * What makes a returned plan wrong, judged without asking the planner: the instant must be a
- * finite, non-negative delay inside the horizon; the target must lie inside a zone
- * `measurements.json` recorded; and it must not be past the recording's bounce in the direction of
- * travel — a target beyond a reversal cannot arrive on the half-line the marker is on.
+ * What makes a returned plan wrong, judged without asking the planner:
  *
- * The planner's own guards make most of these impossible for a correct model, which is the point:
- * the check exists to catch a wrong sign, a wrong bounce or zones read from the wrong place, not to
- * re-run the planner's refusals.
+ * - the target must lie inside a zone `measurements.json` recorded. `planTap` targets zone centres
+ *   and `geometryProblem` already pins every parsed centre within 10 px of the recorded one, so
+ *   this cannot fire on the recording; it is kept because a plan should be judged on where it aims,
+ *   not only on the marker's motion, and it names the fault synthetically.
+ * - the target must not lie past the planner's own reversal (`BOUNCE_LEFT_X`/`BOUNCE_RIGHT_X`) in
+ *   the direction of travel. `planTap` refuses those too, so this is the check on the planner's
+ *   guard: the test feeds it a target between the recorded zone edge (1223) and the real reversal
+ *   (1261.5), which a check that went back to the zone edges would wrongly reject.
+ * - the marker position the plan predicts at its press instant, `x0 + v·d`, must agree with the
+ *   recorded reading nearest that instant within `PLAN_PRESS_TOLERANCE_PX`. `next` is `null` when
+ *   the recording has no reading close enough, which skips only this check.
+ *
+ * There is no delay check: `planTap` returns a delay only when it is finite, non-negative and
+ * inside the horizon (its own guard, pinned in `tests/replay-plan.test.ts`), so re-testing it here
+ * would be a branch that can never fire.
  */
-function planProblems(tap: TapPlan, v: number, bar: RecordedBar): string[] {
-  const problems: string[] = [];
-  if (!Number.isFinite(tap.atMs) || tap.atMs < 0) {
-    problems.push(`plan delay ${tap.atMs} is not finite and non-negative`);
-  } else if (tap.atMs > PLAN_HORIZON_MS) {
-    problems.push(`plan delay ${tap.atMs.toFixed(1)} ms exceeds the ${PLAN_HORIZON_MS} ms horizon`);
+export function planProblem(
+  reading: PlanReading,
+  plan: TapPlan,
+  next: PlanSample | null,
+  bounce: { readonly left: number; readonly right: number },
+): string | null {
+  const target = plan.target;
+  if (!reading.zones.some(([from, to]) => target >= from && target <= to)) {
+    return `plan target ${target} is not inside a recorded zone`;
   }
-  if (!insideZone(tap.target, bar.left) && !insideZone(tap.target, bar.right)) {
-    problems.push(`plan target ${tap.target} is not inside a recorded zone`);
-  }
-  const bounce = v > 0 ? bar.bounce[1] : bar.bounce[0];
-  if (v > 0 ? tap.target > bounce : tap.target < bounce) {
-    problems.push(
-      `plan target ${tap.target} is past the recording's bounce at ${bounce} in the direction of travel`,
+
+  const rightward = reading.v > 0;
+  const reversal = rightward ? bounce.right : bounce.left;
+  if (rightward ? target > reversal : target < reversal) {
+    return (
+      `plan target ${target} is past the planner's reversal at ${reversal} for ` +
+      `${rightward ? 'rightward' : 'leftward'} travel`
     );
   }
-  return problems;
+
+  if (next === null) return null;
+  const predicted = reading.markerX + reading.v * (plan.atMs / 1_000);
+  const residual = next.markerX - predicted;
+  if (Math.abs(residual) > PLAN_PRESS_TOLERANCE_PX) {
+    return (
+      `plan predicts x=${predicted.toFixed(1)} at the press instant, the recording reads ` +
+      `${next.markerX} (${residual.toFixed(1)} px off, tolerance ${PLAN_PRESS_TOLERANCE_PX} px)`
+    );
+  }
+  return null;
 }
 
-/** Inclusive: `measurements.json` draws its zones as closed pixel columns. */
-function insideZone(x: number, zone: readonly [number, number]): boolean {
-  return x >= zone[0] && x <= zone[1];
+/**
+ * Judge every plan once the recording's readings are all in.
+ *
+ * The press-instant check needs the reading nearest `atMs + delay`, which is later than the plan's
+ * own reading — hence this deferred pass. A plan is unchecked, never a violation, when the
+ * recording cannot answer: no reading within one frame of the press instant (the bar can go away,
+ * and frames 124–127 are the light burst), or a press instant after the recording's own press. The
+ * operator pressed at ~3.3 s; the marker then glides 44 px to rest over 300 ms
+ * (`measurements.json`), so seven plans name instants after free flight ended, and comparing them
+ * with a straight line the recording did not fly would manufacture violations.
+ */
+function judgePlans(tally: PlanTally): void {
+  const bounce = { left: BOUNCE_LEFT_X, right: BOUNCE_RIGHT_X };
+  for (const recorded of tally.plans) {
+    const pressAtMs = recorded.reading.atMs + recorded.plan.atMs;
+    const near = nearestReading(tally.markers, pressAtMs);
+    const checkable =
+      near !== null &&
+      Math.abs(near.atMs - pressAtMs) <= tally.frameMs &&
+      inFreeFlight(tally.markers, recorded.reading.atMs, near.atMs);
+    if (checkable) tally.positions += 1;
+    const problem = planProblem(recorded.reading, recorded.plan, checkable ? near : null, bounce);
+    if (problem) tally.violations.push(`frame ${recorded.index}: ${problem}`);
+  }
+}
+
+/** The reading whose `atMs` is closest to `atMs`; `null` only when the recording has none. */
+function nearestReading(readings: readonly PlanSample[], atMs: number): PlanSample | null {
+  let best: PlanSample | null = null;
+  let bestDistance = Infinity;
+  for (const reading of readings) {
+    const distance = Math.abs(reading.atMs - atMs);
+    if (distance < bestDistance) {
+      best = reading;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/**
+ * Did the recording's marker stay in free flight from the plan's reading to its press instant? A
+ * recorded step slower than the research's easing threshold (§5) means the recording's own press —
+ * or a bounce — braked the marker, and a straight-line prediction cannot be compared with it.
+ *
+ * Two consecutive slow steps are required: the recording contains isolated duplicate frames
+ * (research §5's frames 9 and 101, a zero step followed by a fast one), which are not a braking
+ * marker. The steady-flight steps are 18–21 px per frame; after the operator's press they fall to
+ * 8, 8, 8, 0 px, the run this drops.
+ */
+function inFreeFlight(readings: readonly PlanSample[], fromMs: number, toMs: number): boolean {
+  let slowSteps = 0;
+  for (let index = 1; index < readings.length; index += 1) {
+    const previous = readings[index - 1]!;
+    const current = readings[index]!;
+    if (current.atMs <= fromMs || current.atMs > toMs) {
+      slowSteps = 0;
+      continue;
+    }
+    const seconds = (current.atMs - previous.atMs) / 1_000;
+    if (seconds <= 0) continue;
+    const speed = Math.abs(current.markerX - previous.markerX) / seconds;
+    if (speed < RECORDED_FLIGHT_MIN_PX_PER_S) {
+      slowSteps += 1;
+      if (slowSteps >= 2) return false;
+    } else {
+      slowSteps = 0;
+    }
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -511,18 +681,17 @@ function insideZone(x: number, zone: readonly [number, number]): boolean {
  * 1000–1223 against 997–1223; research-qte-parser §4). The slack is that measured relationship plus
  * the 8 px edge error a marker parked on a zone edge causes — 14 px, with the centre check doing the
  * real work. `hazardGap` is read when present (it measures the danger gap, not the fill gap); where
- * a recording omits it, the adjacent zone edges imply it. `marker.bounceAt` is read the same way:
- * when the recording states the marker's reversal points, a plan may not target past them; when it
- * does not, the bar's own outer edges imply them (the left zone's first column and one past the
- * right zone's last), which is what the QTE bar's ends mean.
+ * a recording omits it, the adjacent zone edges imply it.
+ *
+ * The marker's reversal points are **not** here: `marker.bounceAt` in this recording is drawn at
+ * the zone edges (694 / 1224), while the marker's core centre turns at 656.5 / 1261.5
+ * (`policy/qte.ts`). The plan check reads the planner's own constants instead.
  */
 export interface RecordedBar {
   readonly left: readonly [number, number];
   readonly right: readonly [number, number];
   /** The danger gap between them; adjacent rectangles imply it, a recording may state it. */
   readonly gap: readonly [number, number];
-  /** The marker's reversal points; `marker.bounceAt` states them, the bar's ends imply them. */
-  readonly bounce: readonly [number, number];
 }
 
 const GEOMETRY_EDGE_SLACK_PX = 14;
@@ -560,14 +729,12 @@ export async function readRecordedBar(
   try {
     const parsed = JSON.parse(text) as {
       bar?: { leftZone?: unknown; hazardGap?: unknown; rightZone?: unknown };
-      marker?: { bounceAt?: unknown };
     };
     const left = readablePair(parsed.bar?.leftZone);
     const right = readablePair(parsed.bar?.rightZone);
     if (left && right) {
       const gap = readablePair(parsed.bar?.hazardGap) ?? ([left[1], right[0]] as const);
-      const bounce = readablePair(parsed.marker?.bounceAt) ?? ([left[0], right[1] + 1] as const);
-      bar = { left, right, gap, bounce };
+      bar = { left, right, gap };
     }
   } catch {
     bar = null;

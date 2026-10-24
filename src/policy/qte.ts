@@ -39,9 +39,13 @@ import type { QteZone, TapPlan } from '../contracts.ts';
  * recorded bar (frames 28 and 58: 656.5 and 1261.5, research §11). **One recording**, and the bar's
  * own frame may move between chests; the plan therefore treats only targets outside these points
  * as unreachable, which is the conservative direction (it waits a pass rather than crossing one).
+ *
+ * Exported because the replay's plan check judges a plan against the same reversal the planner
+ * used. The recorded `bar` rectangle's edges (694 / 1224) are the zone edges, ~40 px inside these
+ * points; a check that used them would test a different reversal than the one the plan avoids.
  */
-const BOUNCE_LEFT_X = 656.5;
-const BOUNCE_RIGHT_X = 1261.5;
+export const BOUNCE_LEFT_X = 656.5;
+export const BOUNCE_RIGHT_X = 1261.5;
 
 /** Three 30 fps frames span 66 ms; two carry a 5.8 % worst-case velocity error (research §8). */
 const VELOCITY_MIN_BASELINE_MS = 66;

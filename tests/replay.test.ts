@@ -37,10 +37,12 @@ import {
  *
  * `planCheck` is design acceptance 5: every `chest-qte` observation feeds the last three readings,
  * `qteVelocity` and `planTap` at the recording's own timestamps, and every returned plan is judged
- * against `measurements.json` — target inside a recorded zone, delay finite and inside the horizon,
- * no reversal crossed. `planViolations` is pinned to empty and `planned` to at least 25: many triples
- * refuse legitimately (one that straddles a bounce, or the easing near one, carries no velocity), so
- * the floor is deliberately conservative rather than a chased count.
+ * against the recording — target inside a recorded zone, no crossing of the planner's own reversal
+ * (656.5 / 1261.5, not the zone edges), and the marker position it predicts at its press instant
+ * must agree with the recorded reading nearest that instant within 20 px. `planViolations` is
+ * pinned to empty and `planned` to at least 25: many triples refuse legitimately (one that
+ * straddles a bounce, or the easing near one, carries no velocity), so the floor is deliberately
+ * conservative rather than a chased count.
  */
 const RECORDING = fileURLToPath(
   new URL('../testdata/chest/2026-10-24-qte-recorded/', import.meta.url),
@@ -55,9 +57,6 @@ const RECORDED_BAR: RecordedBar = {
   left: [694, 922],
   right: [997, 1223],
   gap: [922, 997],
-  // The recording's `marker.bounceAt`: the left zone's first column and one past the right zone's
-  // last, which is where the marker turns around.
-  bounce: [694, 1224],
 };
 
 function qteWith(zones: Array<{ from: number; to: number }>): QteState {
@@ -76,7 +75,8 @@ describe('replay harness', () => {
         `replay: ${report.frames} frames, ${JSON.stringify(report.screens)}, ` +
           `${report.failures.length} failures, band ${report.bandFrames} frames / ` +
           `${report.bandMismatches} mismatches, plan ${report.planned} plans / ` +
-          `${report.planViolations.length} violations, ${wallMs} ms`,
+          `${report.planPositions} press positions / ${report.planViolations.length} violations, ` +
+          `${wallMs} ms`,
       );
 
       expect(report.frames).toBe(250);
@@ -92,9 +92,14 @@ describe('replay harness', () => {
       expect(report.bandFrames).toBe(199);
       expect(report.bandMismatches).toBe(0);
       // Design acceptance 5: the planning model, fed the recording's own readings at their own
-      // timestamps, planned presses that land inside the recorded zones and cross no reversal.
+      // timestamps, planned presses that land inside the recorded zones and cross no reversal, and
+      // their predicted press positions agree with the recording.
       expect(report.planViolations).toEqual([]);
       expect(report.planned).toBeGreaterThanOrEqual(25);
+      // 44 of the 51 plans have a press instant the recording can check. The other seven name
+      // instants after the operator's own press (~3.3 s), when the marker is braking to rest, so
+      // there is no straight-line motion to compare them with.
+      expect(report.planPositions).toBe(44);
     },
     60_000,
   );
@@ -129,6 +134,7 @@ describe('replay harness', () => {
         expect(report.bandMismatches).toBe(0);
         // `planCheck` is off by default too, and its fields say so rather than looking checked.
         expect(report.planned).toBe(0);
+        expect(report.planPositions).toBe(0);
         expect(report.planViolations).toEqual([]);
         // One failure per parsed frame, and each names the frame and the contradiction.
         expect(report.failures).toHaveLength(report.screens['chest-qte']);
@@ -253,7 +259,7 @@ describe('readRecordedBar', () => {
     }
   });
 
-  it("reads the marker's bounce when the recording states it", async () => {
+  it('does not take the zone-edge marker.bounceAt for the planner reversal', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'wvd-replay-bar-'));
     try {
       await writeFile(
@@ -264,11 +270,11 @@ describe('readRecordedBar', () => {
         }),
       );
 
-      // The recording's own reversal points win over the bar's edges; the plan check refuses a
-      // target past them.
+      // `marker.bounceAt` is the recording's zone-edge draw, not the marker's core-centre
+      // reversal the planner uses; `RecordedBar` deliberately does not carry it, so a plan is
+      // judged against `BOUNCE_LEFT_X`/`BOUNCE_RIGHT_X` and never against these edges.
       const bar = await readRecordedBar(dir);
-      expect(bar?.bounce).toEqual([650, 1270]);
-      expect(bar?.left).toEqual([694, 922]);
+      expect(bar).toEqual(RECORDED_BAR);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
