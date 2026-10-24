@@ -38,11 +38,11 @@ import {
  * `planCheck` is design acceptance 5: every `chest-qte` observation feeds the last three readings,
  * `qteVelocity` and `planTap` at the recording's own timestamps, and every returned plan is judged
  * against the recording — target inside a recorded zone, no crossing of the planner's own reversal
- * (656.5 / 1261.5, not the zone edges), and the marker position it predicts at its press instant
- * must agree with the recorded reading nearest that instant within 20 px. `planViolations` is
- * pinned to empty and `planned` to at least 25: many triples refuse legitimately (one that
- * straddles a bounce, or the easing near one, carries no velocity), so the floor is deliberately
- * conservative rather than a chased count.
+ * (656.5 / 1261.5, not the zone edges), and the marker position it predicts at the reading nearest
+ * its press instant must agree with that reading within 12 px. `planViolations` is pinned to empty
+ * and `planned` to at least 25: many triples refuse legitimately (one that straddles a bounce, or
+ * the easing near one, carries no velocity), so the floor is deliberately conservative rather than
+ * a chased count.
  */
 const RECORDING = fileURLToPath(
   new URL('../testdata/chest/2026-10-24-qte-recorded/', import.meta.url),
@@ -96,10 +96,12 @@ describe('replay harness', () => {
       // their predicted press positions agree with the recording.
       expect(report.planViolations).toEqual([]);
       expect(report.planned).toBeGreaterThanOrEqual(25);
-      // 44 of the 51 plans have a press instant the recording can check. The other seven name
-      // instants after the operator's own press (~3.3 s), when the marker is braking to rest, so
-      // there is no straight-line motion to compare them with.
-      expect(report.planPositions).toBe(44);
+      // 38 of the 51 plans have a press position the recording can check. Seven name instants
+      // after the operator's own press (~3.3 s), when the marker is braking to rest, so there is no
+      // straight-line motion to compare them with; six more name an instant within half a frame of
+      // their own reading, which resolves back to that reading — predicting its position from
+      // itself is a tautology, so they are skipped rather than counted as compared.
+      expect(report.planPositions).toBe(38);
     },
     60_000,
   );

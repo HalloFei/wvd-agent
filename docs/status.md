@@ -143,17 +143,26 @@ this survey.
   plan is judged against what the recording actually shows. Plans are therefore produced from
   recorded marker motion; each target must lie inside a zone `measurements.json` recorded; none may
   cross the planner's own reversal points (656.5 / 1261.5, not the 694 / 1224 zone edges); and the
-  marker position a plan predicts at its press instant, `x0 + v·d`, must agree with the recording's
-  reading nearest that instant within **20 px** — one frame of travel at the recorded 610 px/s,
-  with the worst measured residual at **15.8 px**. The recording yields **51 plans, 0 violations**,
-  and **44** of those have their predicted press position compared: the other seven name instants
-  after the recording's own press (~3.3 s), when the operator has braked the marker to rest, so
-  there is no straight line the recording can compare them with (they are counted as unchecked, not
-  as passing). Triples that straddle a bounce refuse legitimately, so `tests/replay.test.ts` pins
-  ≥ 25 plans, 44 press positions and 0 violations rather than the plan count alone. **The
+  marker position a plan predicts at the reading nearest its press instant,
+  `x0 + v·(next.atMs − reading.atMs)`, must agree with that reading within **12 px**. The
+  prediction is evaluated at the reading's own time, not at the press instant: that reading can sit
+  up to one frame (33.3 ms, 20.4 px of travel at 610 px/s) from the instant, and predicting at the
+  instant spends the allowance on the lookup's own offset. At the reading's own time the residual
+  measures only the velocity estimate's error; over the **38** compared plans it is **0.05 px min,
+  2.09 px median, 5.98 px p90, 8.25 px max** (the worst is ~3 % velocity error over a 452 ms plan),
+  so 12 px leaves ~45 % headroom while staying under the ~27 px a 10 % speed error leaves on a
+  450 ms plan. The recording yields **51 plans, 38 press positions, 0 violations**: 44 plans have a
+  reading within one frame of their press instant, but six of them (frames 15, 30, 45, 60, 75 and 90;
+  press delays 8–16 ms) name an instant after their own reading, so the nearest reading *is* that
+  reading — predicting its position from itself is a tautology (residual 0), and at that delay a
+  10 % speed error moves the marker under 1 px, so they cannot discriminate it and are counted as
+  unchecked, not as passing. The other seven name instants after the recording's own press (~3.3 s),
+  when the operator has braked the marker to rest, so there is no straight line the recording can
+  compare them with. Triples that straddle a bounce refuse legitimately, so `tests/replay.test.ts`
+  pins ≥ 25 plans, 38 press positions and 0 violations rather than the plan count alone. **The
   press-position check is what catches a wrong sign or a wrong speed**: a sign error moves the
   prediction by `2·v·d`, hundreds of px on the long plans, and a 10 % speed error by ~27 px on a
-  450 ms plan, both outside the 20 px tolerance. The zone and reversal branches cannot fire on this
+  450 ms plan, both outside the 12 px tolerance. The zone and reversal branches cannot fire on this
   recording — `planTap` already refuses those targets — so `tests/replay-plan.test.ts` proves they
   fire with synthetic inputs instead of implying coverage from the recording.
 
