@@ -423,8 +423,8 @@ export class ChestPerceiver implements Perceiver {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * One pass over rows 36–82 × 645–1275, in the pixels `image` actually holds: 29 657 pixels, 2.2 % of
- * a 1080p frame. The anchors come from the full frame's fractions and `geometry.origin` moves them
+ * One pass over rows 36–82 × 645–1275, in the pixels `image` actually holds: 29 657 pixels, 1.43 %
+ * of a 1080p frame. The anchors come from the full frame's fractions and `geometry.origin` moves them
  * into a crop; the returned `x0` is the absolute column, so every consumer below stays in
  * full-frame coordinates.
  */
