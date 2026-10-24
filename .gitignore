@@ -12,3 +12,6 @@ testdata/nav-*/*.mp4
 
 # SDD worktrees
 .worktrees/
+
+# SDD scratch: reports, ledgers, review packages
+.superpowers/
