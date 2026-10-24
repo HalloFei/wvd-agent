@@ -72,6 +72,16 @@ describe('child snapshot waiter queue', () => {
     expect(snapshots.size).toBe(0);
   });
 
+  it('carries a crop directive and settles with the rectangle the encoder used', async () => {
+    const sent: unknown[] = [];
+    const requests = createSnapshotRequests({ send: (m) => sent.push(m), timeoutMs: 50 });
+    const pending = requests.requestVariant({ crop: { x: 4, y: 6, width: 8, height: 10 } });
+    expect(sent[0]).toMatchObject({ op: 'snapshot', crop: { x: 4, y: 6, width: 8, height: 10 } });
+    const id = (sent[0] as { snapshotId: number }).snapshotId;
+    requests.settle({ kind: 'snapshot', snapshotId: id, jpeg: new Uint8Array(), width: 8, height: 10, seq: 0, capturedAt: 0, crop: { x: 4, y: 6, width: 8, height: 10 } });
+    await expect(pending).resolves.toMatchObject({ width: 8, height: 10, crop: { x: 4, y: 6, width: 8, height: 10 } });
+  });
+
   it('rejects every outstanding waiter on cancelAll, and clears them', async () => {
     const encoder = fakeEncoder();
     const snapshots = createSnapshotRequests({ send: encoder.send, timeoutMs: 1000 });

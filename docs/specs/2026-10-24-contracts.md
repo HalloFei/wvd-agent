@@ -187,7 +187,9 @@ export interface PixelRect {
  *  newest frame; `ageMs` is the duration from capture start to reply on the child's clock. */
 export interface EngineCapture {
   readonly jpeg: string;   // base64, encoded in the child
-  readonly width: number;  // device pixels of the window's client area
+  /** The size of the JPEG returned, not of the window: the frame's client size for a plain capture,
+   *  and `crop.width`×`crop.height` for a cropped reply. */
+  readonly width: number;
   readonly height: number;
   readonly ageMs: number;  // capture start → reply, on the child's clock
   /** The rectangle the child actually cropped, absent when it sent the whole frame. It is what lets

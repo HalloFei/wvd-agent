@@ -12,7 +12,10 @@
  *
  * `capture { maxWidth }` is served differently: the encoder thread downscales the next frame before
  * encoding it and reports the size it actually encoded, so the perception path never pays for it and
- * the reply's `width`/`height` describe the JPEG returned rather than the window.
+ * the reply's `width`/`height` describe the JPEG returned rather than the window. `capture { crop }`
+ * takes the same one-frame path to copy the caller's rectangle before the encode, so a QTE sample
+ * decodes a band instead of a whole frame; unlike the scaling branch it never falls back to the
+ * native frame, because a caller that asked for a band cannot parse a whole frame as one.
  *
  * Input is measured, not guessed: `tap`/`key` replies carry `{ inputMs }`, request receipt to the
  * final `SendInput` (R20b). A failed stop-hotkey registration and a JPEG fallback are `engineProblem`
@@ -57,9 +60,9 @@ let stopping = false;
 let latest = null; // { jpeg: Buffer, width, height, capturedAt }
 
 /**
- * How long one `capture { maxWidth }` may wait for the encoder's downscaled frame. The World's own
- * request timeout (5 s) is longer, so a render that stops delivering is this child's named `timeout`
- * rather than a reply that never comes.
+ * How long one `capture { maxWidth }` or `capture { crop }` may wait for the encoder's frame. The
+ * World's own request timeout (5 s) is longer, so a render that stops delivering is this child's
+ * named `timeout` rather than a reply that never comes.
  */
 const SNAPSHOT_WAIT_MS = 1000;
 
@@ -90,7 +93,7 @@ const encoderWorker = new Worker(new URL('./jpeg-worker.mjs', import.meta.url), 
   transferList: [channel.port2],
 });
 
-/** The waiters for downscaled snapshots; the encoder's snapshot replies settle them by id. */
+/** The waiters for one-frame variants; the encoder's snapshot replies settle them by id. */
 const snapshots = createSnapshotRequests({
   send: (message) => encoderWorker.postMessage(message),
   timeoutMs: SNAPSHOT_WAIT_MS,
@@ -195,9 +198,25 @@ async function dispatch(request, receivedAt) {
       }
       if (!latest) throw new EngineFailure('timeout', 'no-frame');
       let frame = latest;
-      // a request at or above the native width is already satisfied by the newest frame; only a
-      // genuinely smaller snapshot asks the encoder to scale (the perception path never does)
-      if (request.maxWidth !== undefined && request.maxWidth < latest.width) {
+      if (request.crop !== undefined) {
+        // Only this thread knows the frame's size, so the fit is checked here: a rectangle that
+        // reaches past the frame is refused rather than clamped into a smaller one nobody asked for.
+        const { x, y, width, height } = request.crop;
+        if (x + width > latest.width || y + height > latest.height) {
+          throw new EngineFailure('rejected', 'crop-out-of-frame');
+        }
+        try {
+          frame = await snapshots.requestVariant({ crop: request.crop });
+        } catch (error) {
+          // A crop has no fallback. The maxWidth branch below may send the native frame it already
+          // holds, because a full frame still parses as one; a caller that asked for a band cannot
+          // parse a full frame as a band, so a plausible wrong frame is worse than a refusal.
+          if (error instanceof SnapshotFailed) throw new EngineFailure('rejected', error.detail);
+          throw new EngineFailure('timeout', 'snapshot-timeout');
+        }
+      } else if (request.maxWidth !== undefined && request.maxWidth < latest.width) {
+        // a request at or above the native width is already satisfied by the newest frame; only a
+        // genuinely smaller snapshot asks the encoder to scale (the perception path never does)
         try {
           frame = await snapshots.request(request.maxWidth);
         } catch (error) {
@@ -209,7 +228,10 @@ async function dispatch(request, receivedAt) {
       }
       const ageMs = performance.now() - frame.capturedAt;
       if (isStaleFrame(ageMs)) throw new EngineFailure('timeout', 'stale-frame');
-      return { jpeg: frame.jpeg.toString('base64'), width: frame.width, height: frame.height, ageMs };
+      const value = { jpeg: frame.jpeg.toString('base64'), width: frame.width, height: frame.height, ageMs };
+      // only a reply the encoder actually cropped states the rectangle; the native frame has none
+      if (frame.crop !== undefined) value.crop = frame.crop;
+      return value;
     }
     case 'tap': {
       await win32.tap(requireWindow(), request.x, request.y, request.count);

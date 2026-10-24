@@ -11,7 +11,9 @@ const LOADER = new URL('./fixtures/fake-win32-loader.mjs', import.meta.url).href
  * The child's real protocol loop, render threads and encoder — driven without a window by the
  * fake Win32 module the loader swaps in (and workers inherit). This is the end-to-end path the
  * World's escalation snapshot takes: `capture { maxWidth }` in, a downscaled JPEG and its true size
- * out; the perception request beside it stays native.
+ * out; the perception request beside it stays native. The QTE sample takes the same threads:
+ * `capture { crop }` in, the band's JPEG, its size and the rectangle actually cropped out — or a
+ * named refusal when the rectangle does not fit the frame.
  */
 describe('engine child snapshot path (no window)', () => {
   it.skipIf(process.platform !== 'win32')('serves a downscaled snapshot and keeps plain captures native', async () => {
@@ -50,4 +52,46 @@ describe('engine child snapshot path (no window)', () => {
       engine.close();
     }
   }, 30000);
+
+  it.skipIf(process.platform !== 'win32')('serves a crop and nothing else', async () => {
+    const child = spawn(process.execPath, ['--import', LOADER, CHILD, '--title=__wvd_fake_window__', '--hotkey='], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const engine = connectEngine(child, { timeoutMs: 15000, logger: () => {} });
+    try {
+      await engine.request({ op: 'capture' }); // warm the render threads
+      const reply = await engine.request({ op: 'capture', crop: { x: 96, y: 54, width: 96, height: 54 } });
+      expect(reply).toMatchObject({ ok: true });
+      const value = (reply as { value: { jpeg: string; width: number; height: number; crop: unknown } }).value;
+      expect(value.width).toBe(96);
+      expect(value.height).toBe(54);
+      expect(value.crop).toEqual({ x: 96, y: 54, width: 96, height: 54 });
+      // the bottom-right quadrant is yellow; JPEG is lossy, so allow ±3 per channel
+      const decoded = jpeg.decode(Buffer.from(value.jpeg, 'base64'), { useTArray: true, formatAsRGBA: true });
+      const at = ((27 * 96) + 48) * 4;
+      expect(Math.abs(decoded.data[at] - 255)).toBeLessThanOrEqual(3);     // R
+      expect(Math.abs(decoded.data[at + 1] - 255)).toBeLessThanOrEqual(3); // G
+      expect(Math.abs(decoded.data[at + 2] - 0)).toBeLessThanOrEqual(3);   // B
+    } finally {
+      engine.close();
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')('refuses a crop that does not fit the frame', async () => {
+    const child = spawn(process.execPath, ['--import', LOADER, CHILD, '--title=__wvd_fake_window__', '--hotkey='], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const engine = connectEngine(child, { timeoutMs: 15000, logger: () => {} });
+    try {
+      await engine.request({ op: 'capture' }); // warm the render threads
+      const reply = await engine.request({ op: 'capture', crop: { x: 100, y: 0, width: 100, height: 10 } });
+      expect(reply).toMatchObject({ ok: false, error: 'rejected', detail: 'crop-out-of-frame' });
+    } finally {
+      engine.close();
+    }
+  });
 });
