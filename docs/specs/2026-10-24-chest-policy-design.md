@@ -121,6 +121,27 @@ This turns the hardest case — a fast bar with a long lead — into a retry ins
 
 Rank by disarm first, then attempts, then willpower headroom.
 
+## 5a. The panel is a fixed grid, and a bad card costs only itself
+
+The opener panel does not move: its six cards occupy the same 2×3 grid in every capture — three of
+the recorded panel and one live FFXI chest — at x 704–868 / 879–1046 / 1057–1220 and y 729–839 /
+853–963. The upstream autoscript relies on exactly that: its `WHO_WILL_OPEN_IT` setting is a slot
+(左上, 中上, 右上, 左下, 中下, 右下) and it clicks a constant point for it. The agent keeps the same
+shape — a member is addressed by its slot (`OPENER_SLOTS`, row-major, with the measured box and
+centre), the click is that slot's centre, and nothing about clicking needs a card to be detected.
+
+That fixes the failure the live panel exposed. The card *positions* are not the fragile part; the
+heart numeral is. Its atlas holds only the digits 0, 1 and 9 (all the recorded panel shows) and must
+match near-exactly, so a numeral rendered under the chest's gold light can fall below the floor: the
+live FFXI panel's 爱丽丝 (`90`) does when decoded through GDI+, the decoder the World uses. The two
+fields therefore fail differently:
+
+- **陷阱发现 / 陷阱解除** rank every card. If either cannot be read the panel is refused and the loop
+  escalates: a ranking built from a guessed number is worse than no action.
+- **The heart numeral (willpower)** only ever disqualifies its own card. An unread numeral, like a
+  card that draws no heart at all, is recorded as `NaN`, that member is ineligible, and the remaining
+  cards are still ranked. On the live panel that opens the chest with 薇薇安娜DEX6, slot 6.
+
 ## 6. Failure semantics the policy relies on
 
 | Outcome | Willpower | Attempts | Loot |

@@ -11,16 +11,20 @@
  *   (contracts §8, default 60); the World passes the configured value and `WILLPOWER_FLOOR` mirrors the
  *   default so a bare `chooseOpener(panel)` still means 60.
  * - **Never a member whose willpower was not read.** The closed contract has no "unknown" for
- *   `willpower`, so `parseOpener` records a card that draws no heart as `NaN`; a non-finite value
- *   fails every floor comparison and is therefore ineligible. Nothing is substituted — the card that
- *   draws no heart is DragonSlayer's, the highest 陷阱解除 on the recorded panel, which is exactly
- *   where a fabricated value would do the most damage.
+ *   `willpower`, so `parseOpener` records as `NaN` a card that draws no heart **and** a card whose
+ *   heart numeral the atlas cannot read; a non-finite value fails every floor comparison and is
+ *   therefore ineligible. Nothing is substituted — the card that draws no heart is DragonSlayer's,
+ *   the highest 陷阱解除 on the recorded panel, which is exactly where a fabricated value would do the
+ *   most damage. Because the panel's cards sit at fixed slots (`OPENER_SLOTS`), losing one card's
+ *   willpower never loses the panel: the other cards are still ranked and one of their slots is
+ *   clicked.
  * - **Never a feared member**, whatever the numbers: 陷阱恐惧 bars a character from opening chests
  *   (chest §5). `feared` is not visible in the one recorded panel, so `parseOpener` reports `false`
  *   for every member; the floor above is what actually protects the choice there.
  *
  * Ties go to the higher 陷阱发现, then to the lower index (the earlier card). Deterministic on
- * purpose: the same panel must always choose the same card.
+ * purpose: the same panel must always choose the same card — and a card is a **slot**, so the choice
+ * this function returns is all the click needs.
  *
  * Pure and total: every panel yields a choice or `null`, never a throw (contracts §0.6).
  */
@@ -40,8 +44,8 @@ export interface OpenerChoice {
 
 /**
  * The member to open the chest with, or `null` when nobody qualifies. `index` is the member's
- * position in `panel.members` — the card it sits on, which is what the loop clicks
- * (`openerCardCentre`).
+ * position in `panel.members`, which is its fixed slot (`openerSlot`); `tapOpenerCard` turns that
+ * index into the one point the loop taps.
  */
 export function chooseOpener(panel: OpenerPanel, willpowerFloor: number = WILLPOWER_FLOOR): OpenerChoice | null {
   const floor = Number.isFinite(willpowerFloor) ? willpowerFloor : WILLPOWER_FLOOR;
