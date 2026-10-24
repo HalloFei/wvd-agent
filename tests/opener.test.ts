@@ -2,11 +2,10 @@
  * The chest opener panel `由谁打开?` (Task 12), read from `testdata/chest/2026-10-24-opener/`.
  *
  * The fixture is **one live panel**: `panel-00.jpg` and `panel-01.jpg` are two captures of the same
- * screen, and `measurements.json` is the operator's reading of it. The expected 陷阱发现 / 陷阱解除
- * numbers are loaded from that JSON, not re-typed here, so the test cannot disagree with the
- * measurement it is testing. The 心 (willpower) column is **not** in the JSON: it was read off the
- * heart numerals in the captures, and the one card that draws no heart (DragonSlayer) is documented
- * in `parseOpener`'s header.
+ * screen, and `measurements.json` is the reading of it — every expected field (陷阱发现, 陷阱解除 and
+ * the 心/willpower numeral) is loaded from that JSON, not re-typed here, so the test cannot disagree
+ * with the measurement it is testing. DragonSlayer's card draws **no heart**, and the JSON records
+ * that as `null`: the parser may never substitute a number for it.
  *
  * Negative controls are the frames that have been mistaken for things before: the QTE bar, the 3-D
  * view, and `after-pick.jpg` — the same chest once the panel was dismissed.
@@ -16,7 +15,12 @@ import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import { WVD_DEFAULTS } from '../src/config.ts';
 import type { Frame, OpenerMember, OpenerPanel, RgbaImage } from '../src/contracts.ts';
-import { ChestPerceiver, openerCardCentre, parseOpener } from '../src/perception/chest.ts';
+import {
+  ChestPerceiver,
+  openerCardCentre,
+  parseOpener,
+  parseOpenerDetailed,
+} from '../src/perception/chest.ts';
 import { chooseOpener, WILLPOWER_FLOOR } from '../src/policy/chest.ts';
 
 const FIXTURES = new URL('../testdata/chest/2026-10-24-opener/', import.meta.url);
@@ -77,11 +81,37 @@ function paint(image: RgbaImage, rect: Rect, rgb: readonly [number, number, numb
   }
 }
 
-/** What `measurements.json` says the six cards carry. */
+/**
+ * Copy a 陷阱 glyph's *shape* into a heart-numeral position, recoloured as the heart's yellow
+ * (231, 231, 103) on the card fill. The heart's segmentation is chroma-based, so this is how a digit
+ * the heart font has never been observed to draw can be put on the card.
+ */
+function blitYellowGlyph(image: RgbaImage, source: Rect, target: { x: number; y: number }): void {
+  for (let y = 0; y < source.h; y += 1) {
+    for (let x = 0; x < source.w; x += 1) {
+      const from = ((source.y + y) * image.width + (source.x + x)) * 4;
+      const to = ((target.y + y) * image.width + (target.x + x)) * 4;
+      const luma = (77 * image.data[from]! + 150 * image.data[from + 1]! + 29 * image.data[from + 2]!) >> 8;
+      const ink = luma >= 120;
+      image.data[to] = ink ? 231 : 54;
+      image.data[to + 1] = ink ? 231 : 54;
+      image.data[to + 2] = ink ? 103 : 54;
+      image.data[to + 3] = 255;
+    }
+  }
+}
+
+/** What `measurements.json` says the six cards carry. `willpower: null` = the card draws no heart. */
 interface MeasuredMember {
   readonly name: string;
   readonly detect: number;
   readonly disarm: number;
+  readonly willpower: number | null;
+}
+
+/** The JSON's willpower column, with `null` (no heart) as the parser's `NaN` (unread). */
+function expectedWillpower(members: readonly MeasuredMember[]): number[] {
+  return members.map((member) => member.willpower ?? Number.NaN);
 }
 
 let measuredMembers: Promise<readonly MeasuredMember[]> | null = null;
@@ -92,13 +122,6 @@ function measured(): Promise<readonly MeasuredMember[]> {
   return measuredMembers;
 }
 
-/**
- * The heart numerals, read off `panel-00.jpg`: 艾莉賽, 本杰明 and 拉纳维尔 at 100, 爱丽丝 at 90,
- * 薇薇安娜DEX6 at 100. **DragonSlayer draws no heart at all** — the game omits the numeral for that
- * member, and `parseOpener` documents the conservative default it uses instead (the panel's highest
- * displayed heart, which is 100 here).
- */
-const WILLPOWER = [100, 100, 100, 100, 90, 100] as const;
 
 // ---------------------------------------------------------------------------------------------
 // parseOpener — the fixture
@@ -122,14 +145,16 @@ describe('parseOpener — the 由谁打开? panel', () => {
     expect(panel!.members.map((member) => member.name)).toEqual(['#1', '#2', '#3', '#4', '#5', '#6']);
   });
 
-  it('reads the heart numeral as willpower, and takes no heart as "not displayed"', async () => {
+  it('reads the heart numeral as willpower, and leaves the card with no heart unread', async () => {
+    const expected = await measured();
     const panel = await parseOpener(await jpegFrame('panel-00.jpg'));
 
-    expect(panel!.members.map((member) => member.willpower)).toEqual([...WILLPOWER]);
-    // DragonSlayer (card 4) is the one card with no heart: the numeral is absent from the screen,
-    // not unreadable, and the closed contract has no "unknown". The parser fills it with the highest
-    // heart the same panel displays — a bound the panel itself proves, never a standalone guess.
-    expect(panel!.members[3]!.willpower).toBe(Math.max(WILLPOWER[0], WILLPOWER[1], WILLPOWER[2], WILLPOWER[4], WILLPOWER[5]));
+    expect(panel!.members.map((member) => member.willpower)).toEqual(expectedWillpower(expected));
+    // DragonSlayer (card 4) is the one card with no heart: no numeral is drawn, so the value is
+    // unread — `NaN`, never a substitute. Nothing may be inferred from the other cards' hearts.
+    expect(Number.isNaN(panel!.members[3]!.willpower)).toBe(true);
+    expect(panel!.members[0]!.willpower).toBe(100);
+    expect(panel!.members[4]!.willpower).toBe(90);
   });
 
   it('never claims a member is feared: 陷阱恐惧 is not shown in this fixture', async () => {
@@ -144,7 +169,7 @@ describe('parseOpener — the 由谁打开? panel', () => {
 
     expect(panel!.members.map((member) => member.detect)).toEqual(expected.map((member) => member.detect));
     expect(panel!.members.map((member) => member.disarm)).toEqual(expected.map((member) => member.disarm));
-    expect(panel!.members.map((member) => member.willpower)).toEqual([...WILLPOWER]);
+    expect(panel!.members.map((member) => member.willpower)).toEqual(expectedWillpower(expected));
   });
 
   it('segments the cards instead of assuming six: a party of three ends after the first row', async () => {
@@ -180,6 +205,20 @@ describe('parseOpener — the 由谁打开? panel', () => {
     expect(await parseOpener(frameOf(image, 1_000))).toBeNull();
   });
 
+  it('refuses a heart numeral whose digit is not in the heart atlas', async () => {
+    // The heart font's other digits were never captured (only 0, 1 and 9 on this panel). Take the
+    // 陷阱 font's 4 — the nearest unseen shape the fixture has — erase 艾莉賽's 100 and put it where
+    // the heart numeral goes, recoloured yellow so the heart's own segmentation sees it. The atlas
+    // holds instances, not a mean, so a shape it has never seen is refused; a nearest-of-{0,1,9}
+    // matcher would have read this as a 1 and accepted a willpower that was never on the screen.
+    const image = copyOf(await jpegImage('panel-00.jpg'));
+    paint(image, { x: 838, y: 731, w: 28, h: 15 }, [54, 54, 54]);
+    blitYellowGlyph(image, { x: 957, y: 941, w: 7, h: 13 }, { x: 858, y: 732 });
+
+    expect(await parseOpenerDetailed(frameOf(image, 1_000))).toEqual({ ok: false, reason: 'unreadable' });
+    expect(await parseOpener(frameOf(image, 1_000))).toBeNull();
+  });
+
   it('refuses a number whose digits are not where the numerals start', async () => {
     // DragonSlayer's 陷阱解除 105 with its leading 1 painted out is "05" — still a number, but not
     // the one the game shows. The numerals are left-aligned, so a first glyph starting 11 px into
@@ -195,6 +234,10 @@ describe('parseOpener — the 由谁打开? panel', () => {
     // The QTE bar, and the walking view.
     expect(await parseOpener(await jpegFrame('frame-3.jpg', 1_000, QTE_FIXTURES))).toBeNull();
     expect(await parseOpener(await jpegFrame('minimap-and-hud.jpg', 1_000, NAV_FIXTURES))).toBeNull();
+    // The reasons differ: a frame that is not the panel falls through to the bar; a recognised
+    // panel that cannot be read whole escalates as `unknown` at a small positive confidence.
+    expect(await parseOpenerDetailed(await jpegFrame('after-pick.jpg')))
+      .toEqual({ ok: false, reason: 'not-panel' });
   });
 
   it('refuses a foreign frame size without paying for its decode', async () => {
@@ -218,20 +261,19 @@ describe('parseOpener — the 由谁打开? panel', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('openerCardCentre', () => {
-  it('answers the centre of the card a member index sits on', async () => {
-    // The measured click that chose DragonSlayer was (781, 899) — its card's centre is a few pixels
-    // away, and both points are inside the card measured at x 704–868, y 853–963.
-    const centre = openerCardCentre(3);
-    expect(centre).not.toBeNull();
-    expect(Math.abs(centre!.x - 781)).toBeLessThanOrEqual(20);
-    expect(Math.abs(centre!.y - 899)).toBeLessThanOrEqual(20);
-
-    // Six distinct cards, row-major left to right.
-    const centres = Array.from({ length: 6 }, (_, index) => openerCardCentre(index)!);
-    expect(new Set(centres.map((point) => `${point.x},${point.y}`)).size).toBe(6);
-    expect(centres[0]!.y).toBe(centres[2]!.y);
-    expect(centres[3]!.y).toBeGreaterThan(centres[0]!.y);
-    expect(centres[0]!.x).toBeLessThan(centres[1]!.x);
+  it('answers the measured centre of every card, exactly', async () => {
+    // The card boxes are x 704–868 / 879–1046 / 1057–1220 and y 729–839 / 853–963 (measurements.json).
+    // DragonSlayer's card is index 3, the fourth card: centre (786, 908), which is 3–9 px from the
+    // operator's recorded click (781, 899) and the point the loop clicks now.
+    expect(openerCardCentre(3)).toEqual({ x: 786, y: 908 });
+    expect(Array.from({ length: 6 }, (_, index) => openerCardCentre(index))).toEqual([
+      { x: 786, y: 784 },
+      { x: 963, y: 784 },
+      { x: 1139, y: 784 },
+      { x: 786, y: 908 },
+      { x: 963, y: 908 },
+      { x: 1139, y: 908 },
+    ]);
   });
 
   it('refuses an index no card sits at', () => {
@@ -254,15 +296,35 @@ function panelOf(...members: OpenerMember[]): OpenerPanel {
 }
 
 describe('chooseOpener', () => {
-  it('chooses the highest 陷阱解除 on the fixture panel: DragonSlayer at card 4', async () => {
+  it('chooses 薇薇安娜DEX6 on the fixture panel, because the best card has no willpower', async () => {
     const panel = (await parseOpener(await jpegFrame('panel-00.jpg')))!;
     const choice = chooseOpener(panel);
 
     expect(choice).not.toBeNull();
-    // The measured click chose DragonSlayer (陷阱解除 105) and it is the fourth card, index 3.
-    expect(choice!.index).toBe(3);
-    expect(choice!.member.disarm).toBe(105);
-    expect(choice!.member).toBe(panel.members[3]);
+    // The fixture's highest 陷阱解除 is DragonSlayer's 105, but his card draws no heart: his willpower
+    // is unread (`NaN`) and he is ineligible. The best fully-read card is 薇薇安娜DEX6, 79, index 5.
+    expect(choice!.index).toBe(5);
+    expect(choice!.member.disarm).toBe(79);
+    expect(choice!.member).toBe(panel.members[5]);
+    expect(Number.isNaN(panel.members[3]!.willpower)).toBe(true);
+  });
+
+  it('skips a member whose heart did not parse even when it would win on 陷阱解除', () => {
+    // The decision, not the arithmetic: with the unread card treated as eligible, index 0 would win.
+    const choice = chooseOpener(panelOf(
+      member({ disarm: 200, detect: 200, willpower: Number.NaN }),
+      member({ disarm: 40, detect: 10, willpower: 100 }),
+    ));
+    expect(choice).not.toBeNull();
+    expect(choice!.index).toBe(1);
+    expect(choice!.member.disarm).toBe(40);
+
+    // Nobody else qualifies either: no substitution, no choice.
+    expect(chooseOpener(panelOf(member({ willpower: Number.NaN, disarm: 200 })))).toBeNull();
+    expect(chooseOpener(panelOf(
+      member({ willpower: Number.NaN, disarm: 200 }),
+      member({ willpower: 59, disarm: 100 }),
+    ))).toBeNull();
   });
 
   it('breaks a 陷阱解除 tie with the higher 陷阱发现', () => {
@@ -339,6 +401,19 @@ describe('ChestPerceiver', () => {
     if (observation.screen !== 'chest-open') throw new Error('not an opener observation');
     expect(observation.opener.members).toHaveLength(6);
     expect(observation.opener.members[3]!.disarm).toBe(105);
+  });
+
+  it('reports a recognised but unreadable panel as unknown at a small positive confidence', async () => {
+    const image = copyOf(await jpegImage('panel-00.jpg'));
+    paint(image, { x: 788, y: 794, w: 10, h: 15 }, [235, 235, 235]);
+
+    const observation = await new ChestPerceiver().observe(frameOf(image, 1_234));
+
+    // 0.3 is below the route's 0.5 act floor (nothing is clicked) and above 0 (a session must not
+    // stop on a frame that clearly carries the modal): the classifier escalates for a human.
+    expect(observation.screen).toBe('unknown');
+    expect(observation.confidence).toBe(0.3);
+    expect(observation.atMs).toBe(1_234);
   });
 
   it('still reports chest-qte when the bar is up and no panel is', async () => {

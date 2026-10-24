@@ -1,31 +1,38 @@
 {
   "capturedAt": "2026-10-24T11:51+08:00",
   "game": "Wizardry Variants Daphne (Steam), 1920x1080, dungeon B2F-adjacent corridor",
-  "note": "ONE INSTANCE, NOT A LAYOUT. This is the first recorded frame of the 由谁打开? opener panel; every coordinate below is measured from this single capture and every value is read off it. Do not treat the member list or their numbers as a constant.",
+  "note": "ONE INSTANCE, NOT A LAYOUT. This is the 由谁打开? opener panel; every coordinate below is measured from panel-00.jpg and identical in panel-01.jpg and panel-02.jpg (three captures of the same screen). Do not treat the member list or their numbers as a constant.",
   "panel": {
     "title": "由谁打开?",
-    "titleCentre": [960, 553],
+    "titleBox": [900, 633, 1008, 654],
+    "titleCentre": [954, 644],
+    "titleDividerY": 676,
     "closeControl": "关闭 X at the bottom centre, about (960, 1024)",
     "grid": "2 rows x 3 columns of member cards",
+    "cardColumns": [[704, 868], [879, 1046], [1057, 1220]],
+    "cardRowTops": [729, 853],
+    "cardHeight": 110,
     "cardCentres": [
-      { "member": "艾莉賽", "at": [778, 772] },
-      { "member": "本杰明", "at": [973, 772] },
-      { "member": "拉纳维尔", "at": [1158, 772] },
-      { "member": "DragonSlayer", "at": [778, 904] },
-      { "member": "爱丽丝", "at": [973, 904] },
-      { "member": "薇薇安娜DEX6", "at": [1158, 904] }
+      { "member": "艾莉賽", "at": [786, 784] },
+      { "member": "本杰明", "at": [963, 784] },
+      { "member": "拉纳维尔", "at": [1139, 784] },
+      { "member": "DragonSlayer", "at": [786, 908] },
+      { "member": "爱丽丝", "at": [963, 908] },
+      { "member": "薇薇安娜DEX6", "at": [1139, 908] }
     ],
-    "cardFields": ["name", "Lv", "HP", "陷阱发现", "陷阱解除"]
+    "cardFields": ["name", "Lv", "HP", "心 (willpower)", "陷阱发现", "陷阱解除"]
   },
+  "capturesNote": "panel-00, panel-01 and panel-02 are the same panel: the title ink bbox, the card borders and the interior alignment are identical, and only the 3D background behind the modal differs. The panel is a fixed anchor; it does not move with the background, so a fixed-rect parser is correct. (An earlier commit message described panel-02 as a second vertical offset; that was wrong.)",
   "members": [
-    { "name": "艾莉賽", "level": 60, "hp": [467, 467], "detect": 38, "disarm": 49 },
-    { "name": "本杰明", "level": 60, "hp": [537, 537], "detect": 28, "disarm": 50 },
-    { "name": "拉纳维尔", "level": 60, "hp": [547, 547], "detect": 34, "disarm": 38 },
-    { "name": "DragonSlayer", "level": 48, "hp": [387, 387], "detect": 92, "disarm": 105 },
-    { "name": "爱丽丝", "level": 60, "hp": [456, 456], "detect": 62, "disarm": 43 },
-    { "name": "薇薇安娜DEX6", "level": 40, "hp": [298, 298], "detect": 77, "disarm": 79 }
+    { "name": "艾莉賽", "level": 60, "hp": [467, 467], "willpower": 100, "detect": 38, "disarm": 49 },
+    { "name": "本杰明", "level": 60, "hp": [537, 537], "willpower": 100, "detect": 28, "disarm": 50 },
+    { "name": "拉纳维尔", "level": 60, "hp": [547, 547], "willpower": 100, "detect": 34, "disarm": 38 },
+    { "name": "DragonSlayer", "level": 48, "hp": [387, 387], "willpower": null, "detect": 92, "disarm": 105 },
+    { "name": "爱丽丝", "level": 60, "hp": [456, 456], "willpower": 90, "detect": 62, "disarm": 43 },
+    { "name": "薇薇安娜DEX6", "level": 40, "hp": [298, 298], "willpower": 100, "detect": 77, "disarm": 79 }
   ],
+  "willpowerNote": "willpower is the heart numeral at the top of the card, read off panel-00.jpg (100, 100, 100, 90, 100). DragonSlayer's card draws NO heart and no numeral (null): the value is unread, not zero. A member whose willpower was not displayed cannot be shown to satisfy the 60 floor, so the policy makes him ineligible and chooses 薇薇安娜DEX6 (陷阱解除 79) on this panel instead of DragonSlayer (105).",
   "chosen": "DragonSlayer",
-  "reason": "highest 陷阱解除 (105); a click at (781, 899) on its card dismissed the panel and reached the chest",
+  "reason": "the operator's live click: highest 陷阱解除 (105); a click at (781, 899) on its card dismissed the panel and reached the chest. The click point is inside the measured card box (x 704-868, y 853-963); the card centre is (786, 908). The parser now refuses him because his willpower was never displayed.",
   "afterPick": "after-pick.jpg — the chest fills the screen; the disarm QTE followed and the trap fired before it was captured (frames in ../2026-10-24-live-qte/ are the ambush that followed, not the bar)"
 }

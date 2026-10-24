@@ -12,11 +12,20 @@
  * `ChestPerceiver` tries it before the bar. The panel is a 2×3 grid of member cards (a smaller party
  * fills the same grid row-major and stops), each card carrying a heart numeral (willpower),
  * 陷阱发现 and 陷阱解除, and a CJK name the parser cannot read; members are therefore addressed by
- * card position (`#1` … `#6`). The digits come from a committed atlas extracted by
- * `scripts/extract-opener-digits.mjs`: the fixture's twelve 陷阱 values are `38 49 28 50 34 38 92 105
- * 62 43 77 79`, which contain every digit 0–9, and the heart numerals are drawn one pixel taller, so
- * they get their own atlas and only 0, 1 and 9 are observed (100 and 90). A digit whose best match is
- * below the measured floor refuses the whole panel — never rounded to a plausible number.
+ * card position (`#1` … `#6`). The digits come from committed atlases extracted by
+ * `scripts/extract-opener-digits.mjs`. The fixture's twelve 陷阱 values are `38 49 28 50 34 38 92 105
+ * 62 43 77 79`, which contain **every** digit 0–9 — that atlas is complete and its templates are
+ * means. The heart numerals are drawn one pixel taller, so they get their own atlas, and **that
+ * atlas is partial**: the five hearts show only `100 100 100 90 100`, i.e. the digits 0, 1 and 9.
+ * Their templates are every observed instance rather than a mean, and a heart glyph must match one
+ * near-exactly (0.95), because nearest-neighbour among three shapes would snap an unseen `6` onto a
+ * `0` or `9`. A numeral containing a digit that was never captured refuses the whole panel; more
+ * captures extend the atlas. A digit below a measured floor also refuses the panel — never rounded
+ * to a plausible number.
+ *
+ * One card draws **no heart at all** (DragonSlayer, row 2 column 1), so its `willpower` is `NaN`:
+ * an unread value, which `chooseOpener` treats as ineligible. Nothing is substituted — a fabricated
+ * number on the card with the highest 陷阱解除 is exactly the wrong place for a guess.
  *
  * The order is safe in one direction only: the panel gates on a **dark modal band with the title's
  * glyph ink and the cards' full-width bottom borders** at fixed rows, and the QTE bar lives in rows
@@ -314,6 +323,15 @@ function parseImage(image: RgbaImage, previousMarkerX?: number): QteParse {
 }
 
 /**
+ * A panel the gates recognised but could not read whole: something *is* drawn (the modal, the title,
+ * the cards), so this is not the blank-frame `unknown` at confidence 0 that ends a session. 0.3 is
+ * below the route's 0.5 act floor, so nothing is clicked, and positive, so the session classifier
+ * escalates for a human instead of stopping. `unknown` at 0 stays the answer for a frame that is
+ * simply not a chest screen.
+ */
+const REFUSED_PANEL_CONFIDENCE = 0.3;
+
+/**
  * A `Perceiver` over the chest screens. **The opener panel is tried first**, then the QTE bar; a
  * frame that is neither is `unknown` (contracts §2: something drawn, nothing named).
  *
@@ -325,9 +343,14 @@ function parseImage(image: RgbaImage, previousMarkerX?: number): QteParse {
  */
 export class ChestPerceiver implements Perceiver {
   async observe(frame: Frame): Promise<Observation> {
-    const opener = await parseOpener(frame);
-    if (opener !== null) {
-      return { screen: 'chest-open', atMs: frame.atMs, confidence: 1, opener };
+    const opener = await parseOpenerDetailed(frame);
+    if (opener.ok) {
+      return { screen: 'chest-open', atMs: frame.atMs, confidence: 1, opener: opener.panel };
+    }
+    if (opener.reason === 'unreadable') {
+      // A recognised panel that cannot be read whole: escalate, never fall through to the bar (an
+      // untrapped chest has none) and never click a half-read roster.
+      return { screen: 'unknown', atMs: frame.atMs, confidence: REFUSED_PANEL_CONFIDENCE };
     }
     const parsed = await parseQte(frame);
     if (!parsed.ok) return { screen: 'unknown', atMs: frame.atMs, confidence: 0 };
@@ -681,20 +704,39 @@ const GLYPH_FEATURE_WIDTH = 8;
 const GLYPH_FEATURE_HEIGHT = 10;
 
 /**
- * The match floors, measured on both captures: the twelve 陷阱 numbers' lowest best score is 0.921
- * with a 0.133 runner-up margin; the heart numerals' is 0.760 with a 0.419 margin. Below either
- * floor the panel is refused — a wrong opener choice spends the chest (chest §5).
+ * Match floors. Both are NCC, and both refuse the whole panel rather than round: a wrong opener
+ * choice spends the chest (chest §5).
+ *
+ * - The **陷阱 atlas** is complete (all ten digits) and its templates are means: the lowest true
+ *   score on the two captures is 0.921 with a 0.133 runner-up margin, so 0.70 / 0.10 is a wide,
+ *   measured floor.
+ * - The **heart atlas** is partial (0, 1 and 9 only) and its templates are the observed instances
+ *   themselves, so the guard is identity, not nearest-neighbour: matches must reach 0.95. The two
+ *   captures' true heart reads are 0.996–1.000 (the same rendering, two JPEG encodes), and every one
+ *   of the ten 陷阱 digits — the only unseen shapes the fixture contains, used as negative controls —
+ *   tops out at 0.884 against this atlas as a *wrong* digit. An unseen heart numeral, e.g. one
+ *   containing 6, is therefore below the floor and refuses the panel instead of snapping to 0, 1 or 9.
  */
 const DIGIT_MATCH_MIN = 0.7;
 const DIGIT_MARGIN_MIN = 0.1;
+const HEART_MATCH_MIN = 0.95;
+const HEART_MARGIN_MIN = 0.1;
 
 /**
  * The two digit atlases, extracted by `scripts/extract-opener-digits.mjs` from `panel-00.jpg`:
- * `TRAP_DIGITS` from the twelve 陷阱 values in `measurements.json`, `HEART_DIGITS` from the five
- * heart numerals that frame shows (cards 1–3, 5, 6: 100 100 100 90 100 — card 4, DragonSlayer, draws
- * no heart). Each constant is the **mean** of every instance of that digit in the frame: an 8 × 10
- * grid of 0–255 intensities, mean-centred and normalised at load. `node
- * scripts/extract-opener-digits.mjs --verify` checks every one of these strings, and
+ *
+ * - `TRAP_DIGITS`, from the twelve 陷阱 values in `measurements.json` (all ten digits), is the
+ *   **mean** of every instance, an 8 × 10 grid of 0–255 intensities, mean-centred and normalised at
+ *   load.
+ * - `HEART_DIGITS`, from the five heart numerals that frame shows (cards 1–3, 5, 6: 100 100 100 90
+ *   100 — card 4, DragonSlayer, draws no heart), keeps **every observed instance separately**: 9
+ *   zeros, 4 ones and 1 nine. **This atlas is partial on purpose.** The heart font's other seven
+ *   digits were never captured; keeping the instances (rather than their mean) lets the parser demand
+ *   a near-exact match to a numeral it has actually seen, so an unseen digit is refused rather than
+ *   snapped to its nearest plausible shape. More captures — a panel with a willpower of 60 or 85 —
+ *   would extend it. The 8 × 10 bytes are normalised at load like the 陷阱 ones.
+ *
+ * `node scripts/extract-opener-digits.mjs --verify` checks every one of these strings, and
  * `tests/opener.test.ts` reads both captures with them.
  */
 const TRAP_DIGITS: Readonly<Record<string, string>> = {
@@ -709,10 +751,27 @@ const TRAP_DIGITS: Readonly<Record<string, string>> = {
   '8': 'Axs9Q0IwDAAWc4xOWHc3Ay6npRschVIFG5LKhWZqJAEFRLbs1HUWAAxJgqTg0FcFN4lQIWfRnQ4+k0UHL6SYDx5kWTxPgFAGAQsSExMQBwA=',
   '9': 'AQkZHB0WCAASW4ljb4JJBi2wliMroYsOMrqYKiGdqxMop7xhRra8FQ5QoaiXyqIQAw4gMIKtYAcEBA0/m3glAgEQL1tOHwUAAAQICwQBAAA=',
 };
-const HEART_DIGITS: Readonly<Record<string, string>> = {
-  '0': 'ABtxqqdKBwAJd59MjbI5ASDNawQZxokJRNZXAhO4ow9V1lABEa+uEU7WVQISs6UPJ8pnBBjCjAoNmawwbM5UAwAke4iNVQoAAAAHFhABAAA=',
-  '1': 'AAAKJyYLAAAAATuruzsAAAAAHaPFPgAAAAATertCAAAAABN3ukYAAAAAE3m6QgAAAAAQerpAAAAAABWAzE8AAAABJaLQagAAAAAIISYVAAA=',
-  '9': 'AAkQEwgAAAAtfHqXfgkAALanJUjrYAAA03sAANiqIwPVtSMA3b9ZCXW3q6nxt1cJAyY8uO1yGAIAAAvcxgAAAAAba3ceAAAAAA0dAwAAAAA=',
+const HEART_DIGITS: Readonly<Record<string, readonly string[]>> = {
+  '0': [
+    'ASmSuLxAAAANlJRMq5sfADzlVgBD6lYAUuNPAB/wdAZw20MAHOOLC2PaRQAd7YgJPd5NADbqUAAUwJlCm8guAAI7kqZ4QAQAAAAMGQkAAAA=',
+    'AANBxrOLHQEAMqCJO6ODDA+rvxMIe7oVF82hDgBIuxcY1ZoMAD29GRfUoQ0BSrkXD6zAEwNZvBcAPc6kEamqEQABRLdweiMAAAAAEhkHAAA=',
+    'Ajaa5OlkBgAOjoxOorsyACDJUQAY02oDQsZEABralg1SwTUAFL+oDzy9OgATuZgMIsFFABjSZQIQqIwLhsw4AAAmaHSMPAAAAAADEwoAAAA=',
+    'AUS73LhMAgAOnJ1ajrAoAB76XwAb618AYvtdAB7wawNy7FQAGt6BCHbuVgAc6HUFKNpcAB3rVwANn6Qya94/AAAqc5NySgIAAAAFFQoAAAA=',
+    'AA56ocdGBgAIcq4zer5DATbLZgQSutkYT8xCAAyd6xxcvkAACo7nHFnSSQANoOwcMcdeAxG20xcQrMIUZNODCgAliGaaWxAAAAAGGRIAAAA=',
+    'ABl/v8BKBAAHbpVDorgvABO8fQYSvYkIWdRRARGyog5n1koAD6erD3DWUQEPq6oPKr1vBxO9jwoOm8YvfttHAAAheoaqWgkAAAAHGRMAAAA=',
+    'AA5Kd1YtAQAIe6ZRia0lABnZWQAe8FgAH/VYABvlbgQf81QAHOmHCB7yVwAc63YFHvVdAB7zYAERtYQpZtI+AAAsn5CDXAAAAAAOFAwEAAA=',
+    'AAxJbXY1BgAGcrwqhbw8ABvKYwMRsMUVRcI+AAuY5xtbzkAAC5fnG0vGPwALkd0aKMJfAw6m1hgKkMUVcc5fBAAjimSYVgsAAAAKFQ8CAAA=',
+    'AAtHeH8uBAAKc5U+sLcvABa7YQQTvXcFT8BZAg+spA541k8AEbGpD2DJVwMQrZMLKb9mBhXFiQoLkKcQdNQ9AAAkd4OvVwsAAAAIFBYBAAA=',
+  ],
+  '1': [
+    'AAAAChsKAAAAACeEyEwAAAAAIZbZQgAAAAAAW9xVAAAAAABd3VoAAAAAAGXbVAAAAAAAaNVRAAAAAABs0l4AAAAAH6vTeAAAAAAPKioaAAA=',
+    'AAADHiwTAAAAACur6VgAAAAAC5HyYQAAAAAAVdBUAAAAAAA/2F4AAAAAADXUVwAAAAAANNFUAAAAAAA63mEAAAAAD3bufgAAAAAHHjAcAAA=',
+    'AAAACyUPAAAAABuV0kkAAAAAAKXwWAAAAAAAbuFhAAAAAAB14WAAAAAAAHTcXQAAAAAAeuBdAAAAAAB76WcAAAAACrnxgwAAAAAFLDEdAAA=',
+    'AAIlaysAAAAABYDlaQAAAAAASL9bAAAAAABMyF4AAAAAAE7LUwAAAAAATddeAAAAAABD0GAAAAAAAFXglxUAAAAHW7GQLQAAAAAGDgsCAAA=',
+  ],
+  '9': [
+    'AAkQEwgAAAAtfHqXfgkAALanJUjrYAAA03sAANiqIwPVtSMA3b9ZCXW3q6nxt1cJAyY8uO1yGAIAAAvcxgAAAAAba3ceAAAAAA0dAwAAAAA=',
+  ],
 };
 
 interface DigitTemplate {
@@ -723,6 +782,7 @@ interface DigitTemplate {
 
 const ATLASES = new WeakMap<object, readonly DigitTemplate[]>();
 
+/** One template per digit (the 陷阱 atlas's means). */
 function atlasOf(table: Readonly<Record<string, string>>): readonly DigitTemplate[] {
   const cached = ATLASES.get(table);
   if (cached) return cached;
@@ -730,6 +790,20 @@ function atlasOf(table: Readonly<Record<string, string>>): readonly DigitTemplat
     digit,
     values: normaliseGlyph(Buffer.from(base64, 'base64')),
   }));
+  ATLASES.set(table, atlas);
+  return atlas;
+}
+
+/** Every observed instance of every digit (the heart atlas), kept apart for near-exact matching. */
+function variantAtlasOf(table: Readonly<Record<string, readonly string[]>>): readonly DigitTemplate[] {
+  const cached = ATLASES.get(table);
+  if (cached) return cached;
+  const atlas: DigitTemplate[] = [];
+  for (const [digit, variants] of Object.entries(table)) {
+    for (const base64 of variants) {
+      atlas.push({ digit, values: normaliseGlyph(Buffer.from(base64, 'base64')) });
+    }
+  }
   ATLASES.set(table, atlas);
   return atlas;
 }
@@ -904,7 +978,13 @@ function glyphFeature(
   return feature;
 }
 
-/** Read a run of glyph atoms as a decimal number, or null at the first unreadable digit. */
+/**
+ * Read a run of glyph atoms as a decimal number, or null at the first unreadable digit.
+ *
+ * The atlas may hold several instances of one digit (the heart atlas), so scores are grouped by
+ * digit before the margin is taken: the runner-up is the best *other* digit, never another instance
+ * of the winner.
+ */
 function readNumber(
   data: Uint8Array,
   width: number,
@@ -913,6 +993,8 @@ function readNumber(
   background: number,
   atlas: readonly DigitTemplate[],
   atoms: ReadonlyArray<readonly [number, number]>,
+  matchFloor: number,
+  marginFloor: number,
 ): number | null {
   if (atoms.length === 0 || atoms.length > MAX_GLYPH_DIGITS) return null;
   // Structure before recognition: a truncated number is still a number, and must be refused.
@@ -924,12 +1006,16 @@ function readNumber(
   for (const [from, to] of atoms) {
     const feature = glyphFeature(data, width, band, from, to, ink, background);
     if (feature === null) return null;
-    let best: string | null = null;
-    let bestScore = -2;
-    let secondScore = -2;
+    const byDigit = new Map<string, number>();
     for (const { digit, values } of atlas) {
       let score = 0;
       for (let i = 0; i < feature.length; i += 1) score += feature[i]! * values[i]!;
+      if (score > (byDigit.get(digit) ?? -2)) byDigit.set(digit, score);
+    }
+    let best: string | null = null;
+    let bestScore = -2;
+    let secondScore = -2;
+    for (const [digit, score] of byDigit) {
       if (score > bestScore) {
         secondScore = bestScore;
         bestScore = score;
@@ -939,7 +1025,7 @@ function readNumber(
       }
     }
     // Never a guess: an unreadable or ambiguous digit refuses the whole panel.
-    if (best === null || bestScore < DIGIT_MATCH_MIN || bestScore - secondScore < DIGIT_MARGIN_MIN) return null;
+    if (best === null || bestScore < matchFloor || bestScore - secondScore < marginFloor) return null;
     text += best;
   }
   const value = Number(text);
@@ -998,15 +1084,21 @@ function readTrapNumber(data: Uint8Array, width: number, slot: number, field: 'd
   const background = bandMedianLuma(data, width, band);
   const ink: InkRule = (x, y) => pixelLuma(data, width, x, y) - background >= INK_LUMA_DELTA;
   const atoms = glyphAtoms(columnRuns(data, width, band, ink));
-  return readNumber(data, width, band, ink, background, atlasOf(TRAP_DIGITS), atoms);
+  return readNumber(data, width, band, ink, background, atlasOf(TRAP_DIGITS), atoms, DIGIT_MATCH_MIN, DIGIT_MARGIN_MIN);
 }
 
 /**
  * The heart numeral. Its absence is a fact about the screen, not a failed read: the one recorded
- * panel draws **no heart at all** on DragonSlayer's card (Lv.48, silver gem), while the other five
- * show 100, 100, 100, 90 and 100. `willpower` has no absent value in the closed contract, so the
- * caller fills it with the panel's highest displayed heart — a bound the panel itself proves. A
- * numeral that is there but unreadable is different, and refuses the panel.
+ * panel draws **no heart and no numeral at all** on DragonSlayer's card (Lv.48, silver gem), while
+ * the other five show 100, 100, 100, 90 and 100.
+ *
+ * **An unread willpower is unreadable, not fillable.** The closed contract has no absent value for
+ * `willpower`, so the absence is recorded as `NaN` — a number that can never pass a floor — and
+ * `chooseOpener` treats a non-finite value as **ineligible**, exactly like a feared member. Nothing
+ * is substituted: a member whose willpower was not displayed cannot be shown to satisfy the floor,
+ * and the card with the highest 陷阱解除 is precisely where a fabricated value would do the most
+ * damage. A numeral that *is* there but unreadable refuses the whole panel instead: the screen shows
+ * a number the parser could not read, and the panel's other fields cannot be trusted to stand in.
  */
 type HeartReading =
   | { readonly kind: 'absent' }
@@ -1042,38 +1134,38 @@ function readHeartNumber(data: Uint8Array, width: number, slot: number): HeartRe
     y1: band.y1,
   };
   const background = bandMedianLuma(data, width, numberBand);
-  const value = readNumber(data, width, numberBand, ink, background, atlasOf(HEART_DIGITS), glyphAtoms(located));
+  const value = readNumber(
+    data, width, numberBand, ink, background,
+    variantAtlasOf(HEART_DIGITS), glyphAtoms(located), HEART_MATCH_MIN, HEART_MARGIN_MIN,
+  );
   return value === null ? { kind: 'unreadable' } : { kind: 'read', value };
 }
 
-function parseOpenerImage(image: RgbaImage): OpenerPanel | null {
+function parseOpenerImage(image: RgbaImage): OpenerParse {
   const { data, width, height } = image;
-  if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) return null;
-  if (!isOpenerPanel(data, width)) return null;
+  if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) return { ok: false, reason: 'not-panel' };
+  if (!isOpenerPanel(data, width)) return { ok: false, reason: 'not-panel' };
 
   // Segment the cards rather than assuming six: the party fills the grid row-major and stops.
   let count = 0;
   while (count < CARD_SLOTS && cardPresent(data, width, count)) count += 1;
-  if (count === 0) return null;
+  if (count === 0) return { ok: false, reason: 'not-panel' };
   // A drawn card after an undrawn one is a layout this parser has never seen: refuse, do not renumber.
-  for (let slot = count; slot < CARD_SLOTS; slot += 1) if (cardPresent(data, width, slot)) return null;
+  for (let slot = count; slot < CARD_SLOTS; slot += 1) {
+    if (cardPresent(data, width, slot)) return { ok: false, reason: 'unreadable' };
+  }
 
   const traps: Array<{ detect: number; disarm: number }> = [];
   const hearts: HeartReading[] = [];
   for (let slot = 0; slot < count; slot += 1) {
     const detect = readTrapNumber(data, width, slot, 'detect');
     const disarm = readTrapNumber(data, width, slot, 'disarm');
-    if (detect === null || disarm === null) return null;
+    if (detect === null || disarm === null) return { ok: false, reason: 'unreadable' };
     traps.push({ detect, disarm });
     hearts.push(readHeartNumber(data, width, slot));
   }
 
-  if (hearts.some((reading) => reading.kind === 'unreadable')) return null;
-  let highest = -1;
-  for (const reading of hearts) {
-    if (reading.kind === 'read' && reading.value > highest) highest = reading.value;
-  }
-  if (highest < 0 && hearts.some((reading) => reading.kind === 'absent')) return null;
+  if (hearts.some((reading) => reading.kind === 'unreadable')) return { ok: false, reason: 'unreadable' };
 
   const members: OpenerMember[] = traps.map((value, index) => {
     const reading = hearts[index]!;
@@ -1082,34 +1174,51 @@ function parseOpenerImage(image: RgbaImage): OpenerPanel | null {
       name: `#${index + 1}`,
       detect: value.detect,
       disarm: value.disarm,
-      // No heart drawn: the panel's own highest heart is the bound (see `HeartReading`).
-      willpower: reading.kind === 'read' ? reading.value : highest,
+      // No heart drawn: the value is unknown (`NaN`), and `chooseOpener` will not choose it.
+      willpower: reading.kind === 'read' ? reading.value : Number.NaN,
       // 陷阱恐惧 is not rendered in this panel — the willpower floor is what protects the choice.
       feared: false,
     };
   });
-  return { members };
+  return { ok: true, panel: { members } };
 }
 
 /**
- * Read the `由谁打开?` opener panel out of one frame, or `null` when it is not there or cannot be read
- * whole. `null` is every refusal: another frame size, a frame that is not the panel, a missing or
- * ambiguous digit, or a partial party laid out in a shape this parser does not know.
+ * One opener-panel read. The panel is either read (all readable fields, with `NaN` standing for a
+ * card that draws no heart) or refused with the reason the perceiver needs: `not-panel` falls
+ * through to the bar, while `unreadable` is a panel the gates recognised but could not read whole —
+ * its perceiver answer is `unknown` at a small positive confidence, so it escalates instead of
+ * stopping the session as a blank frame would.
  */
-export async function parseOpener(frame: Frame): Promise<OpenerPanel | null> {
-  if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) return null;
+export type OpenerParse =
+  | { readonly ok: true; readonly panel: OpenerPanel }
+  | { readonly ok: false; readonly reason: 'not-panel' | 'unreadable' };
+
+/**
+ * Read the `由谁打开?` opener panel out of one frame, or refuse it. Refusal is a value, not a throw
+ * (contracts §0.6); `parseOpenerDetailed` keeps the reason.
+ */
+export async function parseOpenerDetailed(frame: Frame): Promise<OpenerParse> {
+  if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) return { ok: false, reason: 'not-panel' };
   let image: RgbaImage;
   try {
     image = await frame.toRgba();
   } catch {
-    return null;
+    return { ok: false, reason: 'not-panel' };
   }
   return parseOpenerImage(image);
 }
 
+/** The brief's shape: the panel, or `null` for every refusal. */
+export async function parseOpener(frame: Frame): Promise<OpenerPanel | null> {
+  const parsed = await parseOpenerDetailed(frame);
+  return parsed.ok ? parsed.panel : null;
+}
+
 /**
  * Where the loop clicks to choose member `index`: the centre of the card the panel draws it on. The
- * measured click that chose DragonSlayer was (781, 899), 3–9 px from this card's centre (786, 908).
+ * measured click that chose DragonSlayer was (781, 899); the card's centre is (786, 908) — the
+ * measured card box is x 704–868, y 853–963.
  */
 export function openerCardCentre(index: number): Point | null {
   if (!Number.isInteger(index) || index < 0 || index >= CARD_SLOTS) return null;

@@ -15,17 +15,28 @@
  *   screen), never from the pixels: card order is that file's `members` order, and each value is its
  *   `detect` / `disarm` as a digit string. The twelve values are `38 49 28 50 34 38 92 105 62 43 77
  *   79`, which contain every digit 0–9, so the atlas is complete from one frame.
- * - **The five 心 numerals** are not in `measurements.json` (that file records no willpower), so the
- *   expected strings are named here, read off `panel-00.jpg`: cards 1–3 and 6 show `100`, card 5
- *   shows `90`, and **card 4 (DragonSlayer) draws no heart at all**. They give the digits 0, 1 and 9
- *   of the heart's own, larger font; the other seven digits are refused by the parser rather than
- *   borrowed from the smaller 陷阱 font, exactly as `map.ts` refuses the digit templates it never
- *   observed.
+ * - **The five 心 numerals** come from `measurements.json`'s `willpower` column (read off
+ *   `panel-00.jpg`): cards 1–3 and 6 show `100`, card 5 shows `90`, and **card 4 (DragonSlayer)
+ *   draws no heart at all**, so its value is `null`. They give the digits 0, 1 and 9 of the heart's
+ *   own, larger font — and nothing else. **The heart atlas is partial.** The other
+ *   seven digits of that font were never captured, so instead of borrowing shapes from the smaller
+ *   陷阱 font the parser refuses any heart numeral that is not one of the observed instances; more
+ *   captures extend this atlas (the header of `src/perception/chest.ts` says where).
  *
  * The two fields are drawn at different sizes, so they get two atlases: the 陷阱 numerals are 12
- * rows tall, the heart numerals 13. Each atlas is the **mean of every instance in this frame** (not
- * one sample): averaging keeps the digit's shape and softens the JPEG's sub-pixel wobble. The bytes
- * are the mean 8×10 cell scaled to 0–255; the parser re-centres and normalises them at load.
+ * rows tall, the heart numerals 13.
+ *
+ * - The **陷阱 atlas** is the **mean** of every instance in this frame (not one sample): the twelve
+ *   values already cover all ten digits, so averaging keeps each digit's shape while softening the
+ *   JPEG's sub-pixel wobble, and the parser matches with a moderate floor.
+ * - The **heart atlas** is **every observed instance, kept separately** — 9 zeros, 4 ones and 1 nine
+ *   on this frame. The heart font is only 0/1/9-observed, so the guard has to be identity, not
+ *   nearest-neighbour: the parser accepts a heart glyph only when it matches one of these instances
+ *   near-exactly (the floor is measured against the true instances and against all ten 陷阱 glyphs as
+ *   the nearest available unseen shapes) and refuses the panel otherwise. An unseen heart digit can
+ *   therefore never be snapped to 0, 1 or 9.
+ *
+ * The bytes are the 8×10 cell scaled to 0–255; the parser re-centres and normalises them at load.
  *
  * The feature, copied from `src/perception/chest.ts` and mirrored feature-for-feature (there is no
  * way to import a `.ts` module from this script, so the two are kept in step by `--verify`):
@@ -67,8 +78,6 @@ const GLYPH_CELL_HEIGHT = 14;
 const GLYPH_FEATURE_WIDTH = 8;
 const GLYPH_FEATURE_HEIGHT = 10;
 
-/** The heart numerals `panel-00.jpg` shows, in card order; card 4 draws none. */
-const HEART_VALUES = ['100', '100', '100', null, '90', '100'];
 
 const FIXTURES = new URL('../testdata/chest/2026-10-24-opener/', import.meta.url);
 const SOURCE = new URL('../src/perception/chest.ts', import.meta.url);
@@ -290,8 +299,10 @@ for (let card = 0; card < measurements.members.length; card += 1) {
   }
 }
 
-for (let card = 0; card < HEART_VALUES.length; card += 1) {
-  const expected = HEART_VALUES[card];
+const heartValues = measurements.members.map((member) =>
+  member.willpower === null ? null : String(member.willpower));
+for (let card = 0; card < heartValues.length; card += 1) {
+  const expected = heartValues[card];
   const cells = readHeartDigits(image, card);
   if (expected === null) {
     if (cells.length !== 0) throw new Error(`card ${card + 1}: expected no heart, read ${cells.length} glyphs`);
@@ -312,19 +323,20 @@ if (trapSamples.size !== 10) {
 }
 
 const base64 = (bytes) => Buffer.from(bytes).toString('base64');
-const atlases = {
-  trap: new Map([...trapSamples.keys()].sort().map((digit) => [digit, meanCells(trapSamples.get(digit))])),
-  heart: new Map([...heartSamples.keys()].sort().map((digit) => [digit, meanCells(heartSamples.get(digit))])),
-};
-
 const constants = new Map();
-for (const [name, atlas] of Object.entries(atlases)) {
-  for (const [digit, mean] of atlas) constants.set(`${name}_${digit}`, base64(toBytes(mean)));
+for (const digit of [...trapSamples.keys()].sort()) {
+  constants.set(`trap_${digit}`, base64(toBytes(meanCells(trapSamples.get(digit)))));
+}
+for (const digit of [...heartSamples.keys()].sort()) {
+  heartSamples.get(digit).forEach((cell, index) => {
+    constants.set(`heart_${digit}_${index + 1}`, base64(toBytes(cell)));
+  });
 }
 for (const [name, value] of constants) process.stdout.write(`${name} ${value}\n`);
 process.stderr.write(
-  `\ntrap digits: ${[...trapSamples.keys()].sort().join('')} (${[...trapSamples.keys()].length} templates)\n`
-  + `heart digits: ${[...heartSamples.keys()].sort().join('')} (${[...heartSamples.keys()].length} templates)\n`
+  `\ntrap digits: ${[...trapSamples.keys()].sort().join('')} (${[...trapSamples.keys()].length} templates, means)\n`
+  + `heart digits: ${[...heartSamples.keys()].sort().join('')} (${[...heartSamples.keys()].length} digits, `
+  + `${constants.size - 10} instances)\n`
   + `samples per trap digit: ${[...trapSamples].map(([digit, list]) => `${digit}×${list.length}`).join(' ')}\n`
   + `samples per heart digit: ${[...heartSamples].map(([digit, list]) => `${digit}×${list.length}`).join(' ')}\n`,
 );

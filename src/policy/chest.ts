@@ -2,13 +2,19 @@
  * The chest policy's opener choice (chest spec §5, contracts §6/§8): which member of the
  * `由谁打开?` panel should open the chest, from the panel alone.
  *
- * The ranking the spec asks for is 陷阱解除 first — it sets the QTE's zone width — then 陷阱发现,
- * which decides whether the QTE happens at all (chest §5). Two more rules bound it:
+ * The ranking is 陷阱解除 first — it sets the QTE's zone width — then 陷阱发现, which decides whether
+ * the QTE happens at all (chest §5). Three rules bound it:
  *
- * - **Never below the willpower floor.** A trap that fires under 60 心 may inflict 陷阱恐惧, which
- *   removes the character from the roster for the rest of the dungeon (chest §2, §6). The floor is
- *   `worlds.wvd.willpowerFloor` (contracts §8, default 60); the World passes the configured value and
- *   `WILLPOWER_FLOOR` mirrors the default so a bare `chooseOpener(panel)` still means 60.
+ * - **Never below the willpower floor.** The task brief (Task 12) makes the floor a rule of the
+ *   choice; chest §2/§6 explain why: a trap that fires under 60 心 may inflict 陷阱恐惧, which removes
+ *   the character from the roster for the rest of the dungeon. The floor is `worlds.wvd.willpowerFloor`
+ *   (contracts §8, default 60); the World passes the configured value and `WILLPOWER_FLOOR` mirrors the
+ *   default so a bare `chooseOpener(panel)` still means 60.
+ * - **Never a member whose willpower was not read.** The closed contract has no "unknown" for
+ *   `willpower`, so `parseOpener` records a card that draws no heart as `NaN`; a non-finite value
+ *   fails every floor comparison and is therefore ineligible. Nothing is substituted — the card that
+ *   draws no heart is DragonSlayer's, the highest 陷阱解除 on the recorded panel, which is exactly
+ *   where a fabricated value would do the most damage.
  * - **Never a feared member**, whatever the numbers: 陷阱恐惧 bars a character from opening chests
  *   (chest §5). `feared` is not visible in the one recorded panel, so `parseOpener` reports `false`
  *   for every member; the floor above is what actually protects the choice there.
@@ -44,8 +50,10 @@ export function chooseOpener(panel: OpenerPanel, willpowerFloor: number = WILLPO
   for (let index = 0; index < panel.members.length; index += 1) {
     const member = panel.members[index]!;
     if (member.feared) continue;
-    // A NaN willpower is not "above the floor": an unreadable value must never become a choice.
-    if (!(member.willpower >= floor)) continue;
+    // An unread willpower is `NaN` and can never be "at or above" any floor: the member is
+    // ineligible, exactly as if the panel had not offered them (no substitution happens anywhere).
+    if (!Number.isFinite(member.willpower)) continue;
+    if (member.willpower < floor) continue;
     if (best < 0) {
       best = index;
       continue;

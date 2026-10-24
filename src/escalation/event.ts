@@ -64,12 +64,20 @@ export function observationLine(observation: Observation): string {
     }
     case 'chest-open': {
       const members = observation.opener.members;
-      const lowest = members.reduce<number | null>(
-        (min, member) => (min === null || member.willpower < min ? member.willpower : min),
-        null,
-      );
+      // A card that draws no heart has no willpower to compare (`NaN`, see `parseOpener`): it is left
+      // out of the lowest, and "unreadable" is said when no member's numeral was read.
+      let lowest: number | null = null;
+      let unread = 0;
+      for (const member of members) {
+        if (!Number.isFinite(member.willpower)) {
+          unread += 1;
+          continue;
+        }
+        if (lowest === null || member.willpower < lowest) lowest = member.willpower;
+      }
+      const unreadNote = unread > 0 ? `, ${unread} with no willpower shown` : '';
       return `${head}; opener panel with ${plural(members.length, 'member', 'members')}, `
-        + `lowest willpower ${lowest === null ? 'unreadable' : lowest}`;
+        + `lowest willpower ${lowest === null ? 'unreadable' : lowest}${unreadNote}`;
     }
     default:
       return head;

@@ -465,6 +465,7 @@ export class WvdWorld implements World {
       this.#chestsRemaining = INITIAL_CHEST_BUDGET;
       this.#inFlight = null;
       this.#failed = new Set();
+      this.#openerRefusal = null;
       this.#escalationCooldownUntilMs = 0;
       this.#lastStopReason = null;
       this.#unsubscribe = session.onEngineEvent?.((event) => {
@@ -589,7 +590,12 @@ export class WvdWorld implements World {
   #track(observation: Observation): void {
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen === 'chest-open') {
-      this.#willpower = observation.opener.members.map((member) => member.willpower);
+      // An unread willpower (a card that draws no heart) is not a spendable number: it is left out
+      // of the budget rather than counted as zero or as a substitute, so "every member is at zero"
+      // still means every *read* value is at zero.
+      this.#willpower = observation.opener.members
+        .map((member) => member.willpower)
+        .filter((willpower) => Number.isFinite(willpower));
     }
     if (observation.screen === 'dungeonmap') {
       // The map is the only chest count the loop has: what the map still shows is the budget.
@@ -1003,7 +1009,11 @@ export class WvdWorld implements World {
         if (choice === null) {
           // Nobody may open it: do not click. Say why, and ask — the next card choice is the model's
           // or the operator's, not a guess here.
-          this.#openerRefusal = `no member is at or above the ${this.#cfg.willpowerFloor} willpower floor`;
+          const unread = panel.members.filter((member) => !Number.isFinite(member.willpower)).length;
+          this.#openerRefusal = unread > 0
+            ? `${unread} of ${panel.members.length} cards show no willpower, and no member with a readable `
+              + `willpower is at or above the ${this.#cfg.willpowerFloor} willpower floor`
+            : `no member is at or above the ${this.#cfg.willpowerFloor} willpower floor`;
           this.#failed.add('open-chest');
           this.#host?.log.warn(`wvd: not opening the chest: ${this.#openerRefusal}`, {
             members: panel.members.map((member) => ({

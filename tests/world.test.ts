@@ -233,6 +233,23 @@ const openerNobody: Observation = {
   opener: { members: [openerMember(10, 40, 59), openerMember(10, 90, 30)] },
 };
 
+/**
+ * The best card's heart did not parse (`NaN` = no heart drawn / unread): it is ineligible, and the
+ * other member (59) is under the floor. Nobody may open the chest, and the reason must name it.
+ */
+const openerUnread: Observation = {
+  screen: 'chest-open',
+  atMs: 100,
+  confidence: 1,
+  opener: { members: [openerMember(10, 105, Number.NaN), openerMember(10, 40, 59)] },
+};
+
+/**
+ * What `ChestPerceiver` emits when the panel's gates match but a digit cannot be read (`unknown`,
+ * confidence 0.3): below the route's act floor, above a blank frame's 0.
+ */
+const refusedPanel: Observation = { screen: 'unknown', atMs: 100, confidence: 0.3 };
+
 function makeWorld(options: {
   cfg?: Partial<WvdConfigSection>;
   observation?: Observation;
@@ -1066,6 +1083,34 @@ describe('the opener click', () => {
     // The reason travels in the question: the model is told *why* the loop will not click.
     expect(stuck!.event.text).toContain('60 willpower floor');
     expect(world.escalationsThisHour()).toBe(1);
+  });
+
+  it('escalates on a card with no readable willpower, and never falls back to a lower member', async () => {
+    const { world, host, actuator } = makeWorld({ observation: openerUnread, cfg: { escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls.filter((call) => call.startsWith('tap '))).toEqual([]);
+    const stuck = host.pushed.find((pushed) => pushed.event.type === 'wvd.stuck');
+    expect(stuck).toBeDefined();
+    // The reason names the unread card, so the model is not told "below the floor" about a value the
+    // screen never showed.
+    expect(stuck!.event.text).toContain('show no willpower');
+    expect(stuck!.event.text).toContain('60 willpower floor');
+  });
+
+  it('escalates a panel it recognised but could not read, without clicking', async () => {
+    // `ChestPerceiver` answers `unknown` at confidence 0.3 for this frame; the loop must ask, not
+    // stop (confidence 0 would have ended the session) and not click a half-read roster.
+    const { world, host, actuator } = makeWorld({ observation: refusedPanel, cfg: { escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls.filter((call) => call.startsWith('tap '))).toEqual([]);
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(1);
+    expect(world.isRunning()).toBe(true);
   });
 
   it('honours the configured willpower floor, not only the policy default', async () => {
