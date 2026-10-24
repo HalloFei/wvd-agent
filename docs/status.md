@@ -217,9 +217,11 @@ Live run 2026-10-24 23:33, from the town to the floor:
   北穿幽冥城 matched; Dungeon Select's row at (1082,535) loaded 第三区; the dungeon map's key
   `0c0280000deff8000d7ffc0008c37000` matches the task's key within the 8-bit tolerance. **The floor
   gate passes.** The live minimap centre is (1787,96).
-- **Remaining live blocker**: the Hud names the 3D view `unknown` 0.2 — its fixed rects do not match
-  the live layout (empty minimap, the grid at x≈1752–1830, the right-side key legend). The entry's
-  `expect dungeon` stops there, and the farm loop's first tick would escalate. Pinned on the board.
+- **The 3D view is named by its minimap.** The operator's rule — a minimap in the top-right corner
+  means the dungeon — is now the Hud's fallback: the saturated yellow player arrow measures **35 px**
+  in both 3D views and **0** on every other committed screen. The live view named `dungeon` 0.8; the
+  minimap tap at (1787,96) opened the map; the floor key matched again. The replay tally moves with
+  it: **44 unknown + 7 dungeon** (was 51 unknown).
 - A stale capture during the first travel is now retried three times; the action also zooms in (E)
   after the drags, per 诺村/北穿.
 

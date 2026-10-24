@@ -253,9 +253,9 @@ Run 2026-10-24 23:33 on the live game. The entry reached the floor:
    (1082,535) loaded 第三区; the dungeon map's key `0c0280000deff8000d7ffc0008c37000` matches the
    task's `0c0280000d6ff0000d7ffc0008c37000` within the 8-bit tolerance. **The floor gate passes.**
 4. The live minimap centre is (1787,96); the board's (1849,110) missed.
-5. The entry's `expect dungeon` still stops: the Hud returns `unknown` 0.2 on the live 3D view
-   (empty minimap, right-side key legend); its fixed HUD rects do not match that layout. Pinned as
-   "Name the live 3D view with an empty minimap".
+5. The live 3D view named `dungeon` 0.8 once the Hud took the operator's minimap rule: the yellow
+   player arrow in the top-right corner is 35 px on both 3D views and 0 on every other screen. The
+   minimap tap at (1787,96) opened the map and the floor key matched again.
 6. The drag path was not exercised: 北穿 was in view after the zoom-out. The probe remains the first
    thing to run when the map opens at a pan without it.
 
