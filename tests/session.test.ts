@@ -26,7 +26,8 @@ function dungeonMap(confidence = CONFIDENT): Observation {
     screen: 'dungeonmap',
     atMs: AT,
     confidence,
-    map: { floorTitle: 'B1F', player: { x: 20, y: 14 }, icons: [] },
+    map: { floorTitle: 'B1F',
+    titleKey: '0001c00003e6c00003efe00003874000', player: { x: 20, y: 14 }, icons: [] },
   };
 }
 

@@ -59,6 +59,8 @@ import type {
   Point,
   RouteState,
   ScreenId,
+  ScriptResult,
+  SessionTask,
   SessionVerdict,
 } from './contracts.ts';
 import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
@@ -114,6 +116,15 @@ export interface WvdSession {
   readonly close?: (() => void) | undefined;
 }
 
+/**
+ * What one `openSession()` produced: the engine's collaborators, and — when the deployment
+ * configured a task file — the task that owns the session's entry and exit (contracts §10).
+ * A refusal is typed, so the World can report *why* a session did not start.
+ */
+export type SessionOpen =
+  | { readonly ok: true; readonly session: WvdSession; readonly task?: SessionTask | undefined }
+  | { readonly ok: false; readonly reason: 'no-engine' | 'task-file-invalid'; readonly detail?: string };
+
 export interface WvdWorldOptions {
   /** Live reference to `worlds.wvd`; the keys this World owns are read per decision, not copied. */
   cfg: WvdConfigSection;
@@ -123,7 +134,7 @@ export interface WvdWorldOptions {
   classify: SessionClassifier;
   commands: RouteCommands;
   /** Builds the engine for one session; absent means this World cannot farm at all. */
-  openSession?: (() => Promise<WvdSession | null>) | undefined;
+  openSession?: (() => Promise<SessionOpen>) | undefined;
   /** The loop's scheduler: on in production, off in tests so a tick runs only when asked. */
   autoTick?: boolean | undefined;
   /** The one clock. `performance.now()` unless a test says otherwise. */
@@ -357,6 +368,10 @@ export class WvdWorld implements World {
 
   #host: WorldHost | null = null;
   #session: WvdSession | null = null;
+  /** The task that owns this session's entry and exit (contracts §10); null without a task file. */
+  #task: SessionTask | null = null;
+  /** Completed exit scripts this session; the loop re-enters until `cfg.cycles` is reached. */
+  #cyclesDone = 0;
   #unsubscribe: (() => void) | null = null;
   #running = false;
   #starting = false;
@@ -404,7 +419,7 @@ export class WvdWorld implements World {
   readonly #policy: FarmPolicy;
   readonly #classify: SessionClassifier;
   readonly #commands: RouteCommands;
-  readonly #openSession: (() => Promise<WvdSession | null>) | undefined;
+  readonly #openSession: (() => Promise<SessionOpen>) | undefined;
   readonly #autoTick: boolean;
   readonly #now: () => number;
 
@@ -620,6 +635,11 @@ export class WvdWorld implements World {
   }
 
   /** Mounting announces nothing; a session starts only when `enabled` is set or the operator asks. */
+  /** One line for the operator console, from a module this World owns (the task runner). */
+  note(line: string): void {
+    this.#host?.log.info(line);
+  }
+
   async start(host: WorldHost): Promise<void> {
     this.#host = host;
     if (this.#cfg.enabled && !this.#running) await this.startSession();
@@ -653,21 +673,25 @@ export class WvdWorld implements World {
     }
     this.#starting = true;
     try {
-      let session: WvdSession | null = null;
+      let opened: SessionOpen;
       try {
-        session = await this.#openSession();
+        opened = await this.#openSession();
       } catch (error) {
         this.#lastStopReason = `the engine could not be started: ${message(error)}`;
         this.#lastFailed = true;
         this.#record('error', this.#lastStopReason);
         return false;
       }
-      if (!session) {
-        this.#lastStopReason = 'the engine child did not start';
+      if (!opened.ok) {
+        this.#lastStopReason = opened.reason === 'task-file-invalid'
+          ? `the task file is invalid: ${opened.detail ?? 'no reason given'}`
+          : 'the engine child did not start';
         this.#lastFailed = true;
         this.#record('error', this.#lastStopReason);
         return false;
       }
+      const session = opened.session;
+      this.#task = opened.task ?? null;
 
       this.#session = session;
       const now = this.#now();
@@ -689,10 +713,26 @@ export class WvdWorld implements World {
       this.#lastStopReason = null;
       this.#lastFailed = false;
       this.#engineProblem = null;
+      this.#cyclesDone = 0;
       this.#record('started', 'the session started');
       this.#unsubscribe = session.onEngineEvent?.((event) => {
         void this.onEngineEvent(event);
       }) ?? null;
+      // The task's entry script runs before the first tick: nothing is farmed until the task's own
+      // floor gate has passed. It is cancellable because `#running` is already true.
+      if (this.#task !== null) {
+        const entered = await this.#task.enter();
+        if (!this.#running) return false;
+        if (!entered.ok) {
+          await this.#endSession(
+            entered.reason === 'cancelled'
+              ? 'the session was stopped during the task entry'
+              : `the task entry stopped at step ${entered.step}: ${entered.reason}`,
+            { report: true, failed: entered.reason !== 'cancelled' },
+          );
+          return false;
+        }
+      }
       if (this.#autoTick) this.#schedule();
       return true;
     } finally {
@@ -1199,6 +1239,21 @@ export class WvdWorld implements World {
    *   choice comes from `chooseOpener` over the parsed panel, and a panel with no qualifying member
    *   is escalated instead — the loop never clicks a card it did not choose (chest §5).
    */
+  /**
+   * Between cycles the farm restarts from the same floor: the counters that describe "how far this
+   * cycle has got" reset, and nothing that describes the session does.
+   */
+  #resetCycle(): void {
+    this.#chestsRemaining = INITIAL_CHEST_BUDGET;
+    this.#lastMapRead = null;
+    this.#lastScreen = null;
+    this.#inFlight = null;
+    this.#failed = new Set();
+    this.#willpower = [];
+    this.#openerRefusal = null;
+    this.#escalationCooldownUntilMs = 0;
+  }
+
   async #execute(intent: Intent, fromScreen: ScreenId | null, context?: TickContext): Promise<void> {
     this.#lastIntent = { intent, atMs: this.#now() };
     switch (intent.kind) {
@@ -1281,6 +1336,44 @@ export class WvdWorld implements World {
       case 'wait':
         // The tick cadence is the wait; the next tick re-perceives.
         return;
+      case 'run-script': {
+        const task = this.#task;
+        if (task === null) {
+          this.#host?.log.warn(`wvd: no task is running; the ${intent.name} script has nothing to do`);
+          return;
+        }
+        const result = await task.runScript(intent.name);
+        if (!this.#running) return;
+        if (!result.ok) {
+          await this.#endSession(
+            result.reason === 'cancelled'
+              ? 'the session was stopped while the task exit ran'
+              : `the task ${intent.name} stopped at step ${result.step}: ${result.reason}`,
+            { report: true, failed: result.reason !== 'cancelled' },
+          );
+          return;
+        }
+        if (intent.name !== 'exit') return;
+        this.#cyclesDone += 1;
+        if (this.#cyclesDone < Math.max(1, this.#cfg.cycles) && this.#task !== null) {
+          this.#resetCycle();
+          const entered = await this.#task.runScript('enter');
+          if (!this.#running) return;
+          if (!entered.ok) {
+            await this.#endSession(
+              entered.reason === 'cancelled'
+                ? 'the session was stopped during the task entry'
+                : `the task entry stopped at step ${entered.step}: ${entered.reason}`,
+              { report: true, failed: entered.reason !== 'cancelled' },
+            );
+            return;
+          }
+          this.#host?.log.info(`wvd: cycle ${this.#cyclesDone} done; re-entered for cycle ${this.#cyclesDone + 1}`);
+          return;
+        }
+        await this.#endSession(`task-complete: ${this.#cyclesDone} of ${Math.max(1, this.#cfg.cycles)} cycles`, { report: true });
+        return;
+      }
       case 'stop':
         await this.#endSession(intent.reason, { report: true });
         return;
@@ -1361,6 +1454,11 @@ export class WvdWorld implements World {
   /** Close the session exactly once: settle the paused tick first, then release the engine. */
   async #endSession(reason: string, options: { report?: boolean; failed?: boolean } = {}): Promise<void> {
     const wasRunning = this.#running;
+    // Stop a running script at its next step boundary before anything else is torn down: the task
+    // must not keep pressing keys into a closed session.
+    const task = this.#task;
+    this.#task = null;
+    task?.abort();
     const hadQuestion = this.#supervisor.isOpen();
     this.#running = false;
     this.#lastStopReason = reason;

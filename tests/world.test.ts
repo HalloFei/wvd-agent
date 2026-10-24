@@ -181,6 +181,7 @@ const dungeonMap: Observation = {
   confidence: 0.9,
   map: {
     floorTitle: 'B1F',
+    titleKey: '0001c00003e6c00003efe00003874000',
     player: { x: 19, y: 21 },
     icons: [
       { kind: 'chest', at: { x: 14, y: 18 } },
@@ -199,6 +200,7 @@ const emptyMap: Observation = {
   confidence: 0.9,
   map: {
     floorTitle: 'B1F',
+    titleKey: '0001c00003e6c00003efe00003874000',
     player: { x: 19, y: 21 },
     icons: [{ kind: 'hazard', at: { x: 10, y: 10 } }],
   },
@@ -302,7 +304,7 @@ function makeWorld(options: {
     openSession: async () => {
       openSessionCalls += 1;
       if (options.openSessionGate) await options.openSessionGate;
-      return session;
+      return { ok: true, session };
     },
     autoTick: false,
     now: clock.now,

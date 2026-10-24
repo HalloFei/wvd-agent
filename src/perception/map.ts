@@ -349,6 +349,7 @@ function parseImage(image: RgbaImage): ParsedMap | null {
 
   const map: MapState = {
     floorTitle: title.text,
+    titleKey: title.key,
     player: { x: readout.x, y: readout.y },
     icons,
   };
@@ -358,6 +359,8 @@ function parseImage(image: RgbaImage): ParsedMap | null {
   if (Math.max(latticeX.rms, latticeY.rms) > LATTICE_CLEAN_RMS) confidence = Math.min(confidence, 0.8);
   if (Math.max(chevron.residualX, chevron.residualY) > 1) confidence = Math.min(confidence, 0.9);
   if (title.minNcc < 0.9) confidence = Math.min(confidence, 0.85);
+  // An unnamed (non-Latin) title is a weaker gate than three matched glyphs, never a stronger one.
+  if (title.text === '') confidence = Math.min(confidence, 0.85);
 
   return { map, confidence };
 }
@@ -573,27 +576,62 @@ function matchDigit(feature: Float64Array): { digit: string; margin: number } | 
 interface Title {
   readonly text: string;
   readonly minNcc: number;
+  readonly key: string;
+}
+
+/**
+ * The floor's title fingerprint (R27a). The Latin token is only one kind of floor name: the FFXI
+ * collab floors print a Chinese title in the same bar, and `readMap` refused every one of them
+ * because the three Latin slots never matched (measured 2026-10-24 on `第四区-城内2F深处-`).
+ *
+ * The fingerprint is a 32×4 ink profile of the same 400×40 region, binarised against its own mean:
+ * stable across frames of one floor (four captures, identical), different between floors, and all
+ * zeros for a HUD. It identifies a floor without reading a glyph, so a locator can gate on it.
+ */
+const TITLE_KEY_COLS = 32;
+const TITLE_KEY_ROWS = 4;
+
+function titleKeyOf(data: Uint8Array, width: number, cells: Float64Array): string {
+  let total = 0;
+  for (const cell of cells) total += cell;
+  const mean = total / cells.length;
+  let bits = '';
+  for (const cell of cells) bits += cell > mean ? '1' : '0';
+  let hex = '';
+  for (let index = 0; index < bits.length; index += 4) {
+    hex += Number.parseInt(bits.slice(index, index + 4), 2).toString(16);
+  }
+  return hex;
 }
 
 function readTitle(data: Uint8Array, width: number): Title | null {
+  const cells = new Float64Array(TITLE_KEY_COLS * TITLE_KEY_ROWS);
   let ink = 0;
   for (let y = TITLE_INK_Y; y < TITLE_INK_Y + TITLE_INK_H; y += 1) {
     const row = y * width;
+    const cellY = Math.min(TITLE_KEY_ROWS - 1, Math.floor(((y - TITLE_INK_Y) * TITLE_KEY_ROWS) / TITLE_INK_H));
     for (let x = TITLE_INK_X; x < TITLE_INK_X + TITLE_INK_W; x += 1) {
-      if (lumaAt(data, (row + x) * 4) > TITLE_INK_LUMA) ink += 1;
+      if (lumaAt(data, (row + x) * 4) > TITLE_INK_LUMA) {
+        ink += 1;
+        const cellX = Math.min(TITLE_KEY_COLS - 1, Math.floor(((x - TITLE_INK_X) * TITLE_KEY_COLS) / TITLE_INK_W));
+        cells[cellY * TITLE_KEY_COLS + cellX] += 1;
+      }
     }
   }
+  // The ink floor is the gate that refuses a HUD (0 lit px); the Latin slots are an extra check,
+  // never the only one, so a title of another script still yields a map.
   if (ink < TITLE_INK_MIN) return null;
+  const key = titleKeyOf(data, width, cells);
 
   let text = '';
   let minNcc = Infinity;
   for (const slot of TITLE_SLOTS) {
     const ncc = cropNcc(data, width, slot.x, TITLE_ROW_Y, TITLE_TEMPLATES[slot.char]);
-    if (ncc === null || ncc < TITLE_SLOT_NCC_FLOOR) return null;
+    if (ncc === null || ncc < TITLE_SLOT_NCC_FLOOR) return { text: '', minNcc: 0.85, key };
     text += slot.char;
     minNcc = Math.min(minNcc, ncc);
   }
-  return { text, minNcc };
+  return { text, minNcc, key };
 }
 
 // ---------------------------------------------------------------------------------------------

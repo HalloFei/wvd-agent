@@ -9,6 +9,10 @@ export interface WvdConfigSection extends WorldSection {
   dryRun: boolean;
   tickMs: number;
   sessionMaxMinutes: number;
+  /** How many enter → farm → leave cycles one session runs (design §7.8). */
+  cycles: number;
+  /** Task file for the location to farm; empty keeps the built-in route (contracts §10). */
+  taskFile: string;
   stallStopSeconds: number;
   gameWindowTitle: string;
   jpegQuality: number;
@@ -42,6 +46,8 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   dryRun: false,
   tickMs: 100,
   sessionMaxMinutes: 120,
+  cycles: 1,
+  taskFile: '',
   stallStopSeconds: 120,
   gameWindowTitle: 'WizardryVariantsDaphne',
   jpegQuality: 75,
@@ -90,6 +96,14 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.wvd.sessionMaxMinutes': {
         type: 'integer', title: '会话上限', description: '一次会话到点强制停止，分钟。',
+      },
+      'worlds.wvd.cycles': {
+        type: 'integer', title: '循环次数',
+        description: '一次会话跑几轮「进副本 → 刷取 → 回城」。', minimum: 1, maximum: 50,
+      },
+      'worlds.wvd.taskFile': {
+        type: 'string', title: '任务文件',
+        description: '描述副本入口与离开路径的 JSON 文件；留空则使用内置路线。',
       },
       'worlds.wvd.stallStopSeconds': {
         type: 'integer', title: '停滞上限', description: '这么久没有进展就结束会话，秒。',

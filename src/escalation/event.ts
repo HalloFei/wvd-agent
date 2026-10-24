@@ -35,6 +35,7 @@ export function fallbackPhrase(intent: Intent): string {
     case 'open-chest': return 'tries the chest it is standing on';
     case 'fight': return 'keeps resolving the battle';
     case 'exit': return 'leaves the dungeon and restarts the route';
+    case 'run-script': return 'runs the task script';
     case 'wait': return 'waits and looks again';
     case 'stop': return 'stops the session';
   }

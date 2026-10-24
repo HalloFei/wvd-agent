@@ -121,3 +121,47 @@ describe('MapPerceiver', () => {
     expect(observation).toEqual({ screen: 'unknown', atMs: 7_000, confidence: 0 });
   });
 });
+
+/**
+ * R27a: the floor's title fingerprint. The FFXI collab floors print a Chinese title where the
+ * Latin slots expect `B1F`; the fingerprint is what makes those floors nameable at all. Measured
+ * 2026-10-24 on the live game (1920×1080, `第四区-城内2F深处-`).
+ */
+describe('readMap — the floor title fingerprint', () => {
+  const FFXI = new URL('../testdata/nav-2026-10-24-ffxi4f/', import.meta.url);
+
+  async function ffxiFrame(name: string): Promise<Frame> {
+    const bytes = await readFile(new URL(name, FFXI));
+    const decoded = jpeg.decode(bytes, { useTArray: true });
+    const image: RgbaImage = { data: decoded.data, width: decoded.width, height: decoded.height };
+    return { atMs: 1_000, width: decoded.width, height: decoded.height, toRgba: async () => image };
+  }
+
+  it('reads a map whose title is not Latin, with the measured key', async () => {
+    const map = await readMap(await ffxiFrame('map.jpg'));
+
+    expect(map).not.toBeNull();
+    expect(map!.floorTitle).toBe('');
+    expect(map!.titleKey).toBe('000000007f3ffe007f7efe00220ba600');
+    // The readout is still the gate that proves this is a map: X: 11 Y: 23 on the captured frame.
+    expect(map!.player).toEqual({ x: 11, y: 23 });
+  });
+
+  it('keeps the Latin token and gives it a key too', async () => {
+    const map = await readMap(await jpegFrame('map.jpg'));
+
+    expect(map!.floorTitle).toBe('B1F');
+    expect(map!.titleKey).toBe('0000c00003e6c00003efe00003874000');
+  });
+
+  it('gives two floors different keys', async () => {
+    const latin = await readMap(await jpegFrame('map.jpg'));
+    const ffxi = await readMap(await ffxiFrame('map.jpg'));
+
+    expect(latin!.titleKey).not.toBe(ffxi!.titleKey);
+  });
+
+  it('still refuses the HUD frame at the title ink gate', async () => {
+    expect(await readMap(await jpegFrame('minimap-and-hud.jpg'))).toBeNull();
+  });
+});

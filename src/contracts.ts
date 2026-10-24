@@ -46,7 +46,8 @@ export interface Point { readonly x: number; readonly y: number }
 export interface MapIcon { readonly kind: 'chest' | 'stairs' | 'hazard' | 'haken'; readonly at: Point }
 
 export interface MapState {
-  readonly floorTitle: string;
+  readonly floorTitle: string;          // the Latin token (`B1F`), or '' when the title is not Latin
+  readonly titleKey: string;            // §3 R27a: the floor's 32-hex title fingerprint
   readonly player: Point;               // grid coordinates, e.g. {x:19,y:21}
   readonly icons: readonly MapIcon[];
 }
@@ -146,6 +147,7 @@ export type Intent =
   | { kind: 'open-chest' }
   | { kind: 'fight' }
   | { kind: 'exit' }
+  | { kind: 'run-script'; name: ScriptId }
   | { kind: 'wait'; ms: number }
   | { kind: 'stop'; reason: string };
 
@@ -158,6 +160,68 @@ export interface RouteState {
 export interface FarmPolicy { next(state: RouteState): Intent; }
 
 export type SessionVerdict = 'ok' | 'escalate' | 'stop';
+
+// §10 Farm tasks
+
+/** A script a task file can name. `enter` runs at session start; `exit` when the policy says leave. */
+export type ScriptId = 'enter' | 'exit';
+
+export type TaskKeyName = 'g' | 'l' | 'q' | 'f' | 'r' | 'tab' | 'esc' | 'space';
+
+export interface TaskStep {
+  readonly op: 'tap' | 'key' | 'wait' | 'expect' | 'expectFloor';
+  readonly at?: readonly [number, number];
+  readonly count?: 1 | 2;
+  readonly key?: TaskKeyName;
+  readonly holdMs?: number;
+  readonly ms?: number;
+  readonly screen?: ScreenId;
+  readonly timeoutMs?: number;
+}
+
+export interface TaskScript { readonly timeoutMs: number; readonly steps: readonly TaskStep[] }
+
+export interface TaskDefinition {
+  readonly id: string;
+  readonly label: string;
+  readonly floor: { readonly titleKey: string };
+  readonly entry: TaskScript;
+  readonly exit?: TaskScript;
+}
+
+export type TaskFileProblem =
+  | 'not-json' | 'not-an-object' | 'missing-field' | 'unknown-field' | 'unknown-op'
+  | 'bad-coordinate' | 'bad-timeout' | 'bad-title-key';
+
+export type TaskLoad =
+  | { readonly ok: true; readonly task: TaskDefinition }
+  | { readonly ok: false; readonly reason: TaskFileProblem; readonly detail?: string };
+
+export type ScriptFailure =
+  | ActionFailure | 'expect-timeout' | 'floor-mismatch' | 'script-timeout' | 'cancelled'
+  | 'capture-unavailable';
+
+export type ScriptResult =
+  | { readonly ok: true; readonly steps: number; readonly ms: number }
+  | { readonly ok: false; readonly step: number; readonly reason: ScriptFailure; readonly detail?: string };
+
+/** Everything a script may touch. No step sees a session, a config or a task file. */
+export interface ScriptEnv {
+  readonly actuator: Actuator;
+  readonly capture: () => Promise<Frame>;
+  readonly observe: (frame: Frame) => Promise<Observation>;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly abort: AbortSignal;
+  readonly log: (line: string) => void;
+}
+
+/** What the loop needs from a task, and nothing else. */
+export interface SessionTask {
+  enter(): Promise<ScriptResult>;
+  runScript(name: ScriptId): Promise<ScriptResult>;
+  /** Stop at the next step boundary; a press already in flight completes. */
+  abort(): void;
+}
 
 // §7 QTE timing
 

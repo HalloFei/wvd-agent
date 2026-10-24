@@ -288,6 +288,7 @@ function fallbackWord(intent: Intent): string {
     case 'open-chest': return 'tried the chest it was standing on';
     case 'fight': return 'stayed in the battle';
     case 'exit': return 'leaves the dungeon and restarts the route';
+    case 'run-script': return 'runs the task script';
     case 'wait': return 'waited and looked again';
     case 'stop': return 'stopped the session';
   }

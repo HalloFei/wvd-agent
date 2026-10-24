@@ -12,6 +12,9 @@
  * - **It connects no host.** The host arrives at `start(host)`; the engine's unsolicited messages
  *   reach the loop because the session's `onEngineEvent` forwards them.
  */
+import { readFile } from 'node:fs/promises';
+import { isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   MAX_PRESS_HOLD_MS,
   type ActionResult,
@@ -20,6 +23,7 @@ import {
   type Point,
 } from './contracts.ts';
 import { automoveToChest, automoveToExit, openMap } from './actions/automove.ts';
+import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
 import { connectEngine, startEngine, type EngineClient } from './engine/child.ts';
 import { captureJpeg, sendInput, Win32Capture } from './engine/win32.ts';
@@ -28,8 +32,11 @@ import { CompositePerceiver } from './perception/composite.ts';
 import { HudPerceiver } from './perception/hud.ts';
 import { MapPerceiver } from './perception/map.ts';
 import { routePolicy } from './policy/route.ts';
+import { createTaskPolicy } from './tasks/policy.ts';
+import { createTaskRunner } from './tasks/runner.ts';
+import { parseTask } from './tasks/schema.ts';
 import { classify } from './policy/session.ts';
-import { WvdWorld, type WvdSession } from './world.ts';
+import { WvdWorld, type SessionOpen, type WvdSession } from './world.ts';
 
 /**
  * The route's acting floor (contracts §6): a screen below it is not identified well enough to act
@@ -48,6 +55,12 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
   const { cfg, timezone } = composition;
   let world: WvdWorld | null = null;
   let engine: EngineClient | null = null;
+  // The task the running session farms with; the decorator reads it per tick, so a session that
+  // loaded no file behaves exactly like the v1 route.
+  let task: TaskDefinition | null = null;
+
+  /** The package root: `tasks/` sits beside `src/`, and a relative `taskFile` resolves from here. */
+  const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
   /** The child, spawned on first use and re-spawned if a session closed it. */
   const connect = (): EngineClient => {
@@ -83,10 +96,29 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     { perceiver: new HudPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
   ]);
 
-  const openSession = async (): Promise<WvdSession | null> => {
+  const openSession = async (): Promise<SessionOpen> => {
+    // The task file is read per session, so an edited file is picked up by the next start; a bad
+    // one refuses the start with its reason rather than running a session nobody can predict.
+    const file = cfg.taskFile.trim();
+    let loaded = null as TaskDefinition | null;
+    if (file !== '') {
+      const path = isAbsolute(file) ? file : resolve(PACKAGE_ROOT, file);
+      let text: string;
+      try {
+        text = await readFile(path, 'utf8');
+      } catch {
+        return { ok: false, reason: 'task-file-invalid', detail: `cannot read ${path}` };
+      }
+      const parsed = parseTask(text);
+      if (parsed.ok === false) {
+        return { ok: false, reason: 'task-file-invalid', detail: `${path}: ${parsed.reason}${parsed.detail ? ` (${parsed.detail})` : ''}` };
+      }
+      loaded = parsed.task;
+    }
+    task = loaded;
     // Spawning here is the session's first act: `create()` stays idle.
     const client = connect();
-    return {
+    const session: WvdSession = {
       source: new Win32Capture(client, {
         // A degraded decode is the child's report reaching the loop, not a silent slowdown (R23).
         onProblem: (event) => {
@@ -112,12 +144,20 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
         engine = null;
       },
     };
+    const taskRunner = loaded === null ? undefined : createTaskRunner({
+      task: loaded,
+      source: session.source,
+      perceiver: session.perceiver,
+      actuator: session.actuator,
+      log: (line) => world?.note(line),
+    });
+    return taskRunner === undefined ? { ok: true, session } : { ok: true, session, task: taskRunner };
   };
 
   world = new WvdWorld({
     cfg,
     timezone,
-    policy: routePolicy,
+    policy: createTaskPolicy(() => task, routePolicy),
     classify,
     commands: {
       // `pressHoldMs` is read per command, like every other key this World owns (§0.3).

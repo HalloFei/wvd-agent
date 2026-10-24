@@ -22,7 +22,7 @@ function map(player: Point, icons: MapIcon[], confidence = CONFIDENCE): Observat
     screen: 'dungeonmap',
     atMs: AT,
     confidence,
-    map: { floorTitle: '第四区-城内2F深处-', player, icons },
+    map: { floorTitle: '第四区-城内2F深处-', titleKey: '000000007f3ffe007f7efe00220ba600', player, icons },
   };
 }
 
