@@ -45,7 +45,7 @@ const DEFAULT_MIN_SCORE = 0.8;
 const COARSE = 4;
 const COARSE_STRIDE = 2;
 const REFINE_RADIUS = 8;
-const CANDIDATES = 6;
+const CANDIDATES = 4;
 const MIN_TEMPLATE = 8;
 /** Below this variance the window is flat and its correlation is noise (luma units squared). */
 const MIN_VARIANCE = 100;
@@ -99,13 +99,33 @@ export function findTemplate(
       const toX = Math.min(width - tw, centreX + REFINE_RADIUS);
       const fromY = Math.max(0, centreY - REFINE_RADIUS);
       const toY = Math.min(height - th, centreY + REFINE_RADIUS);
-      for (let atY = fromY; atY <= toY; atY += 1) {
-        for (let atX = fromX; atX <= toX; atX += 1) {
+      // Two-stage refine: every second pixel first, then the 5×5 around that. A full 17×17 scan per
+      // candidate tripled the entry's observation time for no extra precision.
+      let localX = fromX;
+      let localY = fromY;
+      let localScore = -Infinity;
+      for (let atY = fromY; atY <= toY; atY += 2) {
+        for (let atX = fromX; atX <= toX; atX += 2) {
           const score = correlate(gray, atX, atY, scaled, tw, th, stats);
-          if (best === null || score > best.score) {
-            best = { at: { x: x + atX, y: y + atY }, width: tw, height: th, score, scale };
+          if (score > localScore) {
+            localScore = score;
+            localX = atX;
+            localY = atY;
           }
         }
+      }
+      for (let atY = Math.max(fromY, localY - 1); atY <= Math.min(toY, localY + 1); atY += 1) {
+        for (let atX = Math.max(fromX, localX - 1); atX <= Math.min(toX, localX + 1); atX += 1) {
+          const score = correlate(gray, atX, atY, scaled, tw, th, stats);
+          if (score >= localScore) {
+            localScore = score;
+            localX = atX;
+            localY = atY;
+          }
+        }
+      }
+      if (best === null || localScore > best.score) {
+        best = { at: { x: x + localX, y: y + localY }, width: tw, height: th, score: localScore, scale };
       }
     }
   }
