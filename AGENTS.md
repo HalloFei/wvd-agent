@@ -32,6 +32,11 @@ fact, not the module that happens to use it.
   asked only when perception is unsure or a judgment is due.
 - Coopanion is consumed as an unmodified checkout. This package is linked into its extension
   directory, never vendored into `Coopanion/`.
+- The game is installed at
+  `C:\Program Files (x86)\Steam\steamapps\common\Wizardry Variants Daphne\WizardryVariantsDaphne.exe`
+  (Steam app 2379740). **The operator launches it**; the World captures a window that is already
+  there and never starts or closes the game itself. Keep that path here rather than in config —
+  nothing in `src/` needs it, and an unread config key is a lie.
 
 ## 3. Layout
 

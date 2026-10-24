@@ -45,8 +45,13 @@ probe** while the two declared gaps remain: the opener panel `由谁打开` has 
 
 ## 3. Starting the game
 
-1. Start Steam and launch **Wizardry Variants Daphne** (app `2379740`). Launching from the library or
-   `steam.exe -applaunch 2379740` both work; Steam is normally already running.
+1. Start Steam and launch **Wizardry Variants Daphne** (app `2379740`). The install is at
+   `C:\Program Files (x86)\Steam\steamapps\common\Wizardry Variants Daphne\WizardryVariantsDaphne.exe`;
+   launching that exe directly works when Steam is already running, and the library or
+   `steam.exe -applaunch 2379740` work too. Steam does **not** have to be logged in for the window to
+   appear, but the exe will not start without the Steam client running.
+2. The first screens are a legal notice (请注意 / 未成年玩家须知) and a title screen; both need a click
+   before the game reaches the main menu or the party's last position.
 2. The game opens directly into town if a session is remembered; otherwise the title screen shows
    `- Tap to Start -` at about **(960, 924)**.
 3. Do **not** drive UU. If the operator wants acceleration, they operate UU themselves.
