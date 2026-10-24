@@ -88,6 +88,8 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     doubleTap: (at: Point): Promise<ActionResult> => sendInput(connect(), { op: 'tap', x: at.x, y: at.y, count: 2 }),
     holdKey: (scan: number, holdMs: number): Promise<ActionResult> =>
       sendInput(connect(), { op: 'key', scan, holdMs }),
+    drag: (from: Point, to: Point, durationMs: number): Promise<ActionResult> =>
+      sendInput(connect(), { op: 'drag', x1: from.x, y1: from.y, x2: to.x, y2: to.y, durationMs }),
   };
 
   /**

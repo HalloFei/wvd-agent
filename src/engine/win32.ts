@@ -32,7 +32,7 @@ export interface EngineRequester {
 }
 
 /** A request that carries input; capture and foreground are reads. */
-export type InputRequest = Extract<EngineRequest, { op: 'tap' } | { op: 'key' }>;
+export type InputRequest = Extract<EngineRequest, { op: 'tap' } | { op: 'key' } | { op: 'drag' }>;
 
 /** `ActionResult` plus the measured input leg when the child reported one (contracts §5). */
 export type InputOutcome = ActionResult & { readonly inputMs?: number };

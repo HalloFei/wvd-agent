@@ -35,6 +35,9 @@ export declare const FRAME_MAX_AGE_MS: number;
 export declare const MIN_CAPTURE_WIDTH: number;
 export declare const MAX_CAPTURE_WIDTH: number;
 
+/** The longest drag a request may carry (contracts §4, §5); the codec refuses anything longer. */
+export declare const MAX_DRAG_MS: number;
+
 export declare function isStaleFrame(ageMs: number): boolean;
 
 export declare function encodeRequest(id: number, request: EngineRequest): string;

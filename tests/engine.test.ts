@@ -3,11 +3,12 @@ import type { ChildProcess } from 'node:child_process';
 import jpeg from 'jpeg-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineEvent, EngineReply, EngineRequest } from '../src/contracts.ts';
-import { MAX_PRESS_HOLD_MS, TEARDOWN_GRACE_MS } from '../src/contracts.ts';
+import { MAX_DRAG_MS, MAX_PRESS_HOLD_MS, TEARDOWN_GRACE_MS } from '../src/contracts.ts';
 import {
   FRAME_MAX_AGE_MS,
   LineDecoder,
   MAX_CAPTURE_WIDTH,
+  MAX_DRAG_MS as PROTOCOL_MAX_DRAG_MS,
   MIN_CAPTURE_WIDTH,
   decodeLine,
   encodeEvent,
@@ -63,6 +64,22 @@ describe('engine protocol', () => {
     expect(decodeLine('{"id":1,"ok":false,"error":"exploded"}')).toBeNull();
     expect(decodeLine('{"id":1,"request":{"op":"teleport"}}')).toBeNull();
     expect(decodeLine('{"id":1,"request":{"op":"tap","x":1,"y":2,"count":3}}')).toBeNull();
+  });
+
+  it('round-trips a drag request and drops a malformed one', () => {
+    const request = { op: 'drag', x1: 10, y1: 20, x2: 300, y2: 40, durationMs: 300 } as const;
+    expect(decodeLine(encodeRequest(11, request))).toEqual({ request: { id: 11, request } });
+
+    const malformed = [
+      { op: 'drag', x1: 10, y1: 20, x2: 300, y2: 40 },
+      { op: 'drag', x1: '10', y1: 20, x2: 300, y2: 40, durationMs: 300 },
+      { op: 'drag', x1: 10, y1: 20, x2: 300, y2: 40, durationMs: 0 },
+      { op: 'drag', x1: 10, y1: 20, x2: 300, y2: 40, durationMs: MAX_DRAG_MS + 1 },
+      { op: 'drag', x1: 10, y1: 20, x2: 300, y2: null, durationMs: 300 },
+    ];
+    for (const bad of malformed) {
+      expect(decodeLine(JSON.stringify({ id: 1, request: bad })), JSON.stringify(bad)).toBeNull();
+    }
   });
 
   it('keeps maxWidth on a capture request (contracts §5)', () => {
@@ -466,6 +483,10 @@ describe('engine teardown', () => {
     // child TEARDOWN_GRACE_MS after closing the pipe, and that kill skips `releaseHeld()`. If the
     // two ever crossed, the World could send a hold the teardown would kill with the key down.
     expect(MAX_PRESS_HOLD_MS).toBeLessThan(TEARDOWN_GRACE_MS);
+    // the same rule for a drag: the button is down for the drag's whole duration
+    expect(MAX_DRAG_MS).toBeLessThan(TEARDOWN_GRACE_MS);
+    // the World's constant and the child's codec constant are one fact
+    expect(MAX_DRAG_MS).toBe(PROTOCOL_MAX_DRAG_MS);
   });
 
   it('does not kill the child while a maximum-length hold could still be finishing', () => {

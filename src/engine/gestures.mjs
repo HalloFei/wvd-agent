@@ -23,6 +23,18 @@ export class Refused extends Error {
 export const PRESS_MS = 60;
 
 /**
+ * The longest drag a caller may ask for (contracts §4). The button is down for the whole drag, so
+ * the same teardown rule as a key hold applies: the ceiling must stay below `TEARDOWN_GRACE_MS`.
+ * `tests/engine.test.ts` asserts that against the World's copy of the constant.
+ */
+export const MAX_DRAG_MS = 500;
+
+/** The drag's move count and the most it may take: 25 ms per move, clamp 4..20. */
+const DRAG_MOVE_MS = 25;
+const DRAG_MIN_MOVES = 4;
+const DRAG_MAX_MOVES = 20;
+
+/**
  * `device` is the Win32 surface:
  *   isForeground(hwnd), moveToClient(hwnd, x, y), mouseDown(), mouseUp(), keyDown(scan),
  *   keyUp(scan), sleep(ms).
@@ -56,6 +68,39 @@ export function createGestures(device) {
       if (index < count - 1) await device.sleep(PRESS_MS);
     }
     if (refused) throw new Refused('not-foreground');
+  }
+
+  /**
+   * A press at the start point, a straight-line move through the destination, then the release.
+   * The foreground is asserted before the down and after the release, exactly as for a tap; the
+   * release is unconditional, so a refused or torn-down drag never leaves the button down.
+   * Intermediate moves are what the game sees as a drag — one jump is a click that happens to end
+   * somewhere else.
+   */
+  async function drag(hwnd, fromX, fromY, toX, toY, durationMs) {
+    if (!device.isForeground(hwnd)) throw new Refused('not-foreground');
+    const total = Math.min(MAX_DRAG_MS, Math.max(1, Math.round(durationMs)));
+    const steps = Math.min(DRAG_MAX_MOVES, Math.max(DRAG_MIN_MOVES, Math.ceil(total / DRAG_MOVE_MS)));
+    device.moveToClient(hwnd, fromX, fromY);
+    device.mouseDown();
+    held.mouse++;
+    try {
+      for (let step = 1; step <= steps; step += 1) {
+        await device.sleep(total / steps);
+        device.moveToClient(
+          hwnd,
+          fromX + ((toX - fromX) * step) / steps,
+          fromY + ((toY - fromY) * step) / steps,
+        );
+      }
+    } finally {
+      // the matching up is unconditional, exactly as for a tap
+      if (held.mouse > 0) {
+        held.mouse--;
+        device.mouseUp();
+      }
+    }
+    if (!device.isForeground(hwnd)) throw new Refused('not-foreground');
   }
 
   async function holdKey(hwnd, scan, holdMs) {
@@ -95,7 +140,7 @@ export function createGestures(device) {
     return { mouse: held.mouse, keys: [...held.keys] };
   }
 
-  return { tap, holdKey, releaseHeld, heldButtons };
+  return { tap, drag, holdKey, releaseHeld, heldButtons };
 }
 
 /**

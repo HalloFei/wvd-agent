@@ -7,6 +7,7 @@ export type { EngineForeground, EngineInputAck, WireMessage, WireRequest } from 
 export {
   FRAME_MAX_AGE_MS,
   MAX_CAPTURE_WIDTH,
+  MAX_DRAG_MS,
   MIN_CAPTURE_WIDTH,
   LineDecoder,
   decodeLine,

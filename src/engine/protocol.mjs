@@ -13,7 +13,11 @@
  * A malformed line decodes to `null` and the caller drops it; garbage never becomes a request.
  */
 
-const OPS = new Set(['capture', 'foreground', 'tap', 'key']);
+import { MAX_DRAG_MS } from './gestures.mjs';
+
+export { MAX_DRAG_MS };
+
+const OPS = new Set(['capture', 'foreground', 'tap', 'key', 'drag']);
 const FAILURES = new Set(['unavailable', 'rejected', 'timeout']);
 
 /**
@@ -107,6 +111,23 @@ function decodeRequest(request) {
       if (!isInteger(request.scan) || request.scan < 0 || request.scan > 0xffff) return null;
       if (typeof request.holdMs !== 'number' || !Number.isFinite(request.holdMs) || request.holdMs < 0) return null;
       return { op: 'key', scan: request.scan, holdMs: request.holdMs };
+    case 'drag': {
+      for (const value of [request.x1, request.y1, request.x2, request.y2]) {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+      }
+      if (typeof request.durationMs !== 'number' || !Number.isFinite(request.durationMs)) return null;
+      // a zero-length drag is a click wearing a drag's name, and above the ceiling the child's
+      // teardown could kill the process with the button still down (contracts §4)
+      if (request.durationMs <= 0 || request.durationMs > MAX_DRAG_MS) return null;
+      return {
+        op: 'drag',
+        x1: request.x1,
+        y1: request.y1,
+        x2: request.x2,
+        y2: request.y2,
+        durationMs: request.durationMs,
+      };
+    }
     default:
       return null;
   }

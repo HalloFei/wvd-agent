@@ -54,6 +54,10 @@ function makeEnv(options: {
       recorder.calls.push(`key ${scan} ${hold}`);
       return recorder.keyResult;
     },
+    drag: async (from, to, durationMs) => {
+      recorder.calls.push(`drag ${from.x},${from.y} ${to.x},${to.y} ${durationMs}`);
+      return { ok: true };
+    },
   };
   const env: ScriptEnv = {
     actuator,

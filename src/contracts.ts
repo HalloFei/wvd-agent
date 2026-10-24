@@ -119,6 +119,8 @@ export interface Actuator {
   tap(at: Point): Promise<ActionResult>;
   doubleTap(at: Point): Promise<ActionResult>;
   holdKey(scan: number, holdMs: number): Promise<ActionResult>;   // WASD escape
+  /** Press at `from`, move on a straight line, release at `to`: the world map's pan. */
+  drag(from: Point, to: Point, durationMs: number): Promise<ActionResult>;
 }
 
 /**
@@ -133,6 +135,8 @@ export interface Actuator {
  * capture may wait for warm-up (§5), with margin.
  */
 export const MAX_PRESS_HOLD_MS = 500;
+/** The longest drag the World sends: the button is down for its whole duration (§4, §5). */
+export const MAX_DRAG_MS = 500;
 export const TEARDOWN_GRACE_MS = 1_200;
 
 // §5 Engine protocol (World ↔ child)
@@ -172,7 +176,9 @@ export type EngineRequest =
   | { op: 'capture'; maxWidth?: number; crop?: PixelRect }
   | { op: 'foreground' }
   | { op: 'tap'; x: number; y: number; count: 1 | 2 }
-  | { op: 'key'; scan: number; holdMs: number };
+  | { op: 'key'; scan: number; holdMs: number }
+  /** A press at (x1,y1), a straight-line move, a release at (x2,y2); duration in ms. */
+  | { op: 'drag'; x1: number; y1: number; x2: number; y2: number; durationMs: number };
 
 export type EngineReply =
   | { id: number; ok: true; value: unknown }

@@ -151,6 +151,7 @@ describe('WVD World definition', () => {
       tap: async () => ({ ok: true }),
       doubleTap: async () => ({ ok: true }),
       holdKey: async () => ({ ok: false, reason: 'unavailable', detail: 'not-foreground' }),
+      drag: async () => ({ ok: false, reason: 'unavailable', detail: 'not-foreground' }),
     };
     const screens: ScreenId[] = ['town', 'dungeonmap', 'unknown'];
     expect((await source.capture()).width).toBe(1);

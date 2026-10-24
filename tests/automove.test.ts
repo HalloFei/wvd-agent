@@ -47,6 +47,9 @@ function fakeActuator(...results: ActionResult[]): Actuator & { readonly presses
     doubleTap: () => {
       throw new Error('the automove chain must tap, not double-tap');
     },
+    drag: () => {
+      throw new Error('the automove chain must not drag');
+    },
   };
 }
 

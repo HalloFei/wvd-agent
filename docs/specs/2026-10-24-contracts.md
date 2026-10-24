@@ -176,6 +176,8 @@ export interface Actuator {
   tap(at: Point): Promise<ActionResult>;
   doubleTap(at: Point): Promise<ActionResult>;
   holdKey(scan: number, holdMs: number): Promise<ActionResult>;   // WASD escape
+  /** Press at `from`, move on a straight line, release at `to`: the world map's pan. */
+  drag(from: Point, to: Point, durationMs: number): Promise<ActionResult>;
 }
 ```
 
@@ -194,6 +196,11 @@ A press is held **at most `MAX_PRESS_HOLD_MS` (500 ms)**, and the World clamps a
 it. The ceiling is not taste: it is the teardown bound of §5, and the two numbers are one fact —
 `MAX_PRESS_HOLD_MS < TEARDOWN_GRACE_MS`. A hold that outlived the teardown clock would be killed
 with the key still down.
+
+A drag is the same risk with the left button down: it is **at most `MAX_DRAG_MS` (500 ms)**, the
+codec refuses anything longer, and the same teardown invariant covers it
+(`MAX_DRAG_MS < TEARDOWN_GRACE_MS`). The gesture sends intermediate moves between the press and the
+release — a single jump is a click that ends somewhere else, not a drag.
 
 ## 5. Engine protocol (World ↔ child)
 
@@ -233,7 +240,9 @@ export type EngineRequest =
   | { op: 'capture'; maxWidth?: number; crop?: PixelRect }
   | { op: 'foreground' }
   | { op: 'tap'; x: number; y: number; count: 1 | 2 }
-  | { op: 'key'; scan: number; holdMs: number };
+  | { op: 'key'; scan: number; holdMs: number }
+  /** A press at (x1,y1), a straight-line move, a release at (x2,y2); duration in ms. */
+  | { op: 'drag'; x1: number; y1: number; x2: number; y2: number; durationMs: number };
 
 export type EngineReply =
   | { id: number; ok: true; value: unknown }
@@ -255,9 +264,9 @@ because a stale frame that looks fresh is how a QTE tap lands in the hazard gap.
 duration from capture start to reply on the child's clock; the World stamps
 `atMs = performance.now() - ageMs`, so §0.4 holds: the child reports durations, never timestamps.
 
-Input is not free: the child answers `tap` and `key` with `{ inputMs }`, the duration from request
-receipt to the `SendInput` call completing, so a planner adds a measured leg instead of assuming one.
-`doubleTap` is one request, so its two clicks are timed inside the child.
+Input is not free: the child answers `tap`, `key` and `drag` with `{ inputMs }`, the duration from
+request receipt to the `SendInput` call completing, so a planner adds a measured leg instead of
+assuming one. `doubleTap` is one request, so its two clicks are timed inside the child.
 
 The child also sends events unsolicited: `stopHotkey` when the global stop key is pressed, and
 `engineProblem` with a `detail` when a capability is not available. An unregistered stop hotkey is
@@ -268,8 +277,9 @@ A session must not run believing the stop key works, and must not time a QTE on 
 `releaseHeld()` and exits — and the parent kills it only after `TEARDOWN_GRACE_MS` (1200 ms). On
 Windows that kill is `TerminateProcess`, which skips `releaseHeld()`, so the grace must outlive §4's
 maximum hold: 500 ms of hold + the 500 ms a first capture may wait for warm-up, plus margin. The
-invariant is `MAX_PRESS_HOLD_MS < TEARDOWN_GRACE_MS`; both numbers live beside each other in
-`contracts.ts` and one test asserts that no kill lands inside a maximum-length hold.
+invariants are `MAX_PRESS_HOLD_MS < TEARDOWN_GRACE_MS` and `MAX_DRAG_MS < TEARDOWN_GRACE_MS`;
+the numbers live beside each other in `contracts.ts` and one test asserts that no kill lands inside a
+maximum-length hold or drag.
 
 ## 6. Policy
 

@@ -241,6 +241,10 @@ async function dispatch(request, receivedAt) {
       await win32.holdKey(requireWindow(), request.scan, request.holdMs);
       return inputAcknowledgement(receivedAt);
     }
+    case 'drag': {
+      await win32.drag(requireWindow(), request.x1, request.y1, request.x2, request.y2, request.durationMs);
+      return inputAcknowledgement(receivedAt);
+    }
     default:
       throw new EngineFailure('unavailable', 'unknown-op');
   }

@@ -126,6 +126,78 @@ describe('input gestures (R21)', () => {
   });
 });
 
+describe('drag gesture', () => {
+  it('moves to the start, presses, walks the line and releases once', async () => {
+    const device = new FakeDevice();
+    device.foregroundFor = [0, 1];
+    const gestures = createGestures(device);
+
+    await gestures.drag(1, 100, 200, 500, 200, 300);
+
+    expect(device.events[0]).toBe('move:100,200');
+    expect(device.events[1]).toBe('down');
+    expect(device.events.at(-1)).toBe('up');
+    expect(device.events.filter((event) => event === 'down')).toHaveLength(1);
+    expect(device.events.filter((event) => event === 'up')).toHaveLength(1);
+    // the last move lands on the destination before the release
+    expect(device.events.at(-2)).toBe('move:500,200');
+    expect(gestures.heldButtons()).toEqual({ mouse: 0, keys: [] });
+  });
+
+  it('releases and reports rejected when the window leaves mid-drag', async () => {
+    const device = new FakeDevice();
+    device.foregroundFor = [0]; // the pre-down guard passes, the post-release one fails
+    const gestures = createGestures(device);
+
+    await expect(gestures.drag(1, 0, 0, 100, 0, 100)).rejects.toBeInstanceOf(Refused);
+
+    expect(device.events[0]).toBe('move:0,0');
+    expect(device.events[1]).toBe('down');
+    expect(device.events.at(-1)).toBe('up');
+    expect(gestures.heldButtons().mouse).toBe(0);
+  });
+
+  it('caps a long drag at the ceiling and a short one at the floor', async () => {
+    const device = new FakeDevice();
+    device.foregroundFor = [0, 1, 2, 3];
+    const gestures = createGestures(device);
+
+    await gestures.drag(1, 0, 0, 0, 0, 10_000);
+    const longMoves = device.events.filter((event) => event.startsWith('move:')).length;
+    expect(longMoves).toBeGreaterThanOrEqual(5);
+    expect(longMoves).toBeLessThanOrEqual(21);
+
+    device.events.length = 0;
+    await gestures.drag(1, 0, 0, 10, 0, 1);
+    const shortMoves = device.events.filter((event) => event.startsWith('move:')).length;
+    expect(shortMoves).toBeGreaterThanOrEqual(4);
+    expect(shortMoves).toBeLessThanOrEqual(6);
+  });
+
+  it('releaseHeld releases a drag in flight exactly once', async () => {
+    const device = new FakeDevice();
+    device.foregroundFor = [0, 1];
+    let resume!: () => void;
+    let released = false;
+    device.sleep = () => (released
+      ? Promise.resolve()
+      : new Promise((resolve) => { resume = () => { released = true; resolve(); }; }));
+    const gestures = createGestures(device);
+
+    const dragging = gestures.drag(1, 1, 2, 50, 60, 200);
+    await Promise.resolve();
+    expect(gestures.heldButtons().mouse).toBe(1);
+
+    gestures.releaseHeld();
+    expect(gestures.heldButtons().mouse).toBe(0);
+    expect(device.events.filter((event) => event === 'up')).toHaveLength(1);
+
+    resume();
+    await expect(dragging).resolves.toBeUndefined();
+    expect(device.events.filter((event) => event === 'up')).toHaveLength(1);
+  });
+});
+
 describe('input acknowledgement (R20b)', () => {
   it('reports the measured leg from request receipt on the child clock', () => {
     expect(inputAcknowledgement(100, () => 173.5)).toEqual({ inputMs: 73.5 });

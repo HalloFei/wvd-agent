@@ -356,6 +356,7 @@ describe('tapOpenerCard', () => {
       },
       doubleTap: async () => ({ ok: true }),
       holdKey: async () => ({ ok: true }),
+      drag: async () => ({ ok: true }),
     };
   }
 

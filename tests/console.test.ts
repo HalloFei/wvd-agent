@@ -83,6 +83,10 @@ class ScriptedActuator implements Actuator {
     this.calls.push(`key ${scan} ${holdMs}`);
     return { ok: true };
   }
+  async drag(from: Point, to: Point, durationMs: number): Promise<ActionResult> {
+    this.calls.push(`drag ${from.x},${from.y} ${to.x},${to.y} ${durationMs}`);
+    return { ok: true };
+  }
 }
 
 class FakeHost {

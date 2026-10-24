@@ -252,6 +252,7 @@ const gestures = createGestures(device);
 
 /** Same contract as before: guard the press, always complete the gesture (R21); see gestures.mjs. */
 export const tap = gestures.tap;
+export const drag = gestures.drag;
 export const holdKey = gestures.holdKey;
 /** Sends the releases for anything still down when the process is going away. */
 export const releaseHeld = gestures.releaseHeld;
