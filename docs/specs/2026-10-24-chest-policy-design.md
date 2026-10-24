@@ -69,6 +69,20 @@ At 500 px/s the lead is ~80 px; at 1200 px/s it is ~330 px, wider than a zone. F
 tapped **before the marker reaches the zone**, which is why the decision must be made within the
 first 150 ms of the bar: two frames fix `v`, then one scheduled press, no corrections.
 
+## 3a. A chest is not always trapped
+
+Recorded 2026-10-24 on a live chest: the 由谁打开? panel was answered, the chest opened, and **no
+disarm bar appeared at all** — some chests are simply untrapped (operator). The same panel is therefore
+followed by one of two things:
+
+- a QTE, when the chest is trapped, or
+- loot, when it is not.
+
+So `chest-open` is a fork, not a step: the screen after the panel decides which branch the run is on,
+and a loop that waits for a QTE bar that never comes will stall on every untrapped chest. The two
+outcomes are also distinguishable without reading a bar: the QTE screen is the bar at the top of the
+frame, and loot is the reward list.
+
 ## 4. The speed reroll, and why it matters
 
 The wiki states the cursor's speed is **not** affected by any stat, and that for chests on the floor

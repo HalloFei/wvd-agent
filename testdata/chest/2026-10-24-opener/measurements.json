@@ -1,0 +1,31 @@
+{
+  "capturedAt": "2026-10-24T11:51+08:00",
+  "game": "Wizardry Variants Daphne (Steam), 1920x1080, dungeon B2F-adjacent corridor",
+  "note": "ONE INSTANCE, NOT A LAYOUT. This is the first recorded frame of the 由谁打开? opener panel; every coordinate below is measured from this single capture and every value is read off it. Do not treat the member list or their numbers as a constant.",
+  "panel": {
+    "title": "由谁打开?",
+    "titleCentre": [960, 553],
+    "closeControl": "关闭 X at the bottom centre, about (960, 1024)",
+    "grid": "2 rows x 3 columns of member cards",
+    "cardCentres": [
+      { "member": "艾莉賽", "at": [778, 772] },
+      { "member": "本杰明", "at": [973, 772] },
+      { "member": "拉纳维尔", "at": [1158, 772] },
+      { "member": "DragonSlayer", "at": [778, 904] },
+      { "member": "爱丽丝", "at": [973, 904] },
+      { "member": "薇薇安娜DEX6", "at": [1158, 904] }
+    ],
+    "cardFields": ["name", "Lv", "HP", "陷阱发现", "陷阱解除"]
+  },
+  "members": [
+    { "name": "艾莉賽", "level": 60, "hp": [467, 467], "detect": 38, "disarm": 49 },
+    { "name": "本杰明", "level": 60, "hp": [537, 537], "detect": 28, "disarm": 50 },
+    { "name": "拉纳维尔", "level": 60, "hp": [547, 547], "detect": 34, "disarm": 38 },
+    { "name": "DragonSlayer", "level": 48, "hp": [387, 387], "detect": 92, "disarm": 105 },
+    { "name": "爱丽丝", "level": 60, "hp": [456, 456], "detect": 62, "disarm": 43 },
+    { "name": "薇薇安娜DEX6", "level": 40, "hp": [298, 298], "detect": 77, "disarm": 79 }
+  ],
+  "chosen": "DragonSlayer",
+  "reason": "highest 陷阱解除 (105); a click at (781, 899) on its card dismissed the panel and reached the chest",
+  "afterPick": "after-pick.jpg — the chest fills the screen; the disarm QTE followed and the trap fired before it was captured (frames in ../2026-10-24-live-qte/ are the ambush that followed, not the bar)"
+}
