@@ -39,6 +39,11 @@
  * - the decoded stream ended with a partial frame, or ffmpeg produced a frame the harness could not
  *   turn into an image.
  *
+ * The plan check (`options.planCheck`) is the one thing that is **not** a `failures` entry: a plan
+ * that crosses a reversal, names a delay outside the horizon or targets a point outside the
+ * recording's zones is our planning model's answer, not perception's, so it is named in its own
+ * `planViolations` list. `planned` says how many plans the model returned at all.
+ *
  * A malformed or absent `measurements.json` disables only the geometry check (a recording may be
  * replayed before it has measurements); everything else still runs. It **warns** when it does so, so
  * a switched-off cross-check cannot be mistaken for one that passed. A setup failure — no video,
@@ -49,19 +54,28 @@
  *
  * Each recogniser keeps its own floor (composite.ts). This harness uses the route's act floor, 0.5
  * (contracts §6), so the tally is "what the route would act on", not a parsing score. Order is
- * cheapest decisive gate first: the chest band is 2.2 % of a frame and is the recording's subject;
+ * cheapest decisive gate first: the chest band is 1.43 % of a frame and is the recording's subject;
  * the map's coordinate readout is the decisive map gate; the HUD's uniformity sample is the widest
  * read and comes last.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Frame, Observation, QteState, RgbaImage, ScreenId } from '../src/contracts.ts';
+import type {
+  Frame,
+  Observation,
+  QteState,
+  QteZone,
+  RgbaImage,
+  ScreenId,
+  TapPlan,
+} from '../src/contracts.ts';
 import { cropBgra } from '../src/engine/crop.mjs';
 import { ChestPerceiver, parseQte, qteWindow } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
 import { HudPerceiver } from '../src/perception/hud.ts';
 import { MapPerceiver } from '../src/perception/map.ts';
+import { planTap, qteVelocity } from '../src/policy/qte.ts';
 
 // ---------------------------------------------------------------------------------------------
 // The public shape
@@ -78,6 +92,10 @@ export interface ReplayReport {
   readonly bandFrames: number;
   /** Band re-parses that disagreed with the composite's `QteState`; 0 when `bandCheck` is off. */
   readonly bandMismatches: number;
+  /** Plans `planTap` returned from the recording's own readings; 0 when `planCheck` is off. */
+  readonly planned: number;
+  /** Plans that crossed a reversal, missed a recorded zone or named an impossible delay. */
+  readonly planViolations: string[];
 }
 
 /** Optional harness work. Absent means off, so every existing caller keeps its exact behaviour. */
@@ -88,6 +106,15 @@ export interface ReplayOptions {
    * scale half of the crop proof: the six stills pin the geometry, the recording proves the sample.
    */
   readonly bandCheck?: boolean;
+  /**
+   * Also feed the planning model the recording's own `chest-qte` observations — the last three
+   * readings at their own `atMs`, `qteVelocity`, then `planTap` with the contracts' defaults — and
+   * check every returned plan against `measurements.json`: a finite delay inside the horizon, a
+   * target inside a recorded zone, and no reversal crossed in the direction of travel. This is the
+   * only check of the planning model against recorded marker motion (design acceptance 5); off when
+   * `measurements.json` has no readable bar, since there is nothing to check a plan against.
+   */
+  readonly planCheck?: boolean;
 }
 
 export type ReplayTools =
@@ -108,7 +135,8 @@ export function replayTools(): ReplayTools {
 /**
  * Replay the first `.mp4` in `dir` (sorted, so the choice is deterministic) through perception.
  * `measurements.json` beside it, when present and well formed, supplies the bar geometry against
- * which `chest-qte` zones are checked. `options.bandCheck` adds the crop cross-check.
+ * which `chest-qte` zones are checked. `options.bandCheck` adds the crop cross-check;
+ * `options.planCheck` adds the planning model's check against the recorded zones and bounce.
  */
 export async function replay(dir: string, options: ReplayOptions = {}): Promise<ReplayReport> {
   const tools = replayTools();
@@ -118,10 +146,15 @@ export async function replay(dir: string, options: ReplayOptions = {}): Promise<
   const info = probeVideo(recording);
   const recordedBar = await readRecordedBar(dir);
   const bandCheck = options.bandCheck === true;
+  const planCheck = options.planCheck === true;
 
   const screens = emptyScreens();
   const failures: string[] = [];
   const band: BandTally = { frames: 0, mismatches: 0 };
+  // The plan check needs the recording's zones and bounce to judge a plan; without a readable bar
+  // there is nothing independent to check it against (readRecordedBar has already warned).
+  const plan: PlanTally | null =
+    planCheck && recordedBar ? { bar: recordedBar, readings: [], planned: 0, violations: [] } : null;
   const composite = new CompositePerceiver([
     { perceiver: new ChestPerceiver(), floor: 0.5 },
     { perceiver: new MapPerceiver(), floor: 0.5 },
@@ -187,7 +220,7 @@ export async function replay(dir: string, options: ReplayOptions = {}): Promise<
             height: info.size.height,
             toRgba: async () => image,
           };
-          await observeFrame(frame, index, composite, recordedBar, bandCheck, band, screens, failures);
+          await observeFrame(frame, index, composite, recordedBar, bandCheck, band, plan, screens, failures);
           frames += 1;
           buffer = Buffer.allocUnsafeSlow(info.frameBytes);
           filled = 0;
@@ -221,6 +254,8 @@ export async function replay(dir: string, options: ReplayOptions = {}): Promise<
     failures,
     bandFrames: band.frames,
     bandMismatches: band.mismatches,
+    planned: plan?.planned ?? 0,
+    planViolations: plan?.violations ?? [],
   };
 }
 
@@ -235,6 +270,7 @@ async function observeFrame(
   recordedBar: RecordedBar | null,
   bandCheck: boolean,
   band: BandTally,
+  plan: PlanTally | null,
   screens: Record<ScreenId, number>,
   failures: string[],
 ): Promise<void> {
@@ -266,6 +302,7 @@ async function observeFrame(
       if (problem) failures.push(`frame ${index}: chest-qte ${problem}`);
     }
     if (bandCheck) await checkBand(frame, index, observation.qte, band, failures);
+    if (plan) checkPlan(plan, observation.atMs, observation.qte, index);
   }
 }
 
@@ -365,6 +402,103 @@ function messageOf(error: unknown): string {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The plan check
+// ---------------------------------------------------------------------------------------------
+
+/** One `chest-qte` reading the plan check keeps: the composite's own numbers, never a re-parse. */
+interface PlanReading {
+  readonly atMs: number;
+  readonly markerX: number;
+  readonly zones: readonly QteZone[];
+}
+
+interface PlanTally {
+  /** The recording's zones and bounce, the independent facts a plan is judged against. */
+  readonly bar: RecordedBar;
+  /** The last three readings, oldest first: what `qteVelocity` reads and no more. */
+  readonly readings: PlanReading[];
+  planned: number;
+  readonly violations: string[];
+}
+
+/**
+ * The contracts' defaults for the three `planTap` inputs (`WVD_DEFAULTS`, contracts §7):
+ * `measurements.json` records none of them, so there is no measured value to read. The numbers it
+ * *does* record — the zones and the bounce — reach the check through `RecordedBar`, which is what
+ * makes the target test an independent fact rather than `planTap`'s own input.
+ */
+const PLAN_LATENCY_MS = 75;
+const PLAN_DECEL_PX_PER_S2 = 3000;
+const PLAN_HORIZON_MS = 1000;
+
+/**
+ * Feed one `chest-qte` observation to the planning model exactly as the sub-loop would: its own
+ * `atMs`, its own marker and its own zones. With three readings in hand, measure the speed; a
+ * refusal is legitimate (a triple that straddles a bounce, or the easing near one, carries no
+ * velocity), so only a *plan* is counted and checked.
+ *
+ * Design acceptance 5 asks for exactly this: the sub-loop, fed the recording's frames at their own
+ * timestamps, plans presses that land inside the recorded zones. The unit tests drive `planTap` with
+ * a synthetic constant-speed stream; this is the only place the model meets real recorded marker
+ * motion.
+ */
+function checkPlan(plan: PlanTally, atMs: number, qte: QteState, index: number): void {
+  plan.readings.push({ atMs, markerX: qte.markerX, zones: qte.zones });
+  if (plan.readings.length > 3) plan.readings.shift();
+  if (plan.readings.length < 3) return;
+
+  const v = qteVelocity(plan.readings[0]!, plan.readings[1]!, plan.readings[2]!);
+  if (v === null) return;
+  const tap = planTap({
+    markerX: qte.markerX,
+    v,
+    zones: qte.zones,
+    latencyMs: PLAN_LATENCY_MS,
+    decelPxPerS2: PLAN_DECEL_PX_PER_S2,
+    horizonMs: PLAN_HORIZON_MS,
+  });
+  if (tap === null) return;
+  plan.planned += 1;
+  for (const problem of planProblems(tap, v, plan.bar)) {
+    plan.violations.push(`frame ${index}: ${problem}`);
+  }
+}
+
+/**
+ * What makes a returned plan wrong, judged without asking the planner: the instant must be a
+ * finite, non-negative delay inside the horizon; the target must lie inside a zone
+ * `measurements.json` recorded; and it must not be past the recording's bounce in the direction of
+ * travel — a target beyond a reversal cannot arrive on the half-line the marker is on.
+ *
+ * The planner's own guards make most of these impossible for a correct model, which is the point:
+ * the check exists to catch a wrong sign, a wrong bounce or zones read from the wrong place, not to
+ * re-run the planner's refusals.
+ */
+function planProblems(tap: TapPlan, v: number, bar: RecordedBar): string[] {
+  const problems: string[] = [];
+  if (!Number.isFinite(tap.atMs) || tap.atMs < 0) {
+    problems.push(`plan delay ${tap.atMs} is not finite and non-negative`);
+  } else if (tap.atMs > PLAN_HORIZON_MS) {
+    problems.push(`plan delay ${tap.atMs.toFixed(1)} ms exceeds the ${PLAN_HORIZON_MS} ms horizon`);
+  }
+  if (!insideZone(tap.target, bar.left) && !insideZone(tap.target, bar.right)) {
+    problems.push(`plan target ${tap.target} is not inside a recorded zone`);
+  }
+  const bounce = v > 0 ? bar.bounce[1] : bar.bounce[0];
+  if (v > 0 ? tap.target > bounce : tap.target < bounce) {
+    problems.push(
+      `plan target ${tap.target} is past the recording's bounce at ${bounce} in the direction of travel`,
+    );
+  }
+  return problems;
+}
+
+/** Inclusive: `measurements.json` draws its zones as closed pixel columns. */
+function insideZone(x: number, zone: readonly [number, number]): boolean {
+  return x >= zone[0] && x <= zone[1];
+}
+
+// ---------------------------------------------------------------------------------------------
 // The recorded geometry
 // ---------------------------------------------------------------------------------------------
 
@@ -374,13 +508,18 @@ function messageOf(error: unknown): string {
  * 1000–1223 against 997–1223; research-qte-parser §4). The slack is that measured relationship plus
  * the 8 px edge error a marker parked on a zone edge causes — 14 px, with the centre check doing the
  * real work. `hazardGap` is read when present (it measures the danger gap, not the fill gap); where
- * a recording omits it, the adjacent zone edges imply it.
+ * a recording omits it, the adjacent zone edges imply it. `marker.bounceAt` is read the same way:
+ * when the recording states the marker's reversal points, a plan may not target past them; when it
+ * does not, the bar's own outer edges imply them (the left zone's first column and one past the
+ * right zone's last), which is what the QTE bar's ends mean.
  */
 export interface RecordedBar {
   readonly left: readonly [number, number];
   readonly right: readonly [number, number];
   /** The danger gap between them; adjacent rectangles imply it, a recording may state it. */
   readonly gap: readonly [number, number];
+  /** The marker's reversal points; `marker.bounceAt` states them, the bar's ends imply them. */
+  readonly bounce: readonly [number, number];
 }
 
 const GEOMETRY_EDGE_SLACK_PX = 14;
@@ -402,12 +541,14 @@ export async function readRecordedBar(dir: string): Promise<RecordedBar | null> 
   try {
     const parsed = JSON.parse(text) as {
       bar?: { leftZone?: unknown; hazardGap?: unknown; rightZone?: unknown };
+      marker?: { bounceAt?: unknown };
     };
     const left = readablePair(parsed.bar?.leftZone);
     const right = readablePair(parsed.bar?.rightZone);
     if (left && right) {
       const gap = readablePair(parsed.bar?.hazardGap) ?? ([left[1], right[0]] as const);
-      bar = { left, right, gap };
+      const bounce = readablePair(parsed.marker?.bounceAt) ?? ([left[0], right[1] + 1] as const);
+      bar = { left, right, gap, bounce };
     }
   } catch {
     bar = null;

@@ -34,6 +34,13 @@ import {
  * full frame. `bandFrames` is pinned to exactly those 199 and `bandMismatches` to 0; a second replay
  * without the option pins both to 0, so the cross-check cannot be left on by accident or silently
  * off.
+ *
+ * `planCheck` is design acceptance 5: every `chest-qte` observation feeds the last three readings,
+ * `qteVelocity` and `planTap` at the recording's own timestamps, and every returned plan is judged
+ * against `measurements.json` — target inside a recorded zone, delay finite and inside the horizon,
+ * no reversal crossed. `planViolations` is pinned to empty and `planned` to at least 25: many triples
+ * refuse legitimately (one that straddles a bounce, or the easing near one, carries no velocity), so
+ * the floor is deliberately conservative rather than a chased count.
  */
 const RECORDING = fileURLToPath(
   new URL('../testdata/chest/2026-10-24-qte-recorded/', import.meta.url),
@@ -48,6 +55,9 @@ const RECORDED_BAR: RecordedBar = {
   left: [694, 922],
   right: [997, 1223],
   gap: [922, 997],
+  // The recording's `marker.bounceAt`: the left zone's first column and one past the right zone's
+  // last, which is where the marker turns around.
+  bounce: [694, 1224],
 };
 
 function qteWith(zones: Array<{ from: number; to: number }>): QteState {
@@ -59,13 +69,14 @@ describe('replay harness', () => {
     'replays the recorded chest through the real recognisers',
     async () => {
       const started = performance.now();
-      const report = await replay(RECORDING, { bandCheck: true });
+      const report = await replay(RECORDING, { bandCheck: true, planCheck: true });
       const wallMs = Math.round(performance.now() - started);
 
       console.log(
         `replay: ${report.frames} frames, ${JSON.stringify(report.screens)}, ` +
           `${report.failures.length} failures, band ${report.bandFrames} frames / ` +
-          `${report.bandMismatches} mismatches, ${wallMs} ms`,
+          `${report.bandMismatches} mismatches, plan ${report.planned} plans / ` +
+          `${report.planViolations.length} violations, ${wallMs} ms`,
       );
 
       expect(report.frames).toBe(250);
@@ -80,6 +91,10 @@ describe('replay harness', () => {
       // observation the composite made of the full frame (design acceptance 2).
       expect(report.bandFrames).toBe(199);
       expect(report.bandMismatches).toBe(0);
+      // Design acceptance 5: the planning model, fed the recording's own readings at their own
+      // timestamps, planned presses that land inside the recorded zones and cross no reversal.
+      expect(report.planViolations).toEqual([]);
+      expect(report.planned).toBeGreaterThanOrEqual(25);
     },
     60_000,
   );
@@ -112,6 +127,9 @@ describe('replay harness', () => {
         // its report says so, rather than silently looking checked.
         expect(report.bandFrames).toBe(0);
         expect(report.bandMismatches).toBe(0);
+        // `planCheck` is off by default too, and its fields say so rather than looking checked.
+        expect(report.planned).toBe(0);
+        expect(report.planViolations).toEqual([]);
         // One failure per parsed frame, and each names the frame and the contradiction.
         expect(report.failures).toHaveLength(report.screens['chest-qte']);
         for (const failure of report.failures) {
@@ -214,6 +232,27 @@ describe('readRecordedBar', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('no measurements.json'));
     } finally {
       warn.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the marker's bounce when the recording states it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wvd-replay-bar-'));
+    try {
+      await writeFile(
+        join(dir, 'measurements.json'),
+        JSON.stringify({
+          bar: { leftZone: [694, 922], hazardGap: [922, 997], rightZone: [997, 1223] },
+          marker: { bounceAt: [650, 1270] },
+        }),
+      );
+
+      // The recording's own reversal points win over the bar's edges; the plan check refuses a
+      // target past them.
+      const bar = await readRecordedBar(dir);
+      expect(bar?.bounce).toEqual([650, 1270]);
+      expect(bar?.left).toEqual([694, 922]);
+    } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
