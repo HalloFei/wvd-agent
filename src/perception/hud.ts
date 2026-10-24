@@ -14,6 +14,11 @@
  *   must be a bounded minority of the minimap box (a filled block or a mostly-bright panel is not
  *   line work), and the 2×2 command grid beneath it must carry its four glyphs. Both are measured
  *   from `minimap-and-hud.jpg`.
+ * - **the minimap's player arrow is the live layout's evidence.** In the FFXI zones the minimap is
+ *   smaller and the command grid sits left of the measured cells, so the structure test fails on a
+ *   real 3D view; the operator's rule is simpler: a minimap in the top-right corner means the
+ *   dungeon. The saturated yellow arrow inside that corner measures 35 px in both 3D views and 0 on
+ *   every other committed screen, so it is the fallback that names the live frame.
  *
  * Everything is measured from `testdata/nav-1024-0213/` and recorded in
  * `.superpowers/sdd/2026-10-24-wvd-world-v1/research-map-parser.md` (cited as "research §n"). The
@@ -205,6 +210,16 @@ const HUD_CONFIDENCE_MIN = 0.8;
  */
 export const UNNAMED_CONFIDENCE = 0.2;
 
+/**
+ * The minimap's player arrow, in the top-right corner: R>160, G>130, B<110, R−B>60, G−B>40.
+ * Measured 2026-10-24: 35 px on `view-empty-minimap.jpg` and `view.jpg`; 0 px on the town, the
+ * world map, Dungeon Select, the dungeon map, combat, the chest prompt and the third-zone map. The
+ * corner rect is wider and taller than either minimap so a smaller FFXI panel still lands inside.
+ */
+const MINIMAP_CORNER = { x: 1_700, y: 0, width: 220, height: 220 } as const;
+const MINIMAP_ARROW_MIN = 8;
+const MINIMAP_CONFIDENCE = 0.8;
+
 // ---------------------------------------------------------------------------------------------
 // The perceiver
 // ---------------------------------------------------------------------------------------------
@@ -253,9 +268,14 @@ export class HudPerceiver implements Perceiver {
 
     // 4. The HUD's structure must be there — a scene, or a bright rectangle, is not a screen. ---
     const hudInk = minimapInk(image);
-    if (!hudStructure(hudInk, image)) return unnamed(frame.atMs);
-
-    return { screen: 'dungeon', atMs: frame.atMs, confidence: confidenceOf(hudInk) };
+    if (hudStructure(hudInk, image)) {
+      return { screen: 'dungeon', atMs: frame.atMs, confidence: confidenceOf(hudInk) };
+    }
+    // The live FFXI view: the structure's fixed cells do not fit, but the minimap's arrow is there.
+    if (minimapArrow(image) >= MINIMAP_ARROW_MIN) {
+      return { screen: 'dungeon', atMs: frame.atMs, confidence: MINIMAP_CONFIDENCE };
+    }
+    return unnamed(frame.atMs);
   }
 }
 
@@ -467,6 +487,23 @@ function commandGridPresent(image: RgbaImage): boolean {
     }
   }
   return cells.every((count) => count >= GRID_QUADRANT_MIN_INK);
+}
+
+/** The minimap's saturated yellow player arrow in the top-right corner. */
+function minimapArrow(image: RgbaImage): number {
+  const { data, width } = image;
+  let count = 0;
+  for (let y = MINIMAP_CORNER.y; y < MINIMAP_CORNER.y + MINIMAP_CORNER.height; y += 1) {
+    const row = y * width;
+    for (let x = MINIMAP_CORNER.x; x < MINIMAP_CORNER.x + MINIMAP_CORNER.width; x += 1) {
+      const offset = (row + x) * 4;
+      const r = data[offset]!;
+      const g = data[offset + 1]!;
+      const b = data[offset + 2]!;
+      if (r > 160 && g > 130 && b < 110 && r - b > 60 && g - b > 40) count += 1;
+    }
+  }
+  return count;
 }
 
 /** The HUD structure is present; how densely the panel is drawn is the confidence. */

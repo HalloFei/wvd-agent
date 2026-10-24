@@ -20,6 +20,15 @@ const MAP_FRAME = 'map.jpg';
 /** The open map under the automove banner — also the map perceiver's business. */
 const MAP_BANNER_FRAME = 'popup.jpg';
 
+const SCREENS = new URL('../testdata/screens/2026-10-24-ffxi/', import.meta.url);
+
+async function screensFrame(name: string, atMs: number): Promise<Frame> {
+  const bytes = await readFile(new URL(name, SCREENS));
+  const decoded = jpeg.decode(bytes, { useTArray: true });
+  const image: RgbaImage = { data: decoded.data, width: decoded.width, height: decoded.height };
+  return { atMs, width: image.width, height: image.height, toRgba: async () => image };
+}
+
 async function jpegImage(name: string): Promise<RgbaImage> {
   const bytes = await readFile(new URL(name, FIXTURES));
   const decoded = jpeg.decode(bytes, { useTArray: true });
@@ -156,6 +165,15 @@ describe('HudPerceiver', () => {
     expect(observation.confidence).toBeLessThanOrEqual(1);
     // `dungeon` carries no payload (contracts §3)
     expect(observation).not.toHaveProperty('map');
+  });
+
+  it('names the live FFXI view by its minimap arrow when the measured grid does not fit', async () => {
+    // The live third-zone view: the minimap is smaller and the 2×2 grid sits left of the measured
+    // cells, so the structure gate refuses; the yellow player arrow is the operator's minimap rule.
+    const observation = await new HudPerceiver().observe(await screensFrame('view-empty-minimap.jpg', 9_000));
+    expect(observation.screen).toBe('dungeon');
+    expect(observation.atMs).toBe(9_000);
+    expect(observation.confidence).toBeGreaterThanOrEqual(ACTING_FLOOR);
   });
 
   it('leaves the open dungeon map to the map perceiver, but says a frame was drawn', async () => {

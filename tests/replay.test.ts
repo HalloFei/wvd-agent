@@ -23,11 +23,13 @@ import {
  * (or `ffprobe`) is missing the test prints why and skips: a skip is not a pass, and the task report
  * says so rather than counting it as one.
  *
- * The tally is pinned **exactly** (`250 / 199 / 51`), because the fixture is fixed and h264 decode
- * is deterministic. A loose `≥ 200` would stay green if the parser regressed from 199 parsed frames
- * to 191, or if refusals migrated from `unknown` into `dungeon` — exactly the numbers this harness
- * exists to report. `sum(screens) ≤ frames` is the structural half of the same assertion: every
- * frame may claim at most one screen, and a frame with no observation cannot inflate the total.
+ * The tally is pinned **exactly** (`250 / 199 / 44 unknown + 7 dungeon`), because the fixture is
+ * fixed and h264 decode is deterministic. A loose `≥ 200` would stay green if the parser regressed
+ * from 199 parsed frames to 191, or if refusals migrated between `unknown` and `dungeon` — exactly
+ * the numbers this harness exists to report. The 7 `dungeon` frames are the 3D view the Hud names
+ * by its minimap arrow (23:50); the 44 remaining refusals are the light burst and the no-bar tail.
+ * `sum(screens) ≤ frames` is the structural half of the same assertion: every frame may claim at
+ * most one screen, and a frame with no observation cannot inflate the total.
  *
  * `bandCheck` adds the scale half of the crop proof: each of the 199 `chest-qte` frames is also cut
  * to `qteWindow` and re-parsed, and its `QteState` must equal the one the composite read from the
@@ -81,8 +83,10 @@ describe('replay harness', () => {
 
       expect(report.frames).toBe(250);
       expect(report.screens['chest-qte']).toBe(199);
-      // Frames 124–127 are the light burst over the marker; 203–249 have no bar at all.
-      expect(report.screens.unknown).toBe(51);
+      // Frames 124–127 are the light burst over the marker; 203–249 have no bar at all; 7 of the
+      // former refusals are the 3D view, which the Hud now names by its minimap arrow.
+      expect(report.screens.unknown).toBe(44);
+      expect(report.screens.dungeon).toBe(7);
       const claimed = Object.values(report.screens).reduce((sum, count) => sum + count, 0);
       expect(claimed).toBeLessThanOrEqual(report.frames);
       // Refusals are allowed — the QTE screen genuinely goes away — but nothing inconsistent is.
