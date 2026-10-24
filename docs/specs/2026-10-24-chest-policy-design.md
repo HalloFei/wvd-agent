@@ -71,17 +71,20 @@ first 150 ms of the bar: two frames fix `v`, then one scheduled press, no correc
 
 ## 3a. A chest is not always trapped
 
-Recorded 2026-10-24 on a live chest: the 由谁打开? panel was answered, the chest opened, and **no
-disarm bar appeared at all** — some chests are simply untrapped (operator). The same panel is therefore
-followed by one of two things:
+Recorded 2026-10-24 on a live chest, with frames in `testdata/chest/2026-10-24-live-qte/`:
 
-- a QTE, when the chest is trapped, or
-- loot, when it is not.
+- Answering the panel starts a **lid animation with no bar** — the chest fills the frame and hands
+  reach for it. In that burst (`open-*.jpg`) there is no disarm bar anywhere.
+- **Then the bar appears**, roughly 1.5–2 s later, in the same chest (`qte-*.jpg`, `qte-bar-*.jpg`).
 
-So `chest-open` is a fork, not a step: the screen after the panel decides which branch the run is on,
-and a loop that waits for a QTE bar that never comes will stall on every untrapped chest. The two
-outcomes are also distinguishable without reading a bar: the QTE screen is the bar at the top of the
-frame, and loot is the reward list.
+So the absence of a bar immediately after the panel is **not** evidence of an untrapped chest. The
+operator reports that untrapped chests do exist, and they would look the same for those first seconds,
+so the loop must wait for a bounded window and only then conclude the chest is untrapped — never
+branch on the first frame after the click.
+
+The two outcomes are distinguishable once they arrive: the QTE screen has the bar at the top of the
+frame, loot is the reward list. `chest-open` is a fork, and the thing that decides it is time, not the
+first frame.
 
 ## 4. The speed reroll, and why it matters
 
