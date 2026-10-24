@@ -20,8 +20,9 @@
  * - **The minimum window is the caller's gate.** Contracts §7 refuses "a window shorter than
  *   `qteMinWindowMs`", but that value is config the planner never sees. The caller
  *   (`actions/qte.ts`) measures what is left of the plan's instant from its own clock —
- *   `reading.atMs + plan.atMs - now()` — against `qteMinWindowMs` (150 ms) and waits for the next
- *   pass when it is short.
+ *   `reading.atMs + plan.atMs - now()` — against `qteMinWindowMs` (150 ms); a pass tighter than
+ *   that is dropped without a press, and the sub-loop re-plans on the next reading inside the same
+ *   pass (the reading stays in its rolling window).
  *
  * The bounce points are the marker's *core-centre* reversals, not the zone edges: 656.5 and 1261.5
  * on the recorded bar, ~40 px outside each zone, off the bar's end caps (research §5, §12 item 1;
@@ -55,8 +56,12 @@ const VELOCITY_MIN_BASELINE_MS = 66;
  * research's `|Δx| < 10 px per 30 fps frame`, expressed as a speed so a slower loop keeps the same
  * meaning. **One recording:** a chest that genuinely runs below 300 px/s (the slow chest measured
  * 488) would never yield a speed, and the policy would have to fall back to a fixed-speed estimate.
+ *
+ * Exported because the replay's plan check uses the same threshold to find where the recording's
+ * marker left free flight: a plan whose window crosses a step this slow is not comparable with a
+ * straight line, so the floor is one fact, not two copies that could drift.
  */
-const VELOCITY_EASED_FLOOR_PX_PER_S = 300;
+export const VELOCITY_EASED_FLOOR_PX_PER_S = 300;
 
 // ---------------------------------------------------------------------------------------------
 // planTap (contracts §7)
