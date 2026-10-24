@@ -676,6 +676,8 @@ git commit -m "feat(world): hand the chest QTE to the timing sub-loop"
 
 **Files:**
 - Modify: `docs/status.md`
+- Modify: `scripts/replay.ts` (the recording's band cross-check)
+- Modify: `tests/replay.test.ts`
 - Test: `tests/qte-band.test.ts`
 
 **Interfaces:**
@@ -703,16 +705,20 @@ it.skipIf(gdiplusProblem() !== '')('decodes the band in at most a quarter of the
 Run: `pnpm vitest run tests/qte-band.test.ts`
 Expected: PASS with the two numbers printed. If it fails, the crop is not paying for itself and Task 3/4 need looking at before anything else — do not relax the ratio.
 
-- [ ] **Step 3: Record the numbers**
+- [ ] **Step 3: Prove the crop equals the frame across the whole recording**
+
+The six stills pin the geometry (Task 4). The recording is the only evidence at scale, and it is 250 frames through the real recognisers: add `bandCheck` to `replay(dir, options?)` so that, for every frame the composite reads as `chest-qte`, the harness also crops it with `cropBgra` at `qteWindow`, re-parses it with `parseQte(cropped, previousMarkerX, origin)` and compares the two `QteState`s. `ReplayReport` gains `bandFrames` and `bandMismatches`; the test asserts `bandFrames === 199` and `bandMismatches === 0`. Reuse the frame's already-decoded `toRgba()` — do not decode twice. This is design acceptance 2's "the 250-frame recording", carried here because the harness is the only thing that holds those frames.
+
+- [ ] **Step 4: Record the numbers**
 
 Add a paragraph to `docs/status.md` under "Round 4": the full-frame decode, the band decode, the ratio, and the resulting sample cost (decode + parse + the 2.5 ms round trip), stating that a QTE sample now fits three-in-one-pass. Say plainly that the 60 fps experiment is still unmeasured and that `qteMinWindowMs` stays 150 until #18.
 
-- [ ] **Step 4: Run the whole suite and the typecheck**
+- [ ] **Step 5: Run the whole suite and the typecheck**
 
 Run: `pnpm test && pnpm typecheck`
 Expected: every file green (340 + the new ones), `tsc --noEmit` silent.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add tests/qte-band.test.ts docs/status.md
