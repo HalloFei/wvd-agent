@@ -209,6 +209,30 @@ const nothingSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0 }
 const waiting: Observation = { screen: 'loading', atMs: 100, confidence: 0.9 };
 const dungeonView: Observation = { screen: 'dungeon', atMs: 100, confidence: 0.9 };
 
+/** A member the opener policy can rank; the card index is its position in the panel. */
+function openerMember(detect: number, disarm: number, willpower = 100, feared = false) {
+  return { name: '#', detect, disarm, willpower, feared };
+}
+
+/**
+ * The opener panel with two members: index 1 has the higher 陷阱解除, so the choice is the second
+ * card — centre (963, 784) from the measured card boxes (x 879–1046, y 729–839).
+ */
+const openerPanel: Observation = {
+  screen: 'chest-open',
+  atMs: 100,
+  confidence: 1,
+  opener: { members: [openerMember(10, 40), openerMember(10, 90)] },
+};
+
+/** A parsed panel where nobody may open the chest: both are under the 60 willpower floor. */
+const openerNobody: Observation = {
+  screen: 'chest-open',
+  atMs: 100,
+  confidence: 1,
+  opener: { members: [openerMember(10, 40, 59), openerMember(10, 90, 30)] },
+};
+
 function makeWorld(options: {
   cfg?: Partial<WvdConfigSection>;
   observation?: Observation;
@@ -983,5 +1007,92 @@ describe('stopping', () => {
     await world.start(host as unknown as WorldHost);
     await world.stop();
     expect(host.pushed).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The opener panel is clicked, once (Task 12)
+// ---------------------------------------------------------------------------------------------
+
+describe('the opener click', () => {
+  it("clicks the chosen member's card centre, once, and treats the next screen as its answer", async () => {
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: openerPanel });
+    await started(world, host);
+
+    // Index 1 has the higher 陷阱解除, so it is the second card: (963, 784) from the measured boxes.
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784']);
+
+    // The panel is still up. The click is a command in flight, so the route's same `open-chest`
+    // intent does not become a second click.
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784']);
+
+    // The screen after the panel is whatever follows: loot, for an untrapped chest (chest §3a). The
+    // loop does not wait for a QTE bar that may never appear; it simply re-perceives.
+    perceiver.observation = { screen: 'loot', atMs: 200, confidence: 1 };
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784']);
+    expect(world.isRunning()).toBe(true);
+  });
+
+  it('gives up a click the panel never answered, and does not click again until the farm advances', async () => {
+    const { world, host, actuator, clock } = makeWorld({ observation: openerPanel, cfg: { mapOpenTimeoutMs: 50 } });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784']);
+
+    // The panel never changed: the click is recorded failed and not re-sent. The stall clock owns
+    // what happens next, exactly as it does for a key command.
+    clock.advance(100);
+    await world.tick();
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784']);
+  });
+
+  it('escalates instead of clicking when nobody is at or above the willpower floor', async () => {
+    const { world, host, actuator } = makeWorld({ observation: openerNobody, cfg: { escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls.filter((call) => call.startsWith('tap '))).toEqual([]);
+    const stuck = host.pushed.find((pushed) => pushed.event.type === 'wvd.stuck');
+    expect(stuck).toBeDefined();
+    // The reason travels in the question: the model is told *why* the loop will not click.
+    expect(stuck!.event.text).toContain('60 willpower floor');
+    expect(world.escalationsThisHour()).toBe(1);
+  });
+
+  it('honours the configured willpower floor, not only the policy default', async () => {
+    const { world, host, actuator } = makeWorld({
+      observation: { ...openerPanel, opener: { members: [openerMember(10, 90, 70)] } },
+      cfg: { willpowerFloor: 80, escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls.filter((call) => call.startsWith('tap '))).toEqual([]);
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(1);
+  });
+
+  it('refuses to click a card from a screen that is not the panel', async () => {
+    const doubtedMap: Observation = { ...dungeonMap, confidence: 0.3 };
+    const { world, host, actuator } = makeWorld({ observation: doubtedMap, cfg: { escalateTimeoutMs: 5000 } });
+    await started(world, host);
+    const tick = world.tick();
+    await until(() => host.pushed.length === 1, 'the question');
+
+    // A model answer can name any intent. `open-chest` is only valid on the panel.
+    const answer = outcome(await tool(world, 'wvd_resume').handler({ intent: { kind: 'open-chest' } }, CTX));
+    expect(answer.failed).toBeUndefined();
+    await tick;
+
+    expect(actuator.calls.filter((call) => call.startsWith('tap '))).toEqual([]);
   });
 });

@@ -71,6 +71,8 @@ import {
 import { sceneIsStill, sceneSignature, type SceneSignature } from './frames/stillness.ts';
 import { snapshotBlob, takeSnapshot, type SnapshotSource } from './escalation/image.ts';
 import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
+import { openerCardCentre } from './perception/chest.ts';
+import { chooseOpener } from './policy/chest.ts';
 
 /** `classify` from `policy/session.ts` (contracts §6, §9): a verdict, never an action. */
 export type SessionClassifier = (
@@ -151,8 +153,13 @@ function fallbackIntent(screen: ScreenId | null): Intent {
  * `open-map` rather than `exit`.
  */
 const INITIAL_CHEST_BUDGET = 1;
-/** The intents that press a key, as opposed to the ones that only hand the decision back. */
-const COMMAND_KINDS: ReadonlySet<Intent['kind']> = new Set<Intent['kind']>(['open-map', 'move', 'exit']);
+/** The intents that send one command, as opposed to the ones that only hand the decision back. */
+const COMMAND_KINDS: ReadonlySet<Intent['kind']> = new Set<Intent['kind']>([
+  'open-map',
+  'move',
+  'exit',
+  'open-chest',
+]);
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -283,7 +290,7 @@ export function parseIntent(value: unknown): ParsedIntent {
  * releases `open-map` is the map itself.
  */
 interface InFlight {
-  readonly kind: 'open-map' | 'move' | 'exit';
+  readonly kind: 'open-map' | 'move' | 'exit' | 'open-chest';
   /** The screen the key was pressed on, for the "did this key belong here" evidence. */
   readonly fromScreen: ScreenId;
   readonly sinceMs: number;
@@ -302,6 +309,17 @@ interface MapRead {
   readonly floor: string;
   readonly player: Point;
   readonly chests: readonly Point[];
+}
+
+/**
+ * The tick's own evidence, handed to `#execute` so a command that must ask for help can escalate on
+ * the frame that decided it — the opener panel with no usable member is the first such command.
+ */
+interface TickContext {
+  readonly session: WvdSession;
+  readonly frame: Frame;
+  readonly observation: Observation;
+  readonly now: number;
 }
 
 /** Did the readout move on the map? That is the party walking, not the farm advancing. */
@@ -339,6 +357,11 @@ export class WvdWorld implements World {
   #inFlight: InFlight | null = null;
   /** Commands that changed nothing on this screen epoch: never re-sent until the farm advances. */
   #failed: Set<Intent['kind']> = new Set();
+  /**
+   * Why the last parsed opener panel had no usable member, for the question the escalation asks.
+   * Set while the panel is on screen and cleared when it leaves (or a choice succeeds).
+   */
+  #openerRefusal: string | null = null;
   /** Push timestamps inside the hourly window; the count is a query, not a counter. */
   #escalationPushes: number[] = [];
   #escalationCooldownUntilMs = 0;
@@ -539,7 +562,7 @@ export class WvdWorld implements World {
       this.#host?.log.warn(`wvd: ${intent.kind} already changed nothing on this screen; not sending it again`);
       return;
     }
-    await this.#execute(intent, observation.screen);
+    await this.#execute(intent, observation.screen, { session, frame, observation, now });
   }
 
   /** Warm-up aware capture: a failure is a skipped tick until the retries are spent (§5). */
@@ -564,6 +587,7 @@ export class WvdWorld implements World {
 
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
   #track(observation: Observation): void {
+    if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen === 'chest-open') {
       this.#willpower = observation.opener.members.map((member) => member.willpower);
     }
@@ -629,7 +653,7 @@ export class WvdWorld implements World {
 
   /** Is a walk (a command whose effect is the party moving) still un-answered? */
   #walkOutstanding(): boolean {
-    return this.#inFlight !== null && this.#inFlight.kind !== 'open-map';
+    return this.#inFlight !== null && (this.#inFlight.kind === 'move' || this.#inFlight.kind === 'exit');
   }
 
   /**
@@ -647,12 +671,40 @@ export class WvdWorld implements World {
    *   While the walk is outstanding, no other command is sent — that is the whole point. A walk that
    *   never starts (the map stays put, nothing moves) has changed nothing and is recorded failed; one
    *   that never arrives is given up at `automoveArrivalTimeoutMs`, also failed.
+   * - `open-chest` is answered by **the panel dismissing**, into whatever screen follows: the QTE for
+   *   a trapped chest, loot for an untrapped one (chest §3a), or a battle for a mimic. Those are all
+   *   the answer; the loop must not wait for a bar that may never come. A panel that stays up for
+   *   `mapOpenTimeoutMs` has changed nothing and is recorded failed, like any other command.
    *
    * Arrival is not a failure: the farm advanced, so the command is not held against the next tick.
    */
   async #advanceInFlight(observation: Observation, frame: Frame, now: number): Promise<boolean> {
     const inFlight = this.#inFlight;
     if (!inFlight) return false;
+
+    // The opener click is answered by the panel going away — not by a QTE bar, which only a trapped
+    // chest shows (chest §3a). `unknown` is not an answer: it is a frame nothing named, and the panel
+    // may still be under it.
+    if (inFlight.kind === 'open-chest') {
+      if (observation.screen !== 'chest-open' && observation.screen !== 'unknown') {
+        this.#inFlight = null;
+        this.#lastProgressAtMs = now;
+        this.#failed.clear();
+        this.#host?.log.info(`wvd: open-chest took effect: the screen is now ${observation.screen}`);
+        return false;
+      }
+      const waitedMs = now - inFlight.sinceMs;
+      const timeoutMs = Math.max(1, this.#cfg.mapOpenTimeoutMs);
+      if (waitedMs >= timeoutMs) {
+        this.#inFlight = null;
+        this.#failed.add('open-chest');
+        this.#host?.log.warn(
+          'wvd: the opener panel never answered the click; not clicking it again until the farm advances',
+          { waitedMs, timeoutMs },
+        );
+      }
+      return this.#inFlight !== null;
+    }
 
     const isWalk = inFlight.kind !== 'open-map';
 
@@ -812,7 +864,12 @@ export class WvdWorld implements World {
           // The model redirected the loop: that is progress, whatever the screen does next.
           this.#lastProgressAtMs = this.#now();
           this.#failed.clear();
-          await this.#execute(outcome.intent, this.#lastObservation?.screen ?? null);
+          await this.#execute(outcome.intent, this.#lastObservation?.screen ?? null, {
+            session,
+            frame,
+            observation,
+            now,
+          });
         }
         // No intent is a diagnosis only: the loop re-reads the screen, as promised by the receipt.
         return;
@@ -821,7 +878,7 @@ export class WvdWorld implements World {
         // One wait's worth of cooldown: a screen that stays unknown must not spend the hour in a
         // minute (research §5.2).
         this.#escalationCooldownUntilMs = this.#now() + Math.max(1, timeoutMs);
-        await this.#execute(fallback, observation.screen);
+        await this.#execute(fallback, observation.screen, { session, frame, observation, now });
         return;
       case 'cancelled':
         return;
@@ -838,7 +895,10 @@ export class WvdWorld implements World {
       case 'chest-qte':
         return 'The chest QTE is on screen and this World will not gamble a tap. Where is the safe window?';
       case 'chest-open':
-        return 'The opener panel is up and the route will not choose blindly. Who should open this chest?';
+        // A parsed panel that chose nobody carries its reason; a panel nobody parsed keeps the old line.
+        return this.#openerRefusal === null
+          ? 'The opener panel is up and the route will not choose blindly. Who should open this chest?'
+          : `The opener panel is up, but ${this.#openerRefusal}. Who should open this chest, or should the loop leave it?`;
       default:
         return `The screen has been ${observation.screen} longer than the loop expects. Is it seeing the right thing, and what should it do?`;
     }
@@ -893,8 +953,11 @@ export class WvdWorld implements World {
    *   spent (`route.ts`), so translating it here is what keeps that state reachable.
    * - `open-map` is pressed anywhere **but** the map: G is the menu-then-map key in the 3D view, and
    *   on the map it is 移動至目的地.
+   * - `open-chest` clicks a **card of the opener panel**, and only while the panel is the screen: the
+   *   choice comes from `chooseOpener` over the parsed panel, and a panel with no qualifying member
+   *   is escalated instead — the loop never clicks a card it did not choose (chest §5).
    */
-  async #execute(intent: Intent, fromScreen: ScreenId | null): Promise<void> {
+  async #execute(intent: Intent, fromScreen: ScreenId | null, context?: TickContext): Promise<void> {
     this.#lastIntent = { intent, atMs: this.#now() };
     switch (intent.kind) {
       case 'open-map':
@@ -927,13 +990,45 @@ export class WvdWorld implements World {
         }
         await this.#press('exit', fromScreen, () => this.#commands.automoveToExit());
         return;
-      case 'open-chest':
-        // Follow-up task: **the QTE caller.** `ChestPerceiver` + `planTap` + `actuator.tap` wire in
-        // here and nowhere else — this branch is the single seam. Until then the loop opens no chest:
-        // a chest QTE therefore stalls, escalates and asks Coo instead of gambling a tap on an unread
-        // bar (Task 10 review, Important 2).
-        this.#host?.log.info('wvd: a chest is open and the QTE caller is not wired yet');
+      case 'open-chest': {
+        const panel = this.#lastObservation?.screen === 'chest-open' ? this.#lastObservation.opener : null;
+        if (panel === null || fromScreen !== 'chest-open') {
+          this.#host?.log.warn(
+            `wvd: not choosing an opener from ${fromScreen ?? 'an unknown screen'}: the panel is not up`,
+          );
+          return;
+        }
+        const session = this.#session;
+        const choice = chooseOpener(panel, this.#cfg.willpowerFloor);
+        if (choice === null) {
+          // Nobody may open it: do not click. Say why, and ask — the next card choice is the model's
+          // or the operator's, not a guess here.
+          this.#openerRefusal = `no member is at or above the ${this.#cfg.willpowerFloor} willpower floor`;
+          this.#failed.add('open-chest');
+          this.#host?.log.warn(`wvd: not opening the chest: ${this.#openerRefusal}`, {
+            members: panel.members.map((member) => ({
+              detect: member.detect,
+              disarm: member.disarm,
+              willpower: member.willpower,
+              feared: member.feared,
+            })),
+          });
+          if (context) await this.#escalate(context.session, context.frame, context.observation, context.now);
+          return;
+        }
+        const centre = openerCardCentre(choice.index);
+        if (centre === null || session === null) {
+          this.#host?.log.warn(`wvd: the chosen opener ${choice.member.name} has no card to click`);
+          return;
+        }
+        this.#openerRefusal = null;
+        this.#host?.log.info(
+          `wvd: opening the chest with ${choice.member.name} (陷阱解除 ${choice.member.disarm}, `
+            + `陷阱发现 ${choice.member.detect}) at ${centre.x},${centre.y}`,
+        );
+        await this.#press('open-chest', fromScreen, () => session.actuator.tap(centre));
         return;
+      }
       case 'fight':
         this.#host?.log.info('wvd: a battle is on screen; auto-battle is a later module');
         return;
@@ -949,11 +1044,12 @@ export class WvdWorld implements World {
   }
 
   /**
-   * Send one key command and record that it is now in flight. A refused or failed press is recorded
-   * as failed immediately (nothing was sent, so nothing will arrive) and never retried here.
+   * Send one command — a key press, or the opener card's tap — and record that it is now in flight. A
+   * refused or failed one is recorded failed immediately (nothing was sent, so nothing will arrive)
+   * and never retried here.
    */
   async #press(
-    kind: 'open-map' | 'move' | 'exit',
+    kind: 'open-map' | 'move' | 'exit' | 'open-chest',
     fromScreen: ScreenId | null,
     command: () => Promise<ActionResult>,
   ): Promise<void> {

@@ -71,8 +71,10 @@ export function nextIntent(state: RouteState): Intent {
       // the chest module owns loot; the loop owns the world map
       return { kind: 'wait', ms: HANDOFF_MS };
     case 'chest-open':
-      // the chest module owns the opener panel; the route does not click it blind
-      return { kind: 'wait', ms: HANDOFF_MS };
+      // The chest module owns the opener panel, and the panel is readable now (Task 12): the World
+      // reads the members, chooses one and clicks that card. Not a blind click — the choice comes from
+      // `chooseOpener`, and with no qualifying member the World escalates instead of clicking.
+      return { kind: 'open-chest' };
     case 'chest-qte':
     case 'loading':
       return { kind: 'wait', ms: SETTLE_MS };

@@ -137,13 +137,20 @@ describe('the session classifier', () => {
   });
 
   it('continues where the route waits by design rather than from doubt', () => {
-    // loading, a QTE, loot, the world map and the opener panel are hand-offs: the route waits for
-    // another module or for the screen to settle at full confidence. Escalating those would spend
-    // the hourly budget on loading screens, so the loop's stall counter, not this verdict, owns
-    // their persistence (controller ruling).
-    for (const kind of ['loading', 'chest-qte', 'loot', 'worldmap', 'chest-open'] as const) {
+    // loading, a QTE, loot and the world map are hand-offs: the route waits for another module or
+    // for the screen to settle at full confidence. Escalating those would spend the hourly budget on
+    // loading screens, so the loop's stall counter, not this verdict, owns their persistence
+    // (controller ruling).
+    for (const kind of ['loading', 'chest-qte', 'loot', 'worldmap'] as const) {
       expect(nextIntent(state(identified[kind])).kind, kind).toBe('wait');
       expect(classify(state(identified[kind]), 0, CAP), kind).toBe('ok');
     }
+  });
+
+  it('says ok on the opener panel, which the route now acts on', () => {
+    // Task 12: `chest-open` is a command (the World clicks a chosen card), not a hand-off, so the
+    // classifier must not escalate it as doubt. The panel is identified at confidence 1 by its
+    // parser; at full confidence this verdict is the same `ok` every identified screen gets.
+    expect(classify(state(identified['chest-open']), 0, CAP)).toBe('ok');
   });
 });

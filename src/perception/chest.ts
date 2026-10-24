@@ -7,12 +7,22 @@
  * research-qte-parser.md`, cited as "research §n". The values are not re-derived here; numbers the
  * research calls one-sample are named with that word in their comment.
  *
- * **The opener gap — what this module does not do.** `parseOpener` is not implemented and
- * `ChestPerceiver` never answers `chest-open`. The `由谁打开?` panel (the opener roster carrying
- * 陷阱发现 / 陷阱解除) is described in `measurements.json`'s prose, but **no frame of `testdata/`
- * shows it**: the six stills and the recording show the bar and the 解除 control. A parser written
- * against a guessed layout would be a plausible lie, and a wrong opener choice spends the chest;
- * when a fixture exists, `parseOpener` belongs here, tried before the bar.
+ * **The opener panel.** `parseOpener` reads the `由谁打开?` roster from `testdata/chest/
+ * 2026-10-24-opener/` — the panel captured live on 2026-10-24, two captures of one screen — and
+ * `ChestPerceiver` tries it before the bar. The panel is a 2×3 grid of member cards (a smaller party
+ * fills the same grid row-major and stops), each card carrying a heart numeral (willpower),
+ * 陷阱发现 and 陷阱解除, and a CJK name the parser cannot read; members are therefore addressed by
+ * card position (`#1` … `#6`). The digits come from a committed atlas extracted by
+ * `scripts/extract-opener-digits.mjs`: the fixture's twelve 陷阱 values are `38 49 28 50 34 38 92 105
+ * 62 43 77 79`, which contain every digit 0–9, and the heart numerals are drawn one pixel taller, so
+ * they get their own atlas and only 0, 1 and 9 are observed (100 and 90). A digit whose best match is
+ * below the measured floor refuses the whole panel — never rounded to a plausible number.
+ *
+ * The order is safe in one direction only: the panel gates on a **dark modal band with the title's
+ * glyph ink and the cards' full-width bottom borders** at fixed rows, and the QTE bar lives in rows
+ * 36–82 of a different part of the frame, so a bar frame cannot satisfy a card grid. Trying the bar
+ * first would be the unsafe order: an untrapped chest has no bar at all (chest §3a), and a bar-frame
+ * "no-bar" refusal is the cheap answer that must not mask a panel.
  *
  * Two rules shape the code:
  *
@@ -33,6 +43,8 @@
 import type {
   Frame,
   Observation,
+  OpenerMember,
+  OpenerPanel,
   Perceiver,
   Point,
   QteState,
@@ -302,11 +314,21 @@ function parseImage(image: RgbaImage, previousMarkerX?: number): QteParse {
 }
 
 /**
- * A `Perceiver` over the QTE bar. It answers `chest-qte` or `unknown` and never `chest-open`: the
- * opener panel has no fixture (see the module header).
+ * A `Perceiver` over the chest screens. **The opener panel is tried first**, then the QTE bar; a
+ * frame that is neither is `unknown` (contracts §2: something drawn, nothing named).
+ *
+ * The order is safe because the two parsers' anchors cannot both fire: the panel needs the modal's
+ * dark band, the title's glyph ink and the cards' full-width borders at fixed rows, and the bar lives
+ * in rows 36–82 with its own warm/white/gap structure (see the module header). It is also the only
+ * workable order — a chest with no trap goes from the panel straight to loot (chest §3a), so the loop
+ * must act while the bar may never exist.
  */
 export class ChestPerceiver implements Perceiver {
   async observe(frame: Frame): Promise<Observation> {
+    const opener = await parseOpener(frame);
+    if (opener !== null) {
+      return { screen: 'chest-open', atMs: frame.atMs, confidence: 1, opener };
+    }
     const parsed = await parseQte(frame);
     if (!parsed.ok) return { screen: 'unknown', atMs: frame.atMs, confidence: 0 };
     return {
@@ -561,4 +583,537 @@ function readButton(
     onScreen: contrast >= BUTTON_ON_SCREEN_CONTRAST,
     enabled: contrast >= BUTTON_ENABLED_CONTRAST && pale >= BUTTON_ENABLED_PALE,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// The opener panel (由谁打开?)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The panel anchors, all measured from `testdata/chest/2026-10-24-opener/panel-00.jpg` and identical
+ * in `panel-01.jpg` (two captures of the same screen).
+ *
+ * The modal is opaque and screen-anchored: its title band reads ~55 mean luma even over this lit
+ * corridor, while the same box reads 147 on `after-pick.jpg`, 98–103 on the QTE stills and 73 on the
+ * walking view — the dark band is a necessary gate, and the title's ~696 ink pixels inside it are what
+ * makes it sufficient. The six cards' bottom borders are 160–164 bright columns wide and 120 is the
+ * per-card presence test; a border count alone is not the frame's gate (`map.jpg` happens to reach
+ * 160 at one slot), which is why the dark band and the title ink are tested before any card is.
+ */
+const PANEL_BAND = { x0: 860, x1: 1040, y0: 612, y1: 666 } as const;
+const PANEL_BAND_MEAN_MAX = 80;
+const TITLE_BOX = { x0: 890, x1: 1018, y0: 630, y1: 658 } as const;
+const TITLE_INK_LUMA = 150;
+const TITLE_INK_MIN = 400;
+
+/**
+ * The card grid: three columns and two rows of 165 px cards, 110 px tall. The second row starts at
+ * 853: its content rows are the first row's + 124, and both rows' bottom borders sit at top + 110.
+ * A smaller party fills the same grid row-major and stops, which is the only layout assumption this
+ * parser makes — a hole in the prefix is refused, not renumbered.
+ */
+const CARD_COLUMNS: ReadonlyArray<readonly [number, number]> = [[704, 868], [879, 1046], [1057, 1220]];
+const CARD_ROW_TOPS: readonly number[] = [729, 853];
+const CARD_HEIGHT = 110;
+const CARD_SLOTS = 6;
+const CARD_BORDER_INSET = 2;
+const CARD_BORDER_LUMA = 65;
+const CARD_BORDER_MIN_COLUMNS = 120;
+
+/** Field bands, as y offsets from a card's top border (exclusive end). */
+const TRAP_DETECT_BAND: readonly [number, number] = [64, 80];
+const TRAP_DISARM_BAND: readonly [number, number] = [85, 101];
+const HEART_BAND: readonly [number, number] = [1, 17];
+
+/**
+ * The numbers' x windows. The 陷阱 labels end at card x0 + 71 and their numerals start at x0 + 76, so
+ * 74 clears the CJK. The heart numeral is right-aligned in the card's right 70 px and the grey heart
+ * glyph sits just left of it; the heart numerals are yellow, which is what keeps the two apart.
+ */
+const TRAP_NUMBER_LEFT = 74;
+const NUMBER_RIGHT_INSET = 3;
+const HEART_LEFT = 70;
+
+/**
+ * Ink rules. On a card's dark fill (`median` ~45–110) the white numerals are ≥ 55 luma above it; the
+ * heart numerals are yellow (`g − b ≥ 45`, luma ≥ 140) while the heart glyph beside them is grey, so
+ * the chroma rule is the heart's segmentation and the luma rule is everyone else's.
+ */
+const INK_LUMA_DELTA = 55;
+const HEART_GREEN_MINUS_BLUE = 45;
+const HEART_LUMA_MIN = 140;
+
+/**
+ * Glyph geometry. Digits are 7–9 px wide and 12–13 rows tall, separated by 1–2 px; a run wider than
+ * 12 px is two digits whose JPEG halo closed the gap, split at the measured 9.4 px pitch ("00" in a
+ * heart is 18 px). A narrow sliver (fewer than 4 columns) is antialiasing, not a glyph.
+ */
+const MIN_GLYPH_COLUMNS = 4;
+const MAX_GLYPH_COLUMNS = 12;
+const DIGIT_PITCH = 9.4;
+/** A card shows at most three digits (105 is the widest observed); more runs is noise, not a number. */
+const MAX_GLYPH_DIGITS = 3;
+
+/**
+ * Numerals are left-aligned: the first glyph starts 2–4 px into the measured band on all twelve
+ * 陷阱 values (a 1 or a 3 begins closer to the edge than a 0 does), so 6 tolerates that wobble and
+ * still rejects a *missing* leading digit, which pushes the next glyph 11 px in. A number whose
+ * first glyph is not where numerals start is refused, not read as a shorter number.
+ */
+const NUMBER_START_TOLERANCE = 6;
+/** Successive glyphs start 7–11 px apart; a missing middle digit leaves a 16 px gap or more. */
+const MAX_DIGIT_START_GAP = 13;
+
+/**
+ * The heart numeral is right-aligned: its last glyph ends 4–6 px short of the card's right border on
+ * all five cards that draw one, so 8 tolerates the wobble and still rejects a truncated trailing
+ * digit (which would stop ~9 px short). The 陷阱 numerals are left-aligned and carry no such anchor.
+ */
+const HEART_RIGHT_INSET_MAX = 8;
+
+/**
+ * The feature: the glyph's ink rows cropped, scaled by its own peak, centred in a 10 × 14 cell and
+ * bilinearly resized to 8 × 10, then mean-subtracted and unit-normalised for NCC (map.ts's rule).
+ */
+const GLYPH_CELL_WIDTH = 10;
+const GLYPH_CELL_HEIGHT = 14;
+const GLYPH_FEATURE_WIDTH = 8;
+const GLYPH_FEATURE_HEIGHT = 10;
+
+/**
+ * The match floors, measured on both captures: the twelve 陷阱 numbers' lowest best score is 0.921
+ * with a 0.133 runner-up margin; the heart numerals' is 0.760 with a 0.419 margin. Below either
+ * floor the panel is refused — a wrong opener choice spends the chest (chest §5).
+ */
+const DIGIT_MATCH_MIN = 0.7;
+const DIGIT_MARGIN_MIN = 0.1;
+
+/**
+ * The two digit atlases, extracted by `scripts/extract-opener-digits.mjs` from `panel-00.jpg`:
+ * `TRAP_DIGITS` from the twelve 陷阱 values in `measurements.json`, `HEART_DIGITS` from the five
+ * heart numerals that frame shows (cards 1–3, 5, 6: 100 100 100 90 100 — card 4, DragonSlayer, draws
+ * no heart). Each constant is the **mean** of every instance of that digit in the frame: an 8 × 10
+ * grid of 0–255 intensities, mean-centred and normalised at load. `node
+ * scripts/extract-opener-digits.mjs --verify` checks every one of these strings, and
+ * `tests/opener.test.ts` reads both captures with them.
+ */
+const TRAP_DIGITS: Readonly<Record<string, string>> = {
+  '0': 'AQkaHh0TBAARYoZkgXsmAjO0fhZOr1kESc9oBjG2hgpY3FoHIbqkDljeWRAktacPR9BpCze1hQoxuIAWTa1YBBVnhFR1dSwCAgsWFBUQBQA=',
+  '1': 'AAQUJxYEAAAAHoXiehYAAAASffKFDwAAAAxq64ESAAAADGnqfhYAAAAObut/FwAAAA1s6oMWAAAAD3LuihUAAAAef8uNLwAAAAQSHBMGAAA=',
+  '2': 'ARxIblonBQAGQ3Wez5UbAAISDRClwysAAAQEE52iIAAABAVIpmgOAAAEIXt+IwEAARlbaTEXDAAHWJZqTmMkAAx7q6qugyAAAQwQERILAgA=',
+  '3': 'AAw0YWY9EwEBHFOGxrpUBQEQDwplw20HAAUQL4KPNgIADTiJ2a1LBQAEDiyS2qgRAhAIBzWuwBYHPCkJL5ulEglaYz1XeEsGAQ0TExMPBwA=',
+  '4': 'AAEAAiMrBwAAAgMwp5gWAAAEIIHnrRYAABNLi82mGgADLFBcwagaAAtkSEzDrx4AD3Zdc9nEKwADGxlT1LMhAAADDFG1myQAAAACDhoXBgA=',
+  '5': 'ABIyR0UlBwADNoWro2QWAAZCVjIeGxACFHB5RhkJHwUWlNLLkjsxBwYmXavkmUUGBQ0UNam2TAUlKw4PcaE+BDVmQT5wUxYACBEQDxEJAgA=',
+  '6': 'AAADEBUSBAAADkB4WzEKAAAym4ssBAcBDIGoZD8uCQAZ2LeDpLVLBB7jgydZx44MHddvDTbEpQ8SoIISQbmBCgREb1NcczQDAAYQDw0LAgA=',
+  '7': 'Ah82Nz82JAMKapKZlKtvCgQlGxYnbzECAAcFBWBlGgAAAgkjok0LAAAEE2WrLgYAAAQqsJknAwAADVPjhxUBAAAQT6FZDQYAAAIJEggBAAA=',
+  '8': 'Axs9Q0IwDAAWc4xOWHc3Ay6npRschVIFG5LKhWZqJAEFRLbs1HUWAAxJgqTg0FcFN4lQIWfRnQ4+k0UHL6SYDx5kWTxPgFAGAQsSExMQBwA=',
+  '9': 'AQkZHB0WCAASW4ljb4JJBi2wliMroYsOMrqYKiGdqxMop7xhRra8FQ5QoaiXyqIQAw4gMIKtYAcEBA0/m3glAgEQL1tOHwUAAAQICwQBAAA=',
+};
+const HEART_DIGITS: Readonly<Record<string, string>> = {
+  '0': 'ABtxqqdKBwAJd59MjbI5ASDNawQZxokJRNZXAhO4ow9V1lABEa+uEU7WVQISs6UPJ8pnBBjCjAoNmawwbM5UAwAke4iNVQoAAAAHFhABAAA=',
+  '1': 'AAAKJyYLAAAAATuruzsAAAAAHaPFPgAAAAATertCAAAAABN3ukYAAAAAE3m6QgAAAAAQerpAAAAAABWAzE8AAAABJaLQagAAAAAIISYVAAA=',
+  '9': 'AAkQEwgAAAAtfHqXfgkAALanJUjrYAAA03sAANiqIwPVtSMA3b9ZCXW3q6nxt1cJAyY8uO1yGAIAAAvcxgAAAAAba3ceAAAAAA0dAwAAAAA=',
+};
+
+interface DigitTemplate {
+  readonly digit: string;
+  /** Mean-subtracted, unit-norm 8 × 10 values. */
+  readonly values: Float64Array;
+}
+
+const ATLASES = new WeakMap<object, readonly DigitTemplate[]>();
+
+function atlasOf(table: Readonly<Record<string, string>>): readonly DigitTemplate[] {
+  const cached = ATLASES.get(table);
+  if (cached) return cached;
+  const atlas = Object.entries(table).map(([digit, base64]) => ({
+    digit,
+    values: normaliseGlyph(Buffer.from(base64, 'base64')),
+  }));
+  ATLASES.set(table, atlas);
+  return atlas;
+}
+
+function normaliseGlyph(bytes: Uint8Array): Float64Array {
+  const values = new Float64Array(bytes.length);
+  let sum = 0;
+  for (let i = 0; i < values.length; i += 1) {
+    values[i] = bytes[i] ?? 0;
+    sum += values[i]!;
+  }
+  const mean = sum / values.length;
+  let normSq = 0;
+  for (let i = 0; i < values.length; i += 1) {
+    values[i] = values[i]! - mean;
+    normSq += values[i]! * values[i]!;
+  }
+  const norm = Math.sqrt(normSq);
+  if (norm > 0) for (let i = 0; i < values.length; i += 1) values[i]! /= norm;
+  return values;
+}
+
+const pixelLuma = (data: Uint8Array, width: number, x: number, y: number): number => {
+  const offset = (y * width + x) * 4;
+  return (77 * data[offset]! + 150 * data[offset + 1]! + 29 * data[offset + 2]!) >> 8;
+};
+
+interface PanelBand {
+  readonly x0: number;
+  readonly x1: number;
+  readonly y0: number;
+  readonly y1: number;
+}
+
+type InkRule = (x: number, y: number) => boolean;
+
+/** The band's median luma: the card fill under the numerals, robust to the numerals themselves. */
+function bandMedianLuma(data: Uint8Array, width: number, band: PanelBand): number {
+  const values = new Float64Array((band.x1 - band.x0) * (band.y1 - band.y0));
+  let index = 0;
+  for (let y = band.y0; y < band.y1; y += 1) {
+    for (let x = band.x0; x < band.x1; x += 1) values[index++] = pixelLuma(data, width, x, y);
+  }
+  values.sort();
+  return values[values.length >> 1]!;
+}
+
+/** Maximal runs of columns that carry ink (raw: no width filtering, so locating can use them). */
+function columnRuns(
+  data: Uint8Array,
+  width: number,
+  band: PanelBand,
+  ink: InkRule,
+): Array<readonly [number, number]> {
+  const columns = band.x1 - band.x0;
+  const lit = new Uint16Array(columns);
+  for (let y = band.y0; y < band.y1; y += 1) {
+    for (let x = band.x0; x < band.x1; x += 1) if (ink(x, y)) lit[x - band.x0]! += 1;
+  }
+  const runs: Array<readonly [number, number]> = [];
+  let start = -1;
+  for (let column = 0; column <= columns; column += 1) {
+    const on = column < columns && lit[column]! > 0;
+    if (on && start < 0) start = column;
+    else if (!on && start >= 0) {
+      runs.push([band.x0 + start, band.x0 + column - 1] as const);
+      start = -1;
+    }
+  }
+  return runs;
+}
+
+/** Filter slivers and split runs that are two digits wide, at the measured pitch. */
+function glyphAtoms(runs: ReadonlyArray<readonly [number, number]>): Array<readonly [number, number]> {
+  const atoms: Array<readonly [number, number]> = [];
+  for (const [from, to] of runs) {
+    const glyphWidth = to - from + 1;
+    if (glyphWidth < MIN_GLYPH_COLUMNS) continue;
+    if (glyphWidth <= MAX_GLYPH_COLUMNS) {
+      atoms.push([from, to] as const);
+      continue;
+    }
+    const count = Math.max(2, Math.round(glyphWidth / DIGIT_PITCH));
+    for (let k = 0; k < count; k += 1) {
+      atoms.push([
+        from + Math.round((k * glyphWidth) / count),
+        from + Math.round(((k + 1) * glyphWidth) / count) - 1,
+      ] as const);
+    }
+  }
+  return atoms;
+}
+
+/** One glyph's normalised 8 × 10 feature, or null when the atom carries no ink rows. */
+function glyphFeature(
+  data: Uint8Array,
+  width: number,
+  band: PanelBand,
+  from: number,
+  to: number,
+  ink: InkRule,
+  background: number,
+): Float64Array | null {
+  let top = -1;
+  let bottom = -1;
+  for (let y = band.y0; y < band.y1; y += 1) {
+    let any = false;
+    for (let x = from; x <= to; x += 1) {
+      if (ink(x, y)) {
+        any = true;
+        break;
+      }
+    }
+    if (any) {
+      if (top < 0) top = y;
+      bottom = y;
+    }
+  }
+  if (top < 0) return null;
+
+  const glyphWidth = to - from + 1;
+  const glyphHeight = bottom - top + 1;
+  const cell = new Float64Array(GLYPH_CELL_WIDTH * GLYPH_CELL_HEIGHT);
+  let peak = 1;
+  for (let y = 0; y < glyphHeight; y += 1) {
+    for (let x = 0; x < glyphWidth; x += 1) {
+      const value = pixelLuma(data, width, from + x, top + y) - background;
+      if (value > peak) peak = value;
+    }
+  }
+  const offsetX = Math.floor((GLYPH_CELL_WIDTH - glyphWidth) / 2);
+  const offsetY = Math.floor((GLYPH_CELL_HEIGHT - glyphHeight) / 2);
+  for (let y = 0; y < glyphHeight; y += 1) {
+    for (let x = 0; x < glyphWidth; x += 1) {
+      const cellX = offsetX + x;
+      const cellY = offsetY + y;
+      if (cellX < 0 || cellX >= GLYPH_CELL_WIDTH || cellY < 0 || cellY >= GLYPH_CELL_HEIGHT) continue;
+      cell[cellY * GLYPH_CELL_WIDTH + cellX] = Math.max(0, pixelLuma(data, width, from + x, top + y) - background) / peak;
+    }
+  }
+
+  const feature = new Float64Array(GLYPH_FEATURE_WIDTH * GLYPH_FEATURE_HEIGHT);
+  for (let ty = 0; ty < GLYPH_FEATURE_HEIGHT; ty += 1) {
+    const sy = ((ty + 0.5) * GLYPH_CELL_HEIGHT) / GLYPH_FEATURE_HEIGHT - 0.5;
+    const y0 = Math.floor(sy);
+    const fy = sy - y0;
+    const ya = Math.min(GLYPH_CELL_HEIGHT - 1, Math.max(0, y0));
+    const yb = Math.min(GLYPH_CELL_HEIGHT - 1, Math.max(0, y0 + 1));
+    for (let tx = 0; tx < GLYPH_FEATURE_WIDTH; tx += 1) {
+      const sx = ((tx + 0.5) * GLYPH_CELL_WIDTH) / GLYPH_FEATURE_WIDTH - 0.5;
+      const x0 = Math.floor(sx);
+      const fx = sx - x0;
+      const xa = Math.min(GLYPH_CELL_WIDTH - 1, Math.max(0, x0));
+      const xb = Math.min(GLYPH_CELL_WIDTH - 1, Math.max(0, x0 + 1));
+      const upper = cell[ya * GLYPH_CELL_WIDTH + xa]! * (1 - fx) + cell[ya * GLYPH_CELL_WIDTH + xb]! * fx;
+      const lower = cell[yb * GLYPH_CELL_WIDTH + xa]! * (1 - fx) + cell[yb * GLYPH_CELL_WIDTH + xb]! * fx;
+      feature[ty * GLYPH_FEATURE_WIDTH + tx] = upper * (1 - fy) + lower * fy;
+    }
+  }
+
+  let mean = 0;
+  for (const value of feature) mean += value;
+  mean /= feature.length;
+  let normSq = 0;
+  for (let i = 0; i < feature.length; i += 1) {
+    feature[i] = feature[i]! - mean;
+    normSq += feature[i]! * feature[i]!;
+  }
+  const norm = Math.sqrt(normSq);
+  if (!(norm > 0)) return null;
+  for (let i = 0; i < feature.length; i += 1) feature[i]! /= norm;
+  return feature;
+}
+
+/** Read a run of glyph atoms as a decimal number, or null at the first unreadable digit. */
+function readNumber(
+  data: Uint8Array,
+  width: number,
+  band: PanelBand,
+  ink: InkRule,
+  background: number,
+  atlas: readonly DigitTemplate[],
+  atoms: ReadonlyArray<readonly [number, number]>,
+): number | null {
+  if (atoms.length === 0 || atoms.length > MAX_GLYPH_DIGITS) return null;
+  // Structure before recognition: a truncated number is still a number, and must be refused.
+  if (atoms[0]![0] - band.x0 > NUMBER_START_TOLERANCE) return null;
+  for (let i = 1; i < atoms.length; i += 1) {
+    if (atoms[i]![0] - atoms[i - 1]![0] > MAX_DIGIT_START_GAP) return null;
+  }
+  let text = '';
+  for (const [from, to] of atoms) {
+    const feature = glyphFeature(data, width, band, from, to, ink, background);
+    if (feature === null) return null;
+    let best: string | null = null;
+    let bestScore = -2;
+    let secondScore = -2;
+    for (const { digit, values } of atlas) {
+      let score = 0;
+      for (let i = 0; i < feature.length; i += 1) score += feature[i]! * values[i]!;
+      if (score > bestScore) {
+        secondScore = bestScore;
+        bestScore = score;
+        best = digit;
+      } else if (score > secondScore) {
+        secondScore = score;
+      }
+    }
+    // Never a guess: an unreadable or ambiguous digit refuses the whole panel.
+    if (best === null || bestScore < DIGIT_MATCH_MIN || bestScore - secondScore < DIGIT_MARGIN_MIN) return null;
+    text += best;
+  }
+  const value = Number(text);
+  return Number.isInteger(value) ? value : null;
+}
+
+function cardBand(slot: number, offsets: readonly [number, number]): PanelBand {
+  const [x0, x1] = CARD_COLUMNS[slot % CARD_COLUMNS.length]!;
+  const top = CARD_ROW_TOPS[Math.floor(slot / CARD_COLUMNS.length)]!;
+  return { x0, x1, y0: top + offsets[0], y1: top + offsets[1] };
+}
+
+/** Is this card slot drawn? Its bottom border spans the card, and both rows carry one. */
+function cardPresent(data: Uint8Array, width: number, slot: number): boolean {
+  const [x0, x1] = CARD_COLUMNS[slot % CARD_COLUMNS.length]!;
+  const top = CARD_ROW_TOPS[Math.floor(slot / CARD_COLUMNS.length)]!;
+  const y = top + CARD_HEIGHT;
+  let lit = 0;
+  for (let x = x0 + CARD_BORDER_INSET; x <= x1 - CARD_BORDER_INSET; x += 1) {
+    if (pixelLuma(data, width, x, y) >= CARD_BORDER_LUMA) lit += 1;
+  }
+  return lit >= CARD_BORDER_MIN_COLUMNS;
+}
+
+/** Is this frame the opener panel at all? A dark modal band carrying the title's glyph ink. */
+function isOpenerPanel(data: Uint8Array, width: number): boolean {
+  let sum = 0;
+  let count = 0;
+  for (let y = PANEL_BAND.y0; y < PANEL_BAND.y1; y += 1) {
+    for (let x = PANEL_BAND.x0; x < PANEL_BAND.x1; x += 1) {
+      sum += pixelLuma(data, width, x, y);
+      count += 1;
+    }
+  }
+  if (sum / count > PANEL_BAND_MEAN_MAX) return false;
+
+  let ink = 0;
+  for (let y = TITLE_BOX.y0; y < TITLE_BOX.y1; y += 1) {
+    for (let x = TITLE_BOX.x0; x < TITLE_BOX.x1; x += 1) {
+      if (pixelLuma(data, width, x, y) >= TITLE_INK_LUMA) ink += 1;
+    }
+  }
+  return ink >= TITLE_INK_MIN;
+}
+
+/** 陷阱发现 / 陷阱解除: white numerals on the card's dark fill. */
+function readTrapNumber(data: Uint8Array, width: number, slot: number, field: 'detect' | 'disarm'): number | null {
+  const [x0, x1] = CARD_COLUMNS[slot % CARD_COLUMNS.length]!;
+  const card = cardBand(slot, field === 'detect' ? TRAP_DETECT_BAND : TRAP_DISARM_BAND);
+  const band: PanelBand = {
+    x0: x0 + TRAP_NUMBER_LEFT,
+    x1: x1 - NUMBER_RIGHT_INSET,
+    y0: card.y0,
+    y1: card.y1,
+  };
+  const background = bandMedianLuma(data, width, band);
+  const ink: InkRule = (x, y) => pixelLuma(data, width, x, y) - background >= INK_LUMA_DELTA;
+  const atoms = glyphAtoms(columnRuns(data, width, band, ink));
+  return readNumber(data, width, band, ink, background, atlasOf(TRAP_DIGITS), atoms);
+}
+
+/**
+ * The heart numeral. Its absence is a fact about the screen, not a failed read: the one recorded
+ * panel draws **no heart at all** on DragonSlayer's card (Lv.48, silver gem), while the other five
+ * show 100, 100, 100, 90 and 100. `willpower` has no absent value in the closed contract, so the
+ * caller fills it with the panel's highest displayed heart — a bound the panel itself proves. A
+ * numeral that is there but unreadable is different, and refuses the panel.
+ */
+type HeartReading =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'unreadable' }
+  | { readonly kind: 'read'; readonly value: number };
+
+function readHeartNumber(data: Uint8Array, width: number, slot: number): HeartReading {
+  const [, x1] = CARD_COLUMNS[slot % CARD_COLUMNS.length]!;
+  const band = cardBand(slot, HEART_BAND);
+  const window: PanelBand = {
+    x0: x1 - HEART_LEFT,
+    x1: x1 - NUMBER_RIGHT_INSET,
+    y0: band.y0,
+    y1: band.y1,
+  };
+  const ink: InkRule = (x, y) => {
+    const offset = (y * width + x) * 4;
+    const green = data[offset + 1]!;
+    const blue = data[offset + 2]!;
+    return green - blue >= HEART_GREEN_MINUS_BLUE && pixelLuma(data, width, x, y) >= HEART_LUMA_MIN;
+  };
+  // Slivers belong to the grey heart's warm JPEG fringe, not to the numeral: drop them before the
+  // extent is taken, or the number would start 8 px early and look like a missing digit.
+  const located = columnRuns(data, width, window, ink).filter(([from, to]) => to - from + 1 >= MIN_GLYPH_COLUMNS);
+  if (located.length === 0) return { kind: 'absent' };
+
+  // The numeral is right-aligned and the grey heart sits left of it; the yellow extent is the number.
+  if (x1 - located[located.length - 1]![1] > HEART_RIGHT_INSET_MAX) return { kind: 'unreadable' };
+  const numberBand: PanelBand = {
+    x0: located[0]![0],
+    x1: located[located.length - 1]![1] + 1,
+    y0: band.y0,
+    y1: band.y1,
+  };
+  const background = bandMedianLuma(data, width, numberBand);
+  const value = readNumber(data, width, numberBand, ink, background, atlasOf(HEART_DIGITS), glyphAtoms(located));
+  return value === null ? { kind: 'unreadable' } : { kind: 'read', value };
+}
+
+function parseOpenerImage(image: RgbaImage): OpenerPanel | null {
+  const { data, width, height } = image;
+  if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) return null;
+  if (!isOpenerPanel(data, width)) return null;
+
+  // Segment the cards rather than assuming six: the party fills the grid row-major and stops.
+  let count = 0;
+  while (count < CARD_SLOTS && cardPresent(data, width, count)) count += 1;
+  if (count === 0) return null;
+  // A drawn card after an undrawn one is a layout this parser has never seen: refuse, do not renumber.
+  for (let slot = count; slot < CARD_SLOTS; slot += 1) if (cardPresent(data, width, slot)) return null;
+
+  const traps: Array<{ detect: number; disarm: number }> = [];
+  const hearts: HeartReading[] = [];
+  for (let slot = 0; slot < count; slot += 1) {
+    const detect = readTrapNumber(data, width, slot, 'detect');
+    const disarm = readTrapNumber(data, width, slot, 'disarm');
+    if (detect === null || disarm === null) return null;
+    traps.push({ detect, disarm });
+    hearts.push(readHeartNumber(data, width, slot));
+  }
+
+  if (hearts.some((reading) => reading.kind === 'unreadable')) return null;
+  let highest = -1;
+  for (const reading of hearts) {
+    if (reading.kind === 'read' && reading.value > highest) highest = reading.value;
+  }
+  if (highest < 0 && hearts.some((reading) => reading.kind === 'absent')) return null;
+
+  const members: OpenerMember[] = traps.map((value, index) => {
+    const reading = hearts[index]!;
+    return {
+      // The name is CJK and cannot be read: address the member by the card it sits on (1-based).
+      name: `#${index + 1}`,
+      detect: value.detect,
+      disarm: value.disarm,
+      // No heart drawn: the panel's own highest heart is the bound (see `HeartReading`).
+      willpower: reading.kind === 'read' ? reading.value : highest,
+      // 陷阱恐惧 is not rendered in this panel — the willpower floor is what protects the choice.
+      feared: false,
+    };
+  });
+  return { members };
+}
+
+/**
+ * Read the `由谁打开?` opener panel out of one frame, or `null` when it is not there or cannot be read
+ * whole. `null` is every refusal: another frame size, a frame that is not the panel, a missing or
+ * ambiguous digit, or a partial party laid out in a shape this parser does not know.
+ */
+export async function parseOpener(frame: Frame): Promise<OpenerPanel | null> {
+  if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) return null;
+  let image: RgbaImage;
+  try {
+    image = await frame.toRgba();
+  } catch {
+    return null;
+  }
+  return parseOpenerImage(image);
+}
+
+/**
+ * Where the loop clicks to choose member `index`: the centre of the card the panel draws it on. The
+ * measured click that chose DragonSlayer was (781, 899), 3–9 px from this card's centre (786, 908).
+ */
+export function openerCardCentre(index: number): Point | null {
+  if (!Number.isInteger(index) || index < 0 || index >= CARD_SLOTS) return null;
+  const [x0, x1] = CARD_COLUMNS[index % CARD_COLUMNS.length]!;
+  const top = CARD_ROW_TOPS[Math.floor(index / CARD_COLUMNS.length)]!;
+  return { x: Math.round((x0 + x1) / 2), y: top + Math.round(CARD_HEIGHT / 2) };
 }

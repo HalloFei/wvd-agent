@@ -134,8 +134,14 @@ describe('the FFXI 4F route state machine', () => {
     expect(nextIntent(routeState(screen('worldmap'), [80], 3))).toEqual(WAIT_SLOW);
   });
 
-  it('waits on the opener panel, which the chest module owns', () => {
-    expect(nextIntent(routeState(chestOpen, [80], 3))).toEqual(WAIT_SLOW);
+  it('asks for the opener choice once the panel is readable', () => {
+    // The panel is parsed now (Task 12), so this is not a blind click: the World reads the members,
+    // chooses one, and clicks that card. With no qualifying member it escalates instead of clicking.
+    expect(nextIntent(routeState(chestOpen, [80], 3))).toEqual({ kind: 'open-chest' });
+  });
+
+  it('still waits on a panel it did not identify well enough to act on', () => {
+    expect(nextIntent(routeState({ ...chestOpen, confidence: 0.4 }, [80], 3))).toEqual(WAIT_SLOW);
   });
 
   it('waits while a QTE is being timed by the loop', () => {

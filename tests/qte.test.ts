@@ -287,16 +287,17 @@ describe('ChestPerceiver', () => {
     expect(observation.atMs).toBe(2_000);
   });
 
-  it('never reports chest-open: the opener panel has no fixture, so it is not guessed', async () => {
-    // The controller's ruling: `由谁打开` was never recorded, so `parseOpener` does not exist and
-    // this perceiver cannot name `chest-open`. Every frame it has ever seen is the bar (or nothing).
-    const frames = [
-      ...(await Promise.all(MARKER_X.map((_, index) => jpegFrame(`frame-${index}.jpg`)))),
-      await jpegFrame('minimap-and-hud.jpg', 1_000, NAV_FIXTURES),
-    ];
+  it('never answers a bar frame as the opener panel', async () => {
+    // The panel parser runs first and gates on the modal's dark title band and the cards' borders;
+    // the bar lives in rows 36–82 of the same frame format, so no bar frame can satisfy it. A bar
+    // frame that is not the panel is still the bar — and the walking view is still `unknown`.
+    const frames = await Promise.all(MARKER_X.map((_, index) => jpegFrame(`frame-${index}.jpg`)));
     for (const frame of frames) {
-      expect((await new ChestPerceiver().observe(frame)).screen).not.toBe('chest-open');
+      expect((await new ChestPerceiver().observe(frame)).screen).toBe('chest-qte');
     }
+    expect(
+      (await new ChestPerceiver().observe(await jpegFrame('minimap-and-hud.jpg', 1_000, NAV_FIXTURES))).screen,
+    ).toBe('unknown');
   });
 });
 
