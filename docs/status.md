@@ -74,6 +74,21 @@ Measured live the same day, and binding for the next attempt:
   forward key press and the map's `G` (移动至目的地) do nothing there. How the party climbs on the
   PC build is open.
 
+## Round 3 — the chest path, measured
+
+- **The farm path exists without `L`.** Pointer mode plus a click on a walkable tile shows
+  `自动移动`; the party walks there and, standing next to a chest, the game offers `打开` /
+  `什么也不做` (`testdata/chest/2026-10-24-opener/prompt-ffxi.jpg`). `L` (移动至宝箱) stays inert on
+  these floors, so the loop needs the pointer command.
+- **The 由谁打开? panel on FFXI is the same panel** (`panel-ffxi.jpg`); the opener parser reads it
+  through jpeg-js. Through GDI+ — the decoder the live World uses — a numeral's right edge lands one
+  pixel over and the whole panel was refused. R30 walks the numeral's edges (0–6 left, 0–2 right)
+  before refusing, which fixes the fixture panel and leaves one live card (爱丽丝, `90`) unreadable:
+  its warm heart fringe fuses with the digits into a single 17-px run. `parseOpener` still refuses
+  the whole panel when any heart is unreadable, so the live chest is not openable yet.
+- The chest prompt screen (`打开` / `什么也不做`) is **not** in `ScreenId`; the perceiver reports
+  `unknown` for it, so the loop cannot yet act on it.
+
 ## Known gaps — declared, not hidden
 
 1. **The opener panel `由谁打开?` has no parser.** There is no fixture for it anywhere in `testdata/`,

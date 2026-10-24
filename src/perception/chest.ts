@@ -1127,17 +1127,48 @@ function readHeartNumber(data: Uint8Array, width: number, slot: number): HeartRe
 
   // The numeral is right-aligned and the grey heart sits left of it; the yellow extent is the number.
   if (x1 - located[located.length - 1]![1] > HEART_RIGHT_INSET_MAX) return { kind: 'unreadable' };
-  const numberBand: PanelBand = {
-    x0: located[0]![0],
-    x1: located[located.length - 1]![1] + 1,
-    y0: band.y0,
-    y1: band.y1,
+  const readExtent = (runs: ReadonlyArray<[number, number]>): number | null => {
+    const extent: PanelBand = {
+      x0: runs[0]![0],
+      x1: runs[runs.length - 1]![1] + 1,
+      y0: band.y0,
+      y1: band.y1,
+    };
+    const background = bandMedianLuma(data, width, extent);
+    return readNumber(
+      data, width, extent, ink, background,
+      variantAtlasOf(HEART_DIGITS), glyphAtoms(runs), HEART_MATCH_MIN, HEART_MARGIN_MIN,
+    );
   };
-  const background = bandMedianLuma(data, width, numberBand);
-  const value = readNumber(
-    data, width, numberBand, ink, background,
-    variantAtlasOf(HEART_DIGITS), glyphAtoms(located), HEART_MATCH_MIN, HEART_MARGIN_MIN,
-  );
+  let value = readExtent(located);
+  /**
+   * R30: the numeral's right edge lands on a pixel and the two decoders disagree by one (measured:
+   * GDI+ 864 vs jpeg-js 863 on the same JPEG, which made a live panel unreadable while its fixture
+   * passed). One column of slack, on the last glyph only, is the fix — the digits still have to
+   * match the atlas.
+   */
+  /**
+   * R30: the numeral's edges land on pixels and the two decoders disagree by one (measured: GDI+ 864
+   * vs jpeg-js 863 on the same JPEG, which made a live panel unreadable while its fixture passed;
+   * and on one card the heart's warm fringe fuses with the digits into a single run). A bounded
+   * search over one to six columns off the left and none to two off the right is cheap — each
+   * candidate is an 8-12 px band — and the atlas still has to name the digits, so a wrong trim
+   * cannot invent a number.
+   */
+  if (value === null) {
+    for (let left = 0; left <= 6 && value === null; left += 1) {
+      for (let right = 0; right <= 2 && value === null; right += 1) {
+        if (left === 0 && right === 0) continue;
+        const runs = located.map((run, index) => {
+          const from = index === 0 ? run[0] + left : run[0];
+          const to = index === located.length - 1 ? run[1] - right : run[1];
+          return [from, to] as [number, number];
+        });
+        if (runs[0]![1] - runs[0]![0] + 1 < MIN_GLYPH_COLUMNS) break;
+        value = readExtent(runs);
+      }
+    }
+  }
   return value === null ? { kind: 'unreadable' } : { kind: 'read', value };
 }
 

@@ -455,3 +455,29 @@ describe('the half-tick budget', () => {
     expect(p50).toBeLessThan(50);
   });
 });
+
+/**
+ * R30: the live path decodes with GDI+, the fixtures with jpeg-js, and the two disagree by one pixel
+ * on a numeral's right edge. This is the case that difference broke: the same panel must parse
+ * through the decoder the World actually uses.
+ */
+describe('parseOpener — through the native decoder', () => {
+  const WINDOWS = process.platform === 'win32';
+
+  it.skipIf(!WINDOWS)('parses panel-00 after a GDI+ decode', async () => {
+    const { decodeJpeg, gdiplusProblem } = await import('../src/engine/gdiplus.mjs');
+    if (gdiplusProblem() !== null) return;
+    const bytes = await readFile(new URL('panel-00.jpg', FIXTURES));
+    const image = await decodeJpeg(bytes);
+    const frame: Frame = {
+      atMs: 0,
+      width: image.width,
+      height: image.height,
+      toRgba: async () => image,
+    };
+    const panel = await parseOpener(frame);
+    expect(panel).not.toBeNull();
+    expect(panel!.members).toHaveLength(6);
+    expect(panel!.members[0]!.willpower).toBe(100);
+  });
+});
