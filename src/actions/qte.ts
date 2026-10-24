@@ -79,9 +79,10 @@ const REST_SETTLE_PX = 2;
  * The frame size the bar's anchors were measured at (contracts §0.5). The rectangle below is asked
  * for in these coordinates whatever the client area is: `qteWindow` cannot see the game window, so
  * the 1920×1080 client-size invariant is the composition root's to assert — `WvdWorld#timeQte` does,
- * and refuses any other size (Task 7).
+ * and refuses any other size (Task 7). Exported so that gate compares against this one fact instead
+ * of hard-coding a second copy that could drift.
  */
-const REFERENCE_FRAME = { width: 1920, height: 1080 } as const;
+export const REFERENCE_FRAME = { width: 1920, height: 1080 } as const;
 
 /** The bar's band and the 解除 annulus in one rectangle: it does not move between samples. */
 const QTE_WINDOW = qteWindow(REFERENCE_FRAME);

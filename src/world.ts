@@ -76,7 +76,7 @@ import { sceneIsStill, sceneSignature, type SceneSignature } from './frames/stil
 import { snapshotBlob, takeSnapshot, type SnapshotSource } from './escalation/image.ts';
 import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
 import { tapOpenerCard } from './actions/opener.ts';
-import { bandSampler, type QteOutcome, type QteTimer } from './actions/qte.ts';
+import { bandSampler, REFERENCE_FRAME, type QteOutcome, type QteRefusal, type QteTimer } from './actions/qte.ts';
 import { openerCardCentre, openerSlot } from './perception/opener.ts';
 import { tileOnScreen } from './perception/map.ts';
 import { chooseOpener } from './policy/chest.ts';
@@ -177,13 +177,6 @@ const BROADCAST_MIN_INTERVAL_MS = 500;
 /** `wvd_act` holdKey defaults, mirroring contracts §8.3's `hazardEscapeHoldMs` and §4's floor. */
 const DEFAULT_ACT_HOLD_MS = 250;
 const MIN_ACT_HOLD_MS = 40;
-/**
- * The client size the QTE anchors were measured at (contracts §0.5). `qteWindow` is asked for in
- * these coordinates whatever the window is, so the composition root asserts the invariant: another
- * size would crop the 1920-anchored rectangle out of a larger frame and read the wrong pixels.
- */
-const REFERENCE_WIDTH = 1920;
-const REFERENCE_HEIGHT = 1080;
 /** Windows set-1 scan codes for the WASD keys; the model names letters, the engine gets integers. */
 const MOVEMENT_SCAN: Readonly<Record<string, number>> = { w: 0x11, a: 0x1e, s: 0x1f, d: 0x20 };
 /**
@@ -193,6 +186,16 @@ const MOVEMENT_SCAN: Readonly<Record<string, number>> = { w: 0x11, a: 0x1e, s: 0
  */
 function fallbackIntent(screen: ScreenId | null): Intent {
   return screen === 'dungeonmap' ? { kind: 'exit' } : { kind: 'open-map' };
+}
+
+/**
+ * The refusals that are the normal end of a pass, not a failed attempt: a dimmed 解除 (which our own
+ * successful press produces for the bar's remaining ~3 s, chest spec §8a) and a bar that left. Logged
+ * as warnings they would be ~30 false alarms per chest, so they are `info`; every other refusal is a
+ * state where the loop wanted to press and could not, and stays `warn` (review, Important).
+ */
+function routineQteRefusal(reason: QteRefusal): boolean {
+  return reason === 'resolved' || reason === 'bar-gone';
 }
 
 /**
@@ -821,11 +824,14 @@ export class WvdWorld implements World {
     }
 
     // The bar is a modal, sub-second window, and this tick's one command is the timing sub-loop. It
-    // runs before the in-flight book-keeping on purpose: the press is the time-critical act, and the
-    // command the bar answers (the opener click) is released by the screen that follows the bar, on
-    // the next tick. No intent is taken from the policy and no route command is sent while the QTE
-    // is on screen.
+    // runs before the walk-aware in-flight book-keeping on purpose: the press is the time-critical
+    // act, and a walk is not answered by a bar. The one record the bar *does* answer — an outstanding
+    // opener click, whose panel dismissed into this screen — is released here, with the same "took
+    // effect" book-keeping as `#advanceInFlight`'s own release, so a panel that comes back after the
+    // bar is a fresh decision instead of a command still waiting. No intent is taken from the policy
+    // and no route command is sent while the QTE is on screen.
     if (observation.screen === 'chest-qte') {
+      if (this.#inFlight?.kind === 'open-chest') this.#openerClickAnswered(observation.screen, now);
       await this.#timeQte(session, frame);
       return;
     }
@@ -964,6 +970,18 @@ export class WvdWorld implements World {
   }
 
   /**
+   * The opener click was answered: the panel dismissed into the screen that followed it — the bar
+   * for a trapped chest, loot, a battle. The command is released and the change is progress, so a
+   * command that failed before may be worth sending again.
+   */
+  #openerClickAnswered(screen: ScreenId, now: number): void {
+    this.#inFlight = null;
+    this.#lastProgressAtMs = now;
+    this.#failed.clear();
+    this.#host?.log.info(`wvd: open-chest took effect: the screen is now ${screen}`);
+  }
+
+  /**
    * Book-keeping for the command sent on an earlier tick. Returns true while it is still waiting.
    *
    * The release rules are per command, because "what this key produces" is per command:
@@ -989,15 +1007,12 @@ export class WvdWorld implements World {
     const inFlight = this.#inFlight;
     if (!inFlight) return false;
 
-    // The opener click is answered by the panel going away — not by a QTE bar, which only a trapped
-    // chest shows (chest §3a). `unknown` is not an answer: it is a frame nothing named, and the panel
-    // may still be under it.
+    // The opener click is answered by the panel going away — into whatever screen follows, the QTE
+    // for a trapped chest included (chest §3a). `unknown` is not an answer: it is a frame nothing
+    // named, and the panel may still be under it.
     if (inFlight.kind === 'open-chest') {
       if (observation.screen !== 'chest-open' && observation.screen !== 'unknown') {
-        this.#inFlight = null;
-        this.#lastProgressAtMs = now;
-        this.#failed.clear();
-        this.#host?.log.info(`wvd: open-chest took effect: the screen is now ${observation.screen}`);
+        this.#openerClickAnswered(observation.screen, now);
         return false;
       }
       const waitedMs = now - inFlight.sinceMs;
@@ -1297,11 +1312,14 @@ export class WvdWorld implements World {
    * the sub-loop must not: the client-size invariant, the press's session, and the session that may
    * end during the wait.
    *
+   * - **A dry run records and sends nothing**, exactly as `#press` does for every other command;
+   *   it reports the intent whatever the window size, because it sends nothing either way.
    * - **The size gate is `qteWindow`'s precondition.** The crop is asked for in the reference frame's
    *   coordinates whatever the client area is, so another size would read the wrong pixels with full
    *   confidence. `actions/qte.ts` names this as the composition root's promise; this is where the
    *   promise becomes code (contracts §0.5).
-   * - **A dry run records and sends nothing**, exactly as `#press` does for every other command.
+   * - **The routine refusals are `info`, not `warn`**: a dimmed 解除 — what our own successful press
+   *   produces for the bar's remaining ~3 s — and a bar that left are how a pass ends normally.
    * - **A throw from `press` or `now` is a skipped press, not a dead session.** `timeQte` returns a
    *   value for every sampler refusal, but those two closures are the World's; without this catch a
    *   throw would reach the tick's catch and end the session as "a module failed".
@@ -1312,15 +1330,17 @@ export class WvdWorld implements World {
    * speed, the planned delay, the zone centre, where the marker was and where it parked.
    */
   async #timeQte(session: WvdSession, frame: Frame): Promise<void> {
-    if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) {
-      this.#host?.log.warn(
-        `wvd: not timing the chest QTE: the game window is ${frame.width}x${frame.height}, not `
-          + `${REFERENCE_WIDTH}x${REFERENCE_HEIGHT}`,
-      );
-      return;
-    }
+    // The dry run reports the intent whatever the window size: it sends nothing either way, and an
+    // operator reading it must see what the live loop would do, not a live-sounding refusal.
     if (this.#cfg.dryRun) {
       this.#host?.log.info('wvd: dry run, would time the chest QTE and press the disarm key');
+      return;
+    }
+    if (frame.width !== REFERENCE_FRAME.width || frame.height !== REFERENCE_FRAME.height) {
+      this.#host?.log.warn(
+        `wvd: not timing the chest QTE: the game window is ${frame.width}x${frame.height}, not `
+          + `${REFERENCE_FRAME.width}x${REFERENCE_FRAME.height}`,
+      );
       return;
     }
     const cfg = this.#cfg;
@@ -1352,7 +1372,11 @@ export class WvdWorld implements World {
     // after it, exactly as the tick itself re-checks after every await.
     if (!this.#running || this.#session !== session) return;
     if (!outcome.ok) {
-      this.#host?.log.warn(`wvd: the chest QTE was not pressed: ${outcome.reason}`);
+      // The normal end of a pass is not a failure: a dimmed 解除 (including right after our own
+      // press) or a bar that left is `info`; the rest are states where the loop wanted to act.
+      const line = `wvd: the chest QTE was not pressed: ${outcome.reason}`;
+      if (routineQteRefusal(outcome.reason)) this.#host?.log.info(line);
+      else this.#host?.log.warn(line);
       return;
     }
     this.#host?.log.info(

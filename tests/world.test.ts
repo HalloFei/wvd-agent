@@ -13,7 +13,7 @@
  * - the three tools answer with prose receipts and refuse what they must.
  */
 import { describe, expect, it } from 'vitest';
-import type { EventEnvelope, ToolCallContext, ToolOutcome, WorldHost } from 'cortico/core/types.ts';
+import type { EventEnvelope, LogLevel, Logger, ToolCallContext, ToolOutcome, WorldHost } from 'cortico/core/types.ts';
 import type {
   ActionResult,
   Actuator,
@@ -122,6 +122,8 @@ interface Pushed {
 
 class FakeHost {
   readonly pushed: Pushed[] = [];
+  /** Every line the loop wrote, with its level: a routine refusal must not read as a failure. */
+  readonly logRecords: Array<{ level: LogLevel; message: string; data?: unknown }> = [];
   /** What the host stamps on every value: the loop's only synchronous delivery evidence. */
   delivery: 'deliver' | 'archive-only' = 'deliver';
   acceptsImage = true;
@@ -141,9 +143,20 @@ class FakeHost {
     };
   }
 
-  get log() {
-    const noop = (): void => undefined;
-    const logger = { trace: noop, debug: noop, info: noop, warn: noop, error: noop, emit: noop, child: () => logger };
+  get log(): Logger {
+    const host = this;
+    const record = (level: LogLevel) => (message: string, data?: unknown): void => {
+      host.logRecords.push({ level, message, data });
+    };
+    const logger: Logger = {
+      trace: record('trace'),
+      debug: record('debug'),
+      info: record('info'),
+      warn: record('warn'),
+      error: record('error'),
+      emit: (level, message) => { host.logRecords.push({ level, message }); },
+      child: () => logger,
+    };
     return logger;
   }
 
@@ -553,6 +566,44 @@ describe('the chest QTE', () => {
     expect(world.isRunning()).toBe(true);
   });
 
+  it('logs the routine end of a bar at info, never warn', async () => {
+    // The bar outlives the press by ~3 s; a dimmed 解除 still clears the perceiver floor, so every
+    // tick after our own press re-enters and refuses with `resolved`. That is the normal end of a
+    // pass, not a failure: read as a warning it is ~30 false alarms per chest.
+    for (const reason of ['resolved', 'bar-gone'] as const) {
+      let calls = 0;
+      const timing: QteTimer = async () => {
+        calls += 1;
+        return { ok: false, reason };
+      };
+      const { world, host } = makeWorld({ observation: qteBar, timing });
+      await started(world, host);
+
+      await world.tick();
+      await world.tick();
+
+      expect(calls).toBe(2);
+      expect(host.logRecords.filter((line) => line.level === 'warn')).toEqual([]);
+      const noted = host.logRecords.filter((line) => line.message.includes(`was not pressed: ${reason}`));
+      // One line per tick that asks: no once-per-bar state is added (decision 6), so the honest
+      // count is one info line per entry, not one per bar.
+      expect(noted).toHaveLength(2);
+      expect(noted.every((line) => line.level === 'info')).toBe(true);
+    }
+  });
+
+  it('keeps a refusal that wanted to act at warn', async () => {
+    const timing: QteTimer = async () => ({ ok: false, reason: 'budget-spent' });
+    const { world, host } = makeWorld({ observation: qteBar, timing });
+    await started(world, host);
+
+    await world.tick();
+
+    const warned = host.logRecords.filter((line) => line.level === 'warn');
+    expect(warned).toHaveLength(1);
+    expect(warned[0]!.message).toContain('budget-spent');
+  });
+
   it('leaves without a press when a stop lands during the sub-loop', async () => {
     let worldRef: WvdWorld | null = null;
     const timing: QteTimer = async (options) => {
@@ -571,6 +622,26 @@ describe('the chest QTE', () => {
 
     expect(made.actuator.calls).toEqual([]);
     expect(made.world.isRunning()).toBe(false);
+  });
+
+  it('warns and keeps the session when the timer throws', async () => {
+    // `timeQte` returns values for its sampler, but `press` and `now` are the World's closures: a
+    // throw there must be a skipped press, not the tick's catch ending the session as "a module
+    // failed".
+    const timing: QteTimer = async () => {
+      throw new Error('boom');
+    };
+    const { world, host } = makeWorld({ observation: qteBar, timing });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(world.isRunning()).toBe(true);
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stopped')).toEqual([]);
+    const warned = host.logRecords.filter((line) => line.level === 'warn');
+    expect(warned).toHaveLength(1);
+    expect(warned[0]!.message).toContain('could not be timed');
+    expect(warned[0]!.message).toContain('boom');
   });
 
   it('does not time the bar when the client area is not 1920x1080', async () => {
@@ -595,6 +666,12 @@ describe('the chest QTE', () => {
     expect(seen).toHaveLength(1);
     expect(actuator.calls).toEqual([]);
     expect(world.isRunning()).toBe(true);
+    // The operator has to be able to fix the window: the warning names the size it saw.
+    const warned = host.logRecords.filter(
+      (line) => line.level === 'warn' && line.message.includes('not timing the chest QTE'),
+    );
+    expect(warned).toHaveLength(1);
+    expect(warned[0]!.message).toContain('2560x1440');
   });
 
   it('sends no press in a dry run, even on the bar', async () => {
@@ -619,6 +696,51 @@ describe('the chest QTE', () => {
     await live.world.tick();
     expect(seen).toHaveLength(1);
     expect(live.actuator.calls).toEqual([`key ${DISARM_SCAN} ${WVD_DEFAULTS.pressHoldMs}`]);
+  });
+
+  it('reports the dry-run intent whatever the window size', async () => {
+    // A dry run reports what it would do; the window-size refusal is a live-run gate, and the
+    // operator reading a dry run must see the `would`, not a live-sounding "not timing".
+    const source = new ScriptedSource();
+    source.capture = async (): Promise<Frame> => ({ ...frame(100), width: 2560, height: 1440 });
+    const seen: QteTimingOptions[] = [];
+    const timing: QteTimer = async (options) => {
+      seen.push(options);
+      return { ok: false, reason: 'resolved' };
+    };
+    const { world, host } = makeWorld({ observation: qteBar, timing, source, cfg: { dryRun: true } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(seen).toEqual([]);
+    expect(host.logRecords.some((line) => line.message.includes('dry run, would time the chest QTE'))).toBe(true);
+    expect(host.logRecords.some((line) => line.message.includes('not timing the chest QTE'))).toBe(false);
+  });
+
+  it('clears the opener click when the bar takes the screen, so a returning panel is clickable', async () => {
+    // The panel dismisses into the bar: that is the click's answer, whether the bar is read now or
+    // after it goes. If the record survived the bar, a panel that comes back would be "still in
+    // flight" and the loop would wait out `mapOpenTimeoutMs` instead of choosing a card again.
+    const timing: QteTimer = async () => ({ ok: false, reason: 'resolved' });
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: openerPanel, timing });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784']);
+
+    perceiver.observation = qteBar;
+    clock.advance(100);
+    await world.tick();
+    expect(host.logRecords.some(
+      (line) => line.message.includes('open-chest took effect: the screen is now chest-qte'),
+    )).toBe(true);
+
+    // The bar ended with the panel still up: the click is not outstanding, so the route chooses.
+    perceiver.observation = openerPanel;
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784', 'tap 963,784']);
   });
 });
 
