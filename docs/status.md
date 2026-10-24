@@ -89,6 +89,21 @@ Measured live the same day, and binding for the next attempt:
 - The chest prompt screen (`打开` / `什么也不做`) is **not** in `ScreenId`; the perceiver reports
   `unknown` for it, so the loop cannot yet act on it.
 
+### What the perceivers make of the FFXI screens (measured 2026-10-24)
+
+| Frame | Composite verdict |
+| --- | --- |
+| 由谁打开? panel (`panel-ffxi.jpg`) | `chest-open` 1.00 — the chest module's own screen |
+| dungeon map, third floor | `dungeonmap` (after R27a–R29) with three chests |
+| combat (`combat.jpg`, auto + 倍速 on) | **unknown 0.20** — no recogniser names a battle |
+| chest prompt 打开 (`prompt-ffxi.jpg`) | **unknown 0.20** — not in `ScreenId` |
+| 3D view walking | `dungeon` (HUD) |
+
+So two of the five screens a farm cycle needs are unnamed on these floors: **combat** and the
+**chest prompt**. The loop classifies an unknown screen at positive confidence as an escalation, so
+a session on this floor would escalate the moment a battle starts — which it did, twice, during
+this survey.
+
 ## Known gaps — declared, not hidden
 
 1. **The opener panel `由谁打开?` has no parser.** There is no fixture for it anywhere in `testdata/`,
