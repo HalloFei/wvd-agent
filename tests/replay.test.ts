@@ -236,6 +236,23 @@ describe('readRecordedBar', () => {
     }
   });
 
+  it('names every check it disables when the plan check asked for the bar', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wvd-replay-bar-'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(readRecordedBar(dir, { planCheck: true })).resolves.toBeNull();
+
+      // `planCheck` on with no bar yields `planned: 0` and `planViolations: []`; the warning is
+      // the only thing that can stop that from reading as a clean check. It must name the plan
+      // check as well as the geometry cross-check.
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no measurements.json'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('plan check'));
+    } finally {
+      warn.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reads the marker's bounce when the recording states it", async () => {
     const dir = await mkdtemp(join(tmpdir(), 'wvd-replay-bar-'));
     try {
@@ -265,6 +282,21 @@ describe('readRecordedBar', () => {
 
       await expect(readRecordedBar(dir)).resolves.toBeNull();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('no readable bar'));
+    } finally {
+      warn.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('names the plan check too when the bar itself is unreadable', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wvd-replay-bar-'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await writeFile(join(dir, 'measurements.json'), JSON.stringify({ bar: {} }));
+
+      await expect(readRecordedBar(dir, { planCheck: true })).resolves.toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no readable bar'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('plan check'));
     } finally {
       warn.mockRestore();
       await rm(dir, { recursive: true, force: true });

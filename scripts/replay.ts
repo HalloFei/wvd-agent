@@ -145,9 +145,11 @@ export async function replay(dir: string, options: ReplayOptions = {}): Promise<
 
   const recording = await findRecording(dir);
   const info = probeVideo(recording);
-  const recordedBar = await readRecordedBar(dir);
   const bandCheck = options.bandCheck === true;
   const planCheck = options.planCheck === true;
+  // The warning names the plan check when it asked for the bar: `planned: 0` with no violations
+  // would otherwise look like a clean check.
+  const recordedBar = await readRecordedBar(dir, { planCheck });
 
   const screens = emptyScreens();
   const failures: string[] = [];
@@ -529,12 +531,28 @@ const GEOMETRY_WIDTH_SLACK_PX = 2 * GEOMETRY_EDGE_SLACK_PX;
 /** Centres are the thing a tap plan uses; measured spread was ±5.5 px. */
 const GEOMETRY_CENTRE_SLACK_PX = 10;
 
-export async function readRecordedBar(dir: string): Promise<RecordedBar | null> {
+export interface RecordedBarOptions {
+  /**
+   * Whether the caller also asked for the plan check, which needs the recorded zones. Only used to
+   * make the warning name every check the missing bar disables: `planned: 0` with an empty
+   * `planViolations` must not read as a clean plan check.
+   */
+  readonly planCheck?: boolean;
+}
+
+export async function readRecordedBar(
+  dir: string,
+  options: RecordedBarOptions = {},
+): Promise<RecordedBar | null> {
+  const disabled =
+    options.planCheck === true
+      ? 'the chest-qte geometry cross-check and the plan check are'
+      : 'the chest-qte geometry cross-check is';
   let text: string;
   try {
     text = await readFile(join(dir, 'measurements.json'), 'utf8');
   } catch {
-    warn(`no measurements.json in ${dir}; the chest-qte geometry cross-check is off`);
+    warn(`no measurements.json in ${dir}; ${disabled} off`);
     return null;
   }
 
@@ -555,7 +573,7 @@ export async function readRecordedBar(dir: string): Promise<RecordedBar | null> 
     bar = null;
   }
   if (!bar) {
-    warn(`measurements.json in ${dir} has no readable bar; the chest-qte geometry cross-check is off`);
+    warn(`measurements.json in ${dir} has no readable bar; ${disabled} off`);
   }
   return bar;
 }
