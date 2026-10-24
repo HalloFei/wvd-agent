@@ -155,13 +155,14 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
         type: 'number', title: '重选提前量比例', description: '提前量超过区间宽度的这个比例时重选。', minimum: 0, maximum: 1,
       },
       'worlds.wvd.qteLatencyMs': {
-        type: 'integer', title: 'QTE 输入延迟', description: '实测的输入延迟，毫秒。',
+        type: 'integer', title: 'QTE 输入延迟', description: '实测的输入延迟，毫秒。', minimum: 1,
       },
       'worlds.wvd.qteDecelPxPerS2': {
-        type: 'integer', title: 'QTE 减速度', description: '拟合的滑行常数，像素/秒²；暂定值。',
+        type: 'integer', title: 'QTE 减速度', description: '拟合的滑行常数，像素/秒²；暂定值。', minimum: 1,
       },
       'worlds.wvd.qteMinWindowMs': {
-        type: 'integer', title: 'QTE 最小窗口', description: '比这更窄的过法直接放弃，毫秒。',
+        type: 'integer', title: 'QTE 最小窗口',
+        description: '比这更窄的过法直接放弃，毫秒；零表示不设下限。', minimum: 0,
       },
       'worlds.wvd.qteAttemptsFallback': {
         type: 'integer', title: 'QTE 次数兜底', description: '读不出计数时使用。',

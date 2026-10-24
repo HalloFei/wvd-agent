@@ -116,6 +116,12 @@ describe('WVD World definition', () => {
     // `timeQte` refuses a budget below 1 as `misconfigured`; the schema is where a bad setting is
     // caught before the World has to run it.
     expect(properties['worlds.wvd.qteSubLoopMs']).toMatchObject({ type: 'integer', minimum: 1 });
+    // The three timer inputs have no runtime guard that can name them: a latency or decel of zero
+    // is not a measurement, and a negative window floor is not a floor (zero is a legal "no
+    // floor"). The schema is where a bad setting stops, before the sub-loop plans a press with it.
+    expect(properties['worlds.wvd.qteLatencyMs']).toMatchObject({ type: 'integer', minimum: 1 });
+    expect(properties['worlds.wvd.qteDecelPxPerS2']).toMatchObject({ type: 'integer', minimum: 1 });
+    expect(properties['worlds.wvd.qteMinWindowMs']).toMatchObject({ type: 'integer', minimum: 0 });
     expect(properties['worlds.wvd.rerollLeadRatio']).toMatchObject({ type: 'number', minimum: 0, maximum: 1 });
     // the snapshot width is the one value the child refuses outside the wire bounds; the schema is
     // where a bad setting is caught, not a 5 s engine timeout that never names the field
