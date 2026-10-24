@@ -141,11 +141,39 @@ export type Observation =
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }
+
+/**
+ * One screen's standing on one frame (§2). `support` is the frame's cheap evidence for the screen,
+ * 0 (none) to 1 (strongest measured) — ordinal, not a calibrated probability; `ruledOut` means the
+ * frame's own evidence makes the screen impossible, whatever a recogniser says.
+ */
+export interface ScreenStanding {
+  readonly screen: ScreenId;
+  readonly support: number;
+  readonly ruledOut: boolean;
+}
+
+/** Every screen's standing on one frame, and the answer those standings produced (§3). */
+export interface Classification {
+  readonly atMs: number;
+  readonly standings: readonly ScreenStanding[];
+  readonly answer: Observation;
+}
+
+export interface Classifier extends Perceiver {
+  classify(frame: Frame): Promise<Classification>;
+}
 ```
 
-Each screen type is its own recogniser behind this interface. A `CompositePerceiver` tries them in
-order and returns the first that exceeds its confidence floor; adding a screen means adding a
-recogniser, not editing the policy.
+Each screen type is its own recogniser behind this interface. The classifier computes every
+screen's standing from the frame's cheap facts first (`screens.ts`), deletes the screens the frame
+rules out, and then materialises the survivors in order — a recogniser cannot win a screen the
+frame's evidence forbids. Adding a screen means adding a recogniser and its evidence row, not
+editing the policy.
+
+A standing's `support` is ordinal: the strongest evidence measured for a screen scores 1, and 0 is
+"this frame says nothing either way". It is not a calibrated posterior — the labelled corpus is
+about twenty screens — so `ruledOut`, not the number, is what the classifier acts on.
 
 **`origin` is what makes a tile clickable.** The map's canvas scrolls, so no absolute origin is a
 constant; the chevron sits at the centre of the party's cell and is measured per frame. The

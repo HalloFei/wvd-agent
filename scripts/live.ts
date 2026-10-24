@@ -152,8 +152,20 @@ try {
   switch (command) {
     case 'status':
     case 'observe': {
-      const { observation } = await observe();
-      out({ ok: true, foreground: await foreground(client), ...describe(observation) });
+      const classification = await see.classify(await source.capture());
+      out({
+        ok: true,
+        foreground: await foreground(client),
+        ...describe(classification.answer),
+        // Every screen the frame speaks about: what it supports, and what it rules out.
+        standings: classification.standings
+          .filter((standing) => standing.support > 0 || standing.ruledOut)
+          .map((standing) => ({
+            screen: standing.screen,
+            support: standing.support,
+            ruledOut: standing.ruledOut,
+          })),
+      });
       break;
     }
     case 'focus': {

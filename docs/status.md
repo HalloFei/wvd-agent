@@ -221,11 +221,31 @@ Live run 2026-10-24 23:33, from the town to the floor:
   means the dungeon — is now the Hud's fallback: the saturated yellow player arrow measures **35 px**
   in both 3D views and **0** on every other committed screen. The live view named `dungeon` 0.8; the
   minimap tap at (1787,96) opened the map; the floor key matched again. The replay tally moves with
-  it: **44 unknown + 7 dungeon** (was 51 unknown).
+  it: **48 unknown + 3 dungeon** (was 51 unknown) — see the screen table below.
 - A stale capture during the first travel is now retried three times; the action also zooms in (E)
   after the drags, per 诺村/北穿.
 
 The rest town is 诺森霍洛村 (`vnh`), chosen by the operator.
+
+## Screen classification (2026-10-25)
+
+Every screen now has a **standing** on every frame: the frame's cheap facts (`facts.ts` — the
+minimap's arrow, the centred title band's ink, the two battle-button windows) either support the
+screen or rule it out, and a recogniser cannot win a screen the frame rules out
+(`CompositePerceiver.classify` returns the standings with its answer, and the live CLI prints them).
+
+- **The zeros are the measured part**, over 1920×1080 frames: a battle carries 0–1 px of title ink
+  and 0 arrow px; every map 759–1 824 title px; the 3D view 35 arrow px and no title; the town,
+  Dungeon Select, the opener panel and the chest QTE 865–5 251 title px.
+- **What it changed.** The B1F map `nav-1024-0213/popup.jpg` fills both battle windows (0.0355 /
+  0.0212) and was fought on whenever the map parser refused the frame; its title band now rules
+  `combat` out before the windows are read. The chest recording's light burst (frames 124–127,
+  title 6 400–7 075 px) was named `dungeon` by the arrow alone and is now `unknown` at 0.8: the
+  frame is drawn, the screen is not the walking view.
+- **What it does not do.** The standings are ordinal, not calibrated — the labelled corpus is about
+  twenty screens — and the recognisers are still tried in an order, because scoring every
+  recogniser on every frame would not fit the 50 ms half-tick. The table decides what is impossible;
+  the order only decides what to materialise first.
 
 ## Open work — the task board is the authority
 

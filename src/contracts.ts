@@ -107,6 +107,28 @@ export type Observation =
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }
 
+/**
+ * One screen's standing on one frame (§2). `support` is the frame's cheap evidence for the screen,
+ * 0 (none) to 1 (strongest measured) — ordinal, not a calibrated probability; `ruledOut` means the
+ * frame's own evidence makes the screen impossible, whatever a recogniser says.
+ */
+export interface ScreenStanding {
+  readonly screen: ScreenId;
+  readonly support: number;
+  readonly ruledOut: boolean;
+}
+
+/** Every screen's standing on one frame, and the answer those standings produced (§3). */
+export interface Classification {
+  readonly atMs: number;
+  readonly standings: readonly ScreenStanding[];
+  readonly answer: Observation;
+}
+
+export interface Classifier extends Perceiver {
+  classify(frame: Frame): Promise<Classification>;
+}
+
 // §4 Actuation
 
 export type ActionFailure = 'unavailable' | 'rejected' | 'timeout';
