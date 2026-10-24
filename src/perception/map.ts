@@ -154,17 +154,34 @@ const PITCH_MIN = 35.5;
 const PITCH_MAX = 36.5;
 const PITCH_STEP = 0.05;
 const PHASE_STEP = 0.1;
-/** Best 36.0-px fit must be tighter than this, or the frame is not the lattice being read. */
-const LATTICE_RMS_MAX = 3.5;
 /**
- * R29: the FFXI collab draws its map translucent over the 3D view, so a lit background (the harken's
- * glow) adds ink the clean fixtures never had and the fit residual rises to ~5.8. The lattice is one
- * of five gates and the only one that is a *quality* test rather than a presence test — the readout,
- * the dark title bar, the map ink and the title string all still have to pass — so the ceiling is
- * raised for the translucent style rather than spending the residual's discrimination on it.
+ * G6's quality test — **support**, not residual.
+ *
+ * A lattice line is a line the fitted 36-px grid explains: its centre lies within
+ * `LATTICE_SUPPORT_TOLERANCE` px of a cell boundary. Counting those is what a translucent map can
+ * carry and a residual cannot. The FFXI floors draw the map over the 3D view, and the harken's light
+ * column (white and unsaturated, so it counts as map ink) lights long runs of the row profile that
+ * `lineCentres` turns into one point each. Such a point is no evidence against the grid — a lit band
+ * cannot erase a wall line — but it is an outlier to a least-squares residual, and that is how the
+ * live 2026-10-25 capture at `X: 7 Y: 24` was refused at 7.86 px against R29's 6.5 ceiling while
+ * every other gate read the frame.
+ *
+ * Measured 2026-10-25 over every committed 1920×1080 frame, X-axis lines within 2 px of the fitted
+ * grid: maps 9–19 (B1F 15, popup 19, 第四区 12, 第三区 10, its glow capture 9, the live capture 9);
+ * non-maps at most 3 (the town HUDs 0–2, Dungeon Select 2, the rest fewer than eight detected
+ * lines). The floor is 6 — three above the best non-map and three below the worst map — and the
+ * presence test already requires eight detected lines, so a frame has to explain six of the lines it
+ * found with one 36-px grid before it is read as a map.
+ *
+ * Only the X axis is gated. On the translucent floors the same glow crosses *rows* over the panel's
+ * lower half, and the residual-optimal Y grid explains almost none of them (第三区's glow capture 2,
+ * the live capture 1), so that axis cannot decide. It is still fitted, because its phase places the
+ * icon rows and the chevron's own cell, and the chevron's cell residual is what validates that phase
+ * (≤6 px on every accepted frame; 0.69 / 1.18 px on the live capture).
  */
-const LATTICE_RMS_MAX_TRANSLUCENT = 6.5;
-/** Confidence 1.0 needs rms ≤ 2 px (research §9). */
+const LATTICE_SUPPORT_TOLERANCE = 2;
+const LATTICE_SUPPORT_MIN = 6;
+/** Confidence 1.0 needs the fitted 36-px grid's residual ≤ 2 px (research §9). */
 const LATTICE_CLEAN_RMS = 2;
 /** A chevron further than this from a cell centre has no trustworthy click origin (research §8). */
 const CHEVRON_CELL_TOLERANCE = 6;
@@ -444,10 +461,12 @@ function parseImage(image: RgbaImage): ParsedMap | null {
   if (!title) return null;
 
   // 5. G6: the wall lattice ----------------------------------------------------------------
+  // Both axes must be *present* (a fit over ≥8 detected lines); the quality test is the X axis's
+  // support — the FFXI glow that defeats a residual crosses the Y profile, not the X one.
   const latticeX = fitLattice(panel.columns, LATTICE_X);
   const latticeY = fitLattice(panel.rows, LATTICE_Y);
   if (!latticeX || !latticeY) return null;
-  if (latticeX.rms > LATTICE_RMS_MAX_TRANSLUCENT || latticeY.rms > LATTICE_RMS_MAX_TRANSLUCENT) return null;
+  if (latticeX.support < LATTICE_SUPPORT_MIN) return null;
 
   // 6. G5: the chevron (the click origin) ----------------------------------------------------
   const chevron = findChevron(panel.yellow, width, latticeX.phase, latticeY.phase);
@@ -889,6 +908,8 @@ interface LatticeFit {
   readonly pitch: number;
   readonly phase: number;
   readonly rms: number;
+  /** Lines the fitted grid explains, within `LATTICE_SUPPORT_TOLERANCE` px. */
+  readonly support: number;
 }
 
 /** Column/row centres of long lines, i.e. runs above `LATTICE_LINE_MIN_INK` merged over ≤2 px. */
@@ -909,6 +930,14 @@ function lineCentres(profile: Float64Array, origin: number): number[] {
   return centres;
 }
 
+/**
+ * The 36.0-px grid this profile admits, and how many of its lines the grid explains.
+ *
+ * The grid itself is still the one with the tightest residual: the phase places icon rows and the
+ * chevron's cell, and a count cannot resolve a phase better than 2 px. `support` is counted on that
+ * grid, and it is what G6's quality test reads — so the geometry every other gate depends on is
+ * unchanged, while a lit band that drags the residual no longer decides whether the map is a map.
+ */
 function fitLattice(profile: Float64Array, origin: number): LatticeFit | null {
   const centres = lineCentres(profile, origin);
   if (centres.length < LATTICE_MIN_LINES) return null;
@@ -921,12 +950,14 @@ function fitLattice(profile: Float64Array, origin: number): LatticeFit | null {
     for (let phaseStep = 0; phaseStep <= phaseSteps; phaseStep += 1) {
       const phase = phaseStep * PHASE_STEP;
       let sumSq = 0;
+      let support = 0;
       for (const centre of centres) {
         const residual = centre - (phase + Math.round((centre - phase) / pitch) * pitch);
         sumSq += residual * residual;
+        if (Math.abs(residual) <= LATTICE_SUPPORT_TOLERANCE) support += 1;
       }
       const rms = Math.sqrt(sumSq / centres.length);
-      if (!best || rms < best.rms) best = { pitch, phase, rms };
+      if (!best || rms < best.rms) best = { pitch, phase, rms, support };
     }
   }
   return best;

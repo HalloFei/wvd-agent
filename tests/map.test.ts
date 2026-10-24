@@ -211,6 +211,41 @@ describe('readMap — the FFXI third floor', () => {
     expect(floorKeyDistance(clean!.titleKey, glow!.titleKey)).toBeLessThanOrEqual(8);
   });
 });
+
+/**
+ * The live capture the World refused on 2026-10-25 (task t-mvmln6jh-zy0cij). With the party standing
+ * at the harken, its light column lights long runs of the panel's row profile, the residual quality
+ * test read 7.86 px against the 6.5 ceiling, and `status` answered `unknown` 0.2 for a map the rest
+ * of the gates had already read. The X axis of the same frame is clean; G6 now counts the lines one
+ * 36-px grid explains (support) instead of the residual every lit run leaves. The frame is the
+ * session's own 1920×1080 capture, committed unmodified.
+ */
+describe('readMap — the live 第三区 capture the glow refused (2026-10-25)', () => {
+  const LIVE = new URL('../testdata/nav-2026-10-25-ffxi4f/', import.meta.url);
+
+  async function liveFrame(name: string): Promise<Frame> {
+    const bytes = await readFile(new URL(name, LIVE));
+    const decoded = jpeg.decode(bytes, { useTArray: true });
+    const image: RgbaImage = { data: decoded.data, width: decoded.width, height: decoded.height };
+    return { atMs: 1_000, width: decoded.width, height: decoded.height, toRgba: async () => image };
+  }
+
+  it('reads the party cell and the floor markers through the harken glow', async () => {
+    const map = await readMap(await liveFrame('third-floor-harken.jpg'));
+
+    expect(map).not.toBeNull();
+    // The readout the operator saw on screen: X: 7 Y: 24.
+    expect(map!.player).toEqual({ x: 7, y: 24 });
+
+    const of = (kind: MapIcon['kind']): string[] =>
+      map!.icons.filter((icon) => icon.kind === kind).map((icon) => cell(icon.at)).sort();
+    // The same cells the clean capture of this floor carries (the tests above): a glow moves no mark.
+    expect(of('harken')).toEqual(['6,24']);
+    expect(of('hole')).toEqual(['1,17', '20,8']);
+    // R27b: the floor gate compares fingerprints with a small tolerance; the glow shifts a few bits.
+    expect(floorKeyDistance(map!.titleKey, '0c0280000d6ff0000d7ffc0008c37000')).toBeLessThanOrEqual(8);
+  });
+});
 /**
  * The grid→screen transform a tile walk is aimed with (contracts §3 `origin`): exactly the inverse
  * of `findIcons`' own `toGrid`, so the cell the parser names and the cell a tap lands on are one

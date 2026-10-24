@@ -96,6 +96,12 @@ existed (`research-map-parser.md`). What it settled:
   ink count (15k–200k px), eight wall lines at 36 px pitch, then the chevron. Across 198 non-map frames
   the run count was never eight; the HUD-only fixture yields two runs and 1 424 ink px against the map's
   36 380.
+  The lattice line count's quality test is a **support count**, not a residual (2026-10-25): the frame
+  must explain at least 6 of its detected X-axis lines with one 36-px grid, because the FFXI floors draw
+  the map translucent over the 3D view and the harken's glow lights long runs of the row profile that a
+  least-squares residual would follow. The grid is still fitted by minimum residual — its phase is what
+  places the icons and the chevron's cell — and the Y axis is cross-checked by the chevron's own cell
+  residual rather than gated on support. `src/perception/map.ts` carries the measurements.
 - **The 自动移动 banner** sits at x 1223–1402, y 533–567 (centre 1313, 550); double-click the text centre,
   not the arrow tips.
 

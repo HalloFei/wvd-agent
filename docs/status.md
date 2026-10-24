@@ -251,6 +251,29 @@ screen or rule it out, and a recogniser cannot win a screen the frame rules out
   recogniser on every frame would not fit the 50 ms half-tick. The table decides what is impossible;
   the order only decides what to materialise first.
 
+## The lattice gate is a support count (2026-10-25)
+
+The live 第三区 capture the farm owed was refused as `unknown` while the party stood at the harken:
+`X: 7 Y: 24` on screen and every gate but one readable. The gate was G6's residual ceiling — 7.86 px
+against R29's 6.5 — and the residual was not measuring the lattice. The harken's light column is
+white and unsaturated, so it counts as map ink and lights long runs of the row profile (52, 4 and 20
+rows where the committed glow capture has one 82-row band); `lineCentres` centres each run, so that
+band contributed three off-grid points instead of one, and a least-squares fit followed them.
+
+G6's quality test is now **support**: how many of the frame's own line centres lie within 2 px of the
+fitted 36-px grid, on the X axis only. Measured over every committed 1920×1080 frame: maps 9–19 (B1F
+15, popup 19, 第四区 12, 第三区 10, its glow capture 9, the live capture 9); non-maps at most 3 (the
+town HUDs 0–2, Dungeon Select 2, the rest fewer than eight detected lines). The floor is 6. The Y
+axis is still fitted for its phase — the icon rows and the chevron's cell — but it cannot carry a
+quality test on these floors: the glow crosses its rows, and its support reads 1–2 there.
+
+The fit itself is unchanged (it still minimises the residual: the phase is geometry, not quality), so
+no accepted frame moved — `third-floor.jpg` still reads 13,23 at chevron (959.5, 264.7), the B1F and
+第四区 fixtures are unchanged, and no refused frame became a map. The live capture is committed as
+`testdata/nav-2026-10-25-ffxi4f/third-floor-harken.jpg` and pinned in `tests/map.test.ts`; the
+composite names it `dungeonmap` 0.8, reading the party at 7,24 with the harken at 6,24 and the two
+holes at 1,17 / 20,8 — the clean capture's own cells. 482 tests, typecheck clean.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only
