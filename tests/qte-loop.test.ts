@@ -189,6 +189,9 @@ describe('timeQte', () => {
     expect(presses).toHaveLength(1);
     expect(presses[0]).toBeCloseTo(66 + out.atMs, 0);   // the reading's clock plus the plan's delay
     expect(out.restX).toBe(900);
+    // The rest read repeated 900 one cadence later: two readings within the settle tolerance are
+    // what makes this a rest (#18's fit must not take a moving sample for one).
+    expect(out.restSettled).toBe(true);
     // Every sample after the first is told where the marker was last read — absolute, full-frame.
     expect(sampler.passedPrevious.slice(0, 3)).toEqual([undefined, 700, 720]);
   });
@@ -310,6 +313,7 @@ describe('timeQte', () => {
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.restX).toBeNull();
+      expect(out.restSettled).toBe(false);
       expect(out.target).toBe(1111);
     }
   });
@@ -342,7 +346,10 @@ describe('timeQte', () => {
     // A capture that throws after the press is the same unreadable rest as a refusal: `null`, and
     // the press still reports.
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.restX).toBeNull();
+    if (out.ok) {
+      expect(out.restX).toBeNull();
+      expect(out.restSettled).toBe(false);
+    }
   });
 
   it('does not read a rest position when the press is refused', async () => {
@@ -449,7 +456,7 @@ describe('timeQte', () => {
     expect(presses).toHaveLength(0);
   });
 
-  it('reads the last position when the marker is still moving at the rest deadline', async () => {
+  it('reads the last position, unsettled, when the marker is still moving at the rest deadline', async () => {
     const clock = virtualClock(0);
     const scripted = scriptedSampler(
       [
@@ -484,6 +491,9 @@ describe('timeQte', () => {
     // Nothing settled inside REST_READ_MS: report the last place it was seen, not null.
     expect(out.restX).not.toBeNull();
     expect(out.restX).toBe(handed[handed.length - 1]);
+    // But name it for what it is: the marker was still moving when the window closed, so this
+    // position is not a rest and the `qteDecelPxPerS2` fit must not read it as one.
+    expect(out.restSettled).toBe(false);
     // Every sleep after the plan's is a restart-poll, not a spin on an instant sampler.
     expect(clock.waits.length).toBeGreaterThan(1);
     expect(clock.waits.slice(1).every((ms) => ms === 16)).toBe(true);

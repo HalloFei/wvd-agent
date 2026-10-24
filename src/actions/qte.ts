@@ -132,6 +132,13 @@ export interface QteTiming {
   readonly target: number;        // the zone centre the plan aimed at
   readonly tapX: number;          // the marker's position on the planning reading
   readonly restX: number | null;  // where it parked, when the bar was still there to read
+  /**
+   * Whether `restX` is a rest at all: true only when two consecutive readings agreed within the
+   * settle tolerance (which includes a marker that was already still when the read began). A marker
+   * still moving at the deadline reports its last position with `restSettled: false` — the fit
+   * `qteDecelPxPerS2` (#18) makes from `(v, tapX, restX)` must not read a moving sample as a rest.
+   */
+  readonly restSettled: boolean;
 }
 
 export type QteOutcome = QteTiming | { readonly ok: false; readonly reason: QteRefusal };
@@ -244,20 +251,29 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
     const pressed = await press();
     if (!pressed.ok) return { ok: false, reason: 'press-refused' };
 
-    const restX = await readRest(sampler, previousMarkerX, now, wait, restDeadlineLimitMs);
-    return { ok: true, v, atMs: plan.atMs, target: plan.target, tapX: reading.markerX, restX };
+    const rest = await readRest(sampler, previousMarkerX, now, wait, restDeadlineLimitMs);
+    return {
+      ok: true,
+      v,
+      atMs: plan.atMs,
+      target: plan.target,
+      tapX: reading.markerX,
+      restX: rest.restX,
+      restSettled: rest.restSettled,
+    };
   }
 }
 
 /**
- * Where the marker parked after the press, or `null` when the bar stopped being readable. Two
- * readings within `REST_SETTLE_PX` mean it has settled; a still-moving marker is reported at the
- * deadline, where it was last seen. The deadline is the settle window clamped to
- * `budgetMs + REST_READ_MS` from the call's start, so the whole call stays bounded; polls are
- * spaced by `REST_POLL_MS`, so an instant sampler on a frozen clock cannot turn this into a hot
- * spin. A refusal or a throw is not the press's failure: the press happened, the bar just went away
- * (contracts §0.6). This read ignores `enabled` on purpose — the 解除 button reading dimmed is
- * exactly what a successful press looks like.
+ * Where the marker parked after the press, and whether it is a rest at all. Two readings within
+ * `REST_SETTLE_PX` mean it has settled (`restSettled: true`, `restX` is the second of them); a
+ * still-moving marker is reported at the deadline (`restSettled: false`) where it was last seen,
+ * because losing the position is worse than naming it as unsettled. The deadline is the settle
+ * window clamped to `budgetMs + REST_READ_MS` from the call's start, so the whole call stays
+ * bounded; polls are spaced by `REST_POLL_MS`, so an instant sampler on a frozen clock cannot turn
+ * this into a hot spin. A refusal or a throw is not the press's failure: the press happened, the bar
+ * just went away (contracts §0.6). This read ignores `enabled` on purpose — the 解除 button reading
+ * dimmed is exactly what a successful press looks like.
  */
 async function readRest(
   sampler: QteSampler,
@@ -265,7 +281,7 @@ async function readRest(
   now: () => number,
   wait: (ms: number) => Promise<void>,
   deadlineLimitMs: number,
-): Promise<number | null> {
+): Promise<{ readonly restX: number | null; readonly restSettled: boolean }> {
   const deadlineMs = Math.min(now() + REST_READ_MS, deadlineLimitMs);
   let lastX: number | null = null;
   while (now() <= deadlineMs) {
@@ -273,16 +289,18 @@ async function readRest(
     try {
       sample = await sampler.sample(previousMarkerX);
     } catch {
-      return null;
+      return { restX: null, restSettled: false };
     }
-    if (!sample.ok) return null;
+    if (!sample.ok) return { restX: null, restSettled: false };
     const markerX = sample.reading.markerX;
     previousMarkerX = markerX;
-    if (lastX !== null && Math.abs(markerX - lastX) <= REST_SETTLE_PX) return markerX;
+    if (lastX !== null && Math.abs(markerX - lastX) <= REST_SETTLE_PX) {
+      return { restX: markerX, restSettled: true };
+    }
     lastX = markerX;
     await wait(REST_POLL_MS);
   }
-  return lastX;
+  return { restX: lastX, restSettled: false };
 }
 
 // ---------------------------------------------------------------------------------------------

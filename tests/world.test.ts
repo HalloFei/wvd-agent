@@ -533,7 +533,7 @@ describe('the chest QTE', () => {
     const timing: QteTimer = async (options) => {
       seen.push(options);
       await options.press();
-      return { ok: true, v: 606, atMs: 120, target: 808, tapX: 700, restX: 809 };
+      return { ok: true, v: 606, atMs: 120, target: 808, tapX: 700, restX: 809, restSettled: true };
     };
     const { world, host, actuator } = makeWorld({ observation: qteBar, timing });
     await started(world, host);
@@ -546,6 +546,13 @@ describe('the chest QTE', () => {
     expect(seen[0]!.budgetMs).toBe(WVD_DEFAULTS.qteSubLoopMs);
     // The disarm is Space (0x39), held for the configured duration — a key, not a tap, not a literal.
     expect(actuator.calls).toEqual([`key ${DISARM_SCAN} ${WVD_DEFAULTS.pressHoldMs}`]);
+    // The success line is #18's fit input: the plan's delay is `delayMs` (every `atMs` is a clock
+    // stamp, contracts §0.4), and the rest read says whether it settled.
+    const pressed = host.logRecords.filter((line) => line.message.includes('chest QTE pressed'));
+    expect(pressed).toHaveLength(1);
+    expect(pressed[0]!.message).toContain('delayMs=120');
+    expect(pressed[0]!.message).toContain('restX=809');
+    expect(pressed[0]!.message).toContain('settled=true');
   });
 
   it('does not press when the sub-loop gives up, and the tick carries on', async () => {
@@ -611,7 +618,7 @@ describe('the chest QTE', () => {
       await worldRef!.stop();
       const pressed = await options.press();
       return pressed.ok
-        ? { ok: true, v: 0, atMs: 0, target: 0, tapX: 0, restX: null }
+        ? { ok: true, v: 0, atMs: 0, target: 0, tapX: 0, restX: null, restSettled: false }
         : { ok: false, reason: 'press-refused' };
     };
     const made = makeWorld({ observation: qteBar, timing });
@@ -679,7 +686,7 @@ describe('the chest QTE', () => {
     const timing: QteTimer = async (options) => {
       seen.push(options);
       await options.press();
-      return { ok: true, v: 606, atMs: 120, target: 808, tapX: 700, restX: 809 };
+      return { ok: true, v: 606, atMs: 120, target: 808, tapX: 700, restX: 809, restSettled: true };
     };
     const dry = makeWorld({ observation: qteBar, timing, cfg: { dryRun: true } });
     await started(dry.world, dry.host);

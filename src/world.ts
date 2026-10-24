@@ -1327,7 +1327,9 @@ export class WvdWorld implements World {
    *   arrives after the session ended is dropped rather than logged as this session's.
    *
    * The success line is the fit input for `qteDecelPxPerS2` (chest spec §3, task #18): the recorded
-   * speed, the planned delay, the zone centre, where the marker was and where it parked.
+   * speed, the planned delay (`delayMs` — never `atMs`, which everywhere else is a clock stamp,
+   * contracts §0.4), the zone centre, where the marker was, where it parked and whether that read
+   * settled. An unsettled `restX` is a moving marker, not a rest, and the fit must be able to tell.
    */
   async #timeQte(session: WvdSession, frame: Frame): Promise<void> {
     // The dry run reports the intent whatever the window size: it sends nothing either way, and an
@@ -1380,8 +1382,9 @@ export class WvdWorld implements World {
       return;
     }
     this.#host?.log.info(
-      `wvd: chest QTE pressed: v=${outcome.v} atMs=${outcome.atMs} target=${outcome.target} `
-        + `tapX=${outcome.tapX} restX=${outcome.restX === null ? 'unread' : outcome.restX}`,
+      `wvd: chest QTE pressed: v=${outcome.v} delayMs=${outcome.atMs} target=${outcome.target} `
+        + `tapX=${outcome.tapX} restX=${outcome.restX === null ? 'unread' : outcome.restX} `
+        + `settled=${outcome.restSettled}`,
     );
   }
 
