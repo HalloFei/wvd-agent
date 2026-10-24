@@ -28,6 +28,12 @@ import {
  * to 191, or if refusals migrated from `unknown` into `dungeon` — exactly the numbers this harness
  * exists to report. `sum(screens) ≤ frames` is the structural half of the same assertion: every
  * frame may claim at most one screen, and a frame with no observation cannot inflate the total.
+ *
+ * `bandCheck` adds the scale half of the crop proof: each of the 199 `chest-qte` frames is also cut
+ * to `qteWindow` and re-parsed, and its `QteState` must equal the one the composite read from the
+ * full frame. `bandFrames` is pinned to exactly those 199 and `bandMismatches` to 0; a second replay
+ * without the option pins both to 0, so the cross-check cannot be left on by accident or silently
+ * off.
  */
 const RECORDING = fileURLToPath(
   new URL('../testdata/chest/2026-10-24-qte-recorded/', import.meta.url),
@@ -53,12 +59,13 @@ describe('replay harness', () => {
     'replays the recorded chest through the real recognisers',
     async () => {
       const started = performance.now();
-      const report = await replay(RECORDING);
+      const report = await replay(RECORDING, { bandCheck: true });
       const wallMs = Math.round(performance.now() - started);
 
       console.log(
         `replay: ${report.frames} frames, ${JSON.stringify(report.screens)}, ` +
-          `${report.failures.length} failures, ${wallMs} ms`,
+          `${report.failures.length} failures, band ${report.bandFrames} frames / ` +
+          `${report.bandMismatches} mismatches, ${wallMs} ms`,
       );
 
       expect(report.frames).toBe(250);
@@ -69,6 +76,10 @@ describe('replay harness', () => {
       expect(claimed).toBeLessThanOrEqual(report.frames);
       // Refusals are allowed — the QTE screen genuinely goes away — but nothing inconsistent is.
       expect(report.failures).toEqual([]);
+      // Every parsed frame was also cropped to `qteWindow` and re-parsed; the crop must be the same
+      // observation the composite made of the full frame (design acceptance 2).
+      expect(report.bandFrames).toBe(199);
+      expect(report.bandMismatches).toBe(0);
     },
     60_000,
   );
@@ -97,6 +108,10 @@ describe('replay harness', () => {
 
         expect(report.frames).toBe(250);
         expect(report.screens['chest-qte']).toBe(199);
+        // The band cross-check is off by default: a caller that did not ask for it pays nothing and
+        // its report says so, rather than silently looking checked.
+        expect(report.bandFrames).toBe(0);
+        expect(report.bandMismatches).toBe(0);
         // One failure per parsed frame, and each names the frame and the contradiction.
         expect(report.failures).toHaveLength(report.screens['chest-qte']);
         for (const failure of report.failures) {

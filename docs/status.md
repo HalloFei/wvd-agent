@@ -123,6 +123,20 @@ this survey.
   advances. A detector is the upgrade if that ever costs a session.
 - The route policy is unchanged: it already named the nearest chest's cell, which is now the tile a
   walk is aimed at rather than an advisory value nothing read.
+- **A QTE sample decodes in a fifth of a full frame.** Measured on `frame-3.jpg` with GDI+ — the
+  decoder the World uses — the fixture's 1920×1080 JPEG takes **27.5 ms** (median of 3) and the same
+  still cropped to `qteWindow` (631×699, 21.3 % of the pixels) and re-encoded at the engine's q75
+  takes **5.0 ms** (minimum of 5): **1/5.5**, inside the design's 1/4 bound with margin
+  (`tests/qte-band.test.ts`). Add the parser's measured 0.8 ms band-and-button read (chest spec §8a)
+  and the 2.5 ms capture round trip, and a sample lands in **≈ 8 ms**; three of them (~25 ms) fit
+  inside one 33 ms bar pass — the "three-in-one-pass" the design was after. The same claim holds at
+  scale: all **199** parsed frames of the 250-frame recording were cropped to `qteWindow` and
+  re-parsed, and every one agreed with the full frame's `QteState` (**199 band frames, 0
+  mismatches**, `tests/replay.test.ts`).
+- **The 60 fps experiment is still unmeasured.** None of the above says a faster game helps: the
+  sub-loop was limited by the decode, and at 30 fps a sample now costs a fifth of a frame, so 60 fps
+  stays an experiment to run against the 33 ms cadence, not a decision. `qteMinWindowMs` stays
+  **150 ms** until #18 has measured the planned-instant → `SendInput` distribution.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

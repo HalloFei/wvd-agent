@@ -34,6 +34,8 @@
  *   type at runtime; that is a named failure for frame N, not a crash);
  * - it read `chest-qte` with zones that do not fit the geometry `measurements.json` recorded for the
  *   recording — the "plausible garbage" the parser exists to refuse (research-qte-parser §10);
+ * - the band cross-check is on (`options.bandCheck`) and the crop's parse refused or disagreed with
+ *   the full frame's `QteState` — the sample the World will take must be the observation it validated;
  * - the decoded stream ended with a partial frame, or ffmpeg produced a frame the harness could not
  *   turn into an image.
  *
@@ -55,7 +57,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Frame, Observation, QteState, RgbaImage, ScreenId } from '../src/contracts.ts';
-import { ChestPerceiver } from '../src/perception/chest.ts';
+import { cropBgra } from '../src/engine/crop.mjs';
+import { ChestPerceiver, parseQte, qteWindow } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
 import { HudPerceiver } from '../src/perception/hud.ts';
 import { MapPerceiver } from '../src/perception/map.ts';
@@ -71,6 +74,20 @@ export interface ReplayReport {
   readonly screens: Record<ScreenId, number>;
   /** One line per inconsistent frame, naming the frame index (0-based) and the problem. */
   readonly failures: string[];
+  /** `chest-qte` frames the band cross-check re-parsed; 0 when `bandCheck` is off. */
+  readonly bandFrames: number;
+  /** Band re-parses that disagreed with the composite's `QteState`; 0 when `bandCheck` is off. */
+  readonly bandMismatches: number;
+}
+
+/** Optional harness work. Absent means off, so every existing caller keeps its exact behaviour. */
+export interface ReplayOptions {
+  /**
+   * Also crop every `chest-qte` frame to `qteWindow` (the rectangle the World asks the child for,
+   * contracts §5), re-parse it, and compare its `QteState` with the full frame's. This is the
+   * scale half of the crop proof: the six stills pin the geometry, the recording proves the sample.
+   */
+  readonly bandCheck?: boolean;
 }
 
 export type ReplayTools =
@@ -91,18 +108,20 @@ export function replayTools(): ReplayTools {
 /**
  * Replay the first `.mp4` in `dir` (sorted, so the choice is deterministic) through perception.
  * `measurements.json` beside it, when present and well formed, supplies the bar geometry against
- * which `chest-qte` zones are checked.
+ * which `chest-qte` zones are checked. `options.bandCheck` adds the crop cross-check.
  */
-export async function replay(dir: string): Promise<ReplayReport> {
+export async function replay(dir: string, options: ReplayOptions = {}): Promise<ReplayReport> {
   const tools = replayTools();
   if (!tools.ok) throw new Error(`cannot replay ${dir}: ${tools.reason}`);
 
   const recording = await findRecording(dir);
   const info = probeVideo(recording);
   const recordedBar = await readRecordedBar(dir);
+  const bandCheck = options.bandCheck === true;
 
   const screens = emptyScreens();
   const failures: string[] = [];
+  const band: BandTally = { frames: 0, mismatches: 0 };
   const composite = new CompositePerceiver([
     { perceiver: new ChestPerceiver(), floor: 0.5 },
     { perceiver: new MapPerceiver(), floor: 0.5 },
@@ -168,7 +187,7 @@ export async function replay(dir: string): Promise<ReplayReport> {
             height: info.size.height,
             toRgba: async () => image,
           };
-          await observeFrame(frame, index, composite, recordedBar, screens, failures);
+          await observeFrame(frame, index, composite, recordedBar, bandCheck, band, screens, failures);
           frames += 1;
           buffer = Buffer.allocUnsafeSlow(info.frameBytes);
           filled = 0;
@@ -196,7 +215,13 @@ export async function replay(dir: string): Promise<ReplayReport> {
     );
   }
 
-  return { frames, screens, failures };
+  return {
+    frames,
+    screens,
+    failures,
+    bandFrames: band.frames,
+    bandMismatches: band.mismatches,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -208,6 +233,8 @@ async function observeFrame(
   index: number,
   composite: CompositePerceiver,
   recordedBar: RecordedBar | null,
+  bandCheck: boolean,
+  band: BandTally,
   screens: Record<ScreenId, number>,
   failures: string[],
 ): Promise<void> {
@@ -238,7 +265,92 @@ async function observeFrame(
       const problem = geometryProblem(observation.qte, recordedBar);
       if (problem) failures.push(`frame ${index}: chest-qte ${problem}`);
     }
+    if (bandCheck) await checkBand(frame, index, observation.qte, band, failures);
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The band cross-check
+// ---------------------------------------------------------------------------------------------
+
+/** How many `chest-qte` frames the band check saw, and how many of those disagreed. */
+interface BandTally {
+  frames: number;
+  mismatches: number;
+}
+
+/**
+ * Re-read one `chest-qte` frame from the rectangle the World will actually capture.
+ *
+ * The crop is cut from the frame's own already-decoded pixels: `Frame.toRgba()` is lazy and, in this
+ * harness, memoised in the frame it was built with (one `image` per decoded frame), so the composite's
+ * own read and this one are the same decode, not two. `parseQte` gets the window's origin so both
+ * sides answer in full-frame device pixels, and **neither side passes `previousMarkerX`**: the
+ * comparison is one frame against itself, not against the recording's previous marker.
+ *
+ * A refusal where the composite saw `chest-qte`, or a differing `QteState`, is a mismatch and is
+ * named in `failures` too — the harness's failure list means "something inconsistent", and a sample
+ * that disagrees with the observation is exactly that.
+ */
+async function checkBand(
+  frame: Frame,
+  index: number,
+  expected: QteState,
+  band: BandTally,
+  failures: string[],
+): Promise<void> {
+  band.frames += 1;
+  const rect = qteWindow(frame);
+
+  let image: RgbaImage;
+  try {
+    image = await frame.toRgba();
+  } catch (error) {
+    band.mismatches += 1;
+    failures.push(`frame ${index}: band crop could not read the frame: ${messageOf(error)}`);
+    return;
+  }
+
+  let cropped: { pixels: Uint8Array; width: number; height: number };
+  try {
+    cropped = cropBgra(image.data, image.width, image.height, rect);
+  } catch (error) {
+    band.mismatches += 1;
+    failures.push(`frame ${index}: band crop failed: ${messageOf(error)}`);
+    return;
+  }
+
+  const bandFrame: Frame = {
+    atMs: frame.atMs,
+    width: cropped.width,
+    height: cropped.height,
+    toRgba: async () => ({ data: cropped.pixels, width: cropped.width, height: cropped.height }),
+  };
+  const parsed = await parseQte(bandFrame, undefined, { x: rect.x, y: rect.y });
+  if (!parsed.ok) {
+    band.mismatches += 1;
+    failures.push(
+      `frame ${index}: band parse refused (${parsed.reason}) where the full frame read chest-qte`,
+    );
+    return;
+  }
+  if (!sameQte(parsed.qte, expected)) {
+    band.mismatches += 1;
+    failures.push(
+      `frame ${index}: band parse ${JSON.stringify(parsed.qte)} disagrees with ` +
+        `the full frame ${JSON.stringify(expected)}`,
+    );
+  }
+}
+
+/** Field-by-field, so a `QteState` that differs in one zone or one point is a mismatch. */
+function sameQte(a: QteState, b: QteState): boolean {
+  if (a.markerX !== b.markerX || a.attempts !== b.attempts) return false;
+  if (a.button.x !== b.button.x || a.button.y !== b.button.y) return false;
+  if (a.zones.length !== b.zones.length) return false;
+  return a.zones.every(
+    (zone, side) => zone.from === b.zones[side].from && zone.to === b.zones[side].to,
+  );
 }
 
 /** A structural check, not a cast: an instrument that swallows a malformed answer is useless. */
