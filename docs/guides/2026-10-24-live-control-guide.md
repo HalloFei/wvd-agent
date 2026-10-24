@@ -44,6 +44,21 @@ caller in the loop yet. See `docs/status.md`.
   Coordinates below are client device pixels at that size; the engine converts them to screen once
   through `ClientToScreen`.
 
+## 2a. Starting Coopanion when the harness exports ELECTRON_RUN_AS_NODE
+
+This environment exports `ELECTRON_RUN_AS_NODE=1`, so a plain `pnpm dev` in `Coopanion/` runs Electron
+in Node mode and dies on `app.commandLine` being undefined. Launch it as:
+
+    env -u ELECTRON_RUN_AS_NODE pnpm dev
+
+Coopanion then starts as a tray/pet application with **no titled window** — the pet window has no
+title, so it cannot be found or captured by title. That is why the operator console's host-side look is
+still unverified: the World is linked (`build/data/extensions/node_modules/cortico-world-wvd`) and its
+panel methods answer, but nobody has seen the panel rendered in the running app yet.
+
+`pnpm dev` re-stages `build/` on every start; the linked World lives under `build/data/extensions` and
+survives it.
+
 ## 3. Starting the game
 
 1. Start Steam and launch **Wizardry Variants Daphne** (app `2379740`). The install is at
