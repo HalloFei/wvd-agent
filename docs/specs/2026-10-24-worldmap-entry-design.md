@@ -104,10 +104,12 @@ dungeon, map, combat, select and menus. The chevron is the primary evidence: the
 
 ### 5.3 `WorldMapPerceiver`
 
-Name `worldmap` structurally from the parchment field (bright low-saturation map ink with black
-side pillars), the zoom row (`−`/`+` at y≈1017) and the `关闭` cross. Fixtures: `07`, `14`,
-`20`, `22` at 1920×1080. The observation carries no payload; node matching belongs to the action.
-No node id enters contracts.
+Name `worldmap` structurally: both side pillars are black (mean < 8; the map frames measure 0.0
+and 1.5) and the field between them is bright (mean ≥ 90). The Dungeon Select screen also has black
+pillars but its field measures 72.9, so the threshold refuses it — measured on the committed
+`testdata/screens/2026-10-24-ffxi/dungeon-select.jpg` fixture. Fixtures: `07`, `14`, `20`, `22`
+at 1920×1080. The observation carries no payload; node matching belongs to the action. No node id
+enters contracts.
 
 ### 5.4 Cost
 
@@ -134,11 +136,14 @@ refine the best five candidates at full resolution.
   5. Not found → drag search: 8 steps of 400 px from a safe point, clockwise (right, down, left, up,
      right-down, …), re-matching after each. A safe point is a 64×64 window in the map area with the
      least ink, at least 80 px from any control.
-  6. Budget spent → `location-not-found`.
+  6. Not found → `E` (zoom in) up to 2 times, re-matching after each. The drags bring 诺村's area
+     into view; 北穿 sits next to it, and zooming separates the two labels.
+  7. Budget spent → `location-not-found`.
 
-The tap point is the template's centre plus the catalog's `anchor` offset (zero until measured).
-Measured centres: 诺森霍洛村 (960,469), 北穿幽冥城 (1063,402), world-map icon (1194,1024), chevron
-(697,799).
+The tap point is the template's centre plus the catalog's `anchor` offset. Measured centres:
+诺森霍洛村 (960,469), 北穿幽冥城 (1063,402), chevron (697,799). The world-map icon's template centre
+is (1194,1024), but its **hit point is (1177,1012)** — a live tap at the centre did nothing and the
+anchored tap opened the map; the catalog carries `{x:-17,y:-12}`.
 
 ## 7. Drag
 
@@ -162,7 +167,9 @@ coordinates and `0 < durationMs ≤ MAX_DRAG_MS`, and drops anything else as mal
 selected an icon. The difference is likely a single jump versus incremental moves, or starting on an
 icon. The first live probe is a 300 px drag from an empty parchment point. If the view still does not
 move, this design stops at zoom-out only, and the entry falls back to it. This is the one fact a unit
-test cannot settle.
+test cannot settle. The live run did not exercise the drag (北穿 was in view after the zoom-out); it
+remains the first thing to check when the map opens at a pan without the target. The search also
+zooms in (`E`) after the drags, so a node hiding behind 诺村 is separated.
 
 ## 8. Task file
 
@@ -176,16 +183,18 @@ mid-entry.
   "steps": [
     { "op": "expect", "screen": "town", "timeoutMs": 20000 },
     { "op": "travel", "to": "ffxi-gcn" },
-    { "op": "tap", "at": [1082, 520] },
+    { "op": "wait", "ms": 8000 },
+    { "op": "tap", "at": [1082, 535] },
     { "op": "expect", "screen": "dungeon", "timeoutMs": 45000 },
-    { "op": "tap", "at": [1849, 110] },
+    { "op": "tap", "at": [1787, 96] },
     { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },
     { "op": "expectFloor", "timeoutMs": 5000 }
   ]
 }
 ```
 
-The two world-map taps leave the file; the dungeon-select tap stays (fixed list, 第三区 at y≈520).
+The two world-map taps leave the file; the dungeon-select tap stays (fixed list, 第三区 at the live
+(1082,535)) and the minimap tap is the live centre (1787,96), not the board's (1849,110).
 `exit` is unchanged in this slice; `{ "op": "travel", "to": "vnh" }` is added when the 归还 exit
 is verified (board p0), so the next cycle starts in 诺森霍洛村. The entry is defined from town: a
 session started mid-dungeon stops at the first step instead of clicking a map it is not on.
@@ -235,13 +244,20 @@ session started mid-dungeon stops at the first step instead of clicking a map it
 
 ## 12. Live acceptance
 
-1. Promote the fixtures: `testdata/worldmap/2026-10-24/{07,14,20,22}.jpg` and
-   `testdata/frames/town-panel-down.jpg` from `.tmp/120.jpg`.
-2. Drag probe: from the town, open the world map, drag 300 px from an empty point, and compare the
-   frames. Record the result in the guide.
-3. Entry: start in town with the panel up; the task file's `expect town` → `travel ffxi-gcn` →
-   select 第三区 → floor gate. Repeat with the map panned away so the drag path is used.
-4. Record the measured NCCs and the drag result in `docs/status.md`.
+Run 2026-10-24 23:33 on the live game. The entry reached the floor:
+
+1. `focus` returned the foreground (a lone Alt tap + `SetForegroundWindow`, the Coopanion technique).
+2. `expect town` named the town at 0.95; the world-map icon matched at 0.98 and opened the map at its
+   hit point (1177,1012).
+3. `travel ffxi-gcn` matched 北穿幽冥城; the map closed into **Dungeon Select**; the row at
+   (1082,535) loaded 第三区; the dungeon map's key `0c0280000deff8000d7ffc0008c37000` matches the
+   task's `0c0280000d6ff0000d7ffc0008c37000` within the 8-bit tolerance. **The floor gate passes.**
+4. The live minimap centre is (1787,96); the board's (1849,110) missed.
+5. The entry's `expect dungeon` still stops: the Hud returns `unknown` 0.2 on the live 3D view
+   (empty minimap, right-side key legend); its fixed HUD rects do not match that layout. Pinned as
+   "Name the live 3D view with an empty minimap".
+6. The drag path was not exercised: 北穿 was in view after the zoom-out. The probe remains the first
+   thing to run when the map opens at a pan without it.
 
 ## 13. Left to the builder
 

@@ -202,17 +202,28 @@ Implemented on `feat/worldmap-entry` (`8be41cb`, `713568e`, `87def23`, `b8b1a91`
 - **`TownPerceiver`** names the five town fixtures and the panel-down capture; 16 ms on the live
   frame. **`WorldMapPerceiver`** uses the black letterbox pillars (0.0 / 1.5 mean luma against
   ≥20.5 on every other committed screen).
-- **`openWorldMap` / `travelTo`**: icon → chevron + icon → node; then three zoom-outs and eight
-  400-px drags; a score below 0.80 is not a node, and the action never falls back to a coordinate.
+- **`openWorldMap` / `travelTo`**: icon at its hit point (the template centre is 17 px off) → node;
+  then three zoom-outs, eight 400-px drags and two zoom-ins; a score below 0.80 is not a node, and the
+  action never falls back to a coordinate. A stale capture is retried three times.
 - **`travel`** is a task step; `tasks/ffxi-4f.json` now starts `expect town` → `travel ffxi-gcn`
   and gates on the measured 第三区 key.
 
-Live checks 2026-10-24: the capture path returns 1920×1080. The composite named a loot screen
-`unknown` at 0.2 in 102 ms, and then the town at **0.86** with the party panel up — the first live
-evidence for `TownPerceiver`; the town perceiver alone takes 16 ms. The entry did not run: the game
-was not the foreground window, and the engine refuses input by design. Still owed: the entry run and
-the drag probe, both on the operator's focus. The rest town is 诺森霍洛村 (`vnh`), chosen by the
-operator.
+Live run 2026-10-24 23:33, from the town to the floor:
+
+- **`focus` works**: a lone Alt tap + `SetForegroundWindow` brought the game foreground (the
+  technique Coopanion's computer use uses); the session now does it at start.
+- **The world-map entry works**: the town named at 0.95, the parchment icon matched at 0.98 and
+  opened the map at its hit point (1177,1012 — the template centre, 1194,1024, does nothing);
+  北穿幽冥城 matched; Dungeon Select's row at (1082,535) loaded 第三区; the dungeon map's key
+  `0c0280000deff8000d7ffc0008c37000` matches the task's key within the 8-bit tolerance. **The floor
+  gate passes.** The live minimap centre is (1787,96).
+- **Remaining live blocker**: the Hud names the 3D view `unknown` 0.2 — its fixed rects do not match
+  the live layout (empty minimap, the grid at x≈1752–1830, the right-side key legend). The entry's
+  `expect dungeon` stops there, and the farm loop's first tick would escalate. Pinned on the board.
+- A stale capture during the first travel is now retried three times; the action also zooms in (E)
+  after the drags, per 诺村/北穿.
+
+The rest town is 诺森霍洛村 (`vnh`), chosen by the operator.
 
 ## Open work — the task board is the authority
 
