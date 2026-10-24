@@ -17,7 +17,7 @@ import {
 } from '../src/engine/protocol.ts';
 import { connectEngine, startEngine } from '../src/engine/child.ts';
 import { parseHotkey } from '../src/engine/hotkey.mjs';
-import { captureJpeg, sendInput, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
+import { captureJpeg, focusGame, sendInput, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
 
 /** An engine that records what it was asked and answers from a script. */
 class FakeEngine implements EngineRequester {
@@ -32,6 +32,38 @@ class FakeEngine implements EngineRequester {
     return typeof this.reply === 'function' ? this.reply(request) : this.reply;
   }
 }
+
+describe('focusGame', () => {
+  it('does nothing when the window already holds the foreground', async () => {
+    const engine = new FakeEngine({ id: 1, ok: true, value: { foreground: true } });
+    expect(await focusGame(engine)).toBe(true);
+    expect(engine.seen.map((request) => request.op)).toEqual(['foreground']);
+  });
+
+  it('asks the child to focus when it does not, and believes the reply', async () => {
+    const replies: Record<string, unknown> = {
+      foreground: { id: 1, ok: true, value: { foreground: false } },
+      focus: { id: 2, ok: true, value: { foreground: true } },
+    };
+    const engine = new FakeEngine((request) => replies[request.op] as never);
+    expect(await focusGame(engine)).toBe(true);
+    expect(engine.seen.map((request) => request.op)).toEqual(['foreground', 'focus']);
+  });
+
+  it('reports a refused focus rather than assuming it took', async () => {
+    const replies: Record<string, unknown> = {
+      foreground: { id: 1, ok: true, value: { foreground: false } },
+      focus: { id: 2, ok: true, value: { foreground: false } },
+    };
+    const engine = new FakeEngine((request) => replies[request.op] as never);
+    expect(await focusGame(engine)).toBe(false);
+  });
+
+  it('reports a failed focus request as false', async () => {
+    const engine = new FakeEngine({ id: 1, ok: false, error: 'unavailable' });
+    expect(await focusGame(engine)).toBe(false);
+  });
+});
 
 describe('engine protocol', () => {
   it('round-trips a capture request', () => {
@@ -48,6 +80,11 @@ describe('engine protocol', () => {
   it('round-trips a successful reply carrying a capture value', () => {
     const reply = { id: 4, ok: true, value: { jpeg: 'AA==', width: 2, height: 1 } } as const;
     expect(decodeLine(encodeReply(reply))).toEqual({ reply });
+  });
+
+  it('round-trips a focus request and drops one carrying fields', () => {
+    expect(decodeLine(encodeRequest(12, { op: 'focus' }))).toEqual({ request: { id: 12, request: { op: 'focus' } } });
+    expect(decodeLine(JSON.stringify({ id: 1, request: { op: 'focus', x: 1 } }))).toEqual({ request: { id: 1, request: { op: 'focus' } } });
   });
 
   it('round-trips the stop-hotkey event', () => {

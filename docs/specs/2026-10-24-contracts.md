@@ -453,7 +453,8 @@ export type TaskLoad =
   | { readonly ok: false; readonly reason: TaskFileProblem; readonly detail?: string };
 
 export type TravelFailure =
-  | ActionFailure | 'cancelled' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found';
+  | ActionFailure | 'cancelled' | 'capture-unavailable' | 'unknown-location'
+  | 'world-map-control-not-found' | 'location-not-found';
 
 export type TravelOutcome =
   | { readonly ok: true }

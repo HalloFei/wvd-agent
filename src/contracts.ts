@@ -175,6 +175,9 @@ export type EngineRequest =
    *  they ask for different output sizes. */
   | { op: 'capture'; maxWidth?: number; crop?: PixelRect }
   | { op: 'foreground' }
+  /** Restore and raise the game window, then report whether it holds the foreground. The child taps
+   *  Alt first: Windows only lets the foreground process hand focus away (§4). */
+  | { op: 'focus' }
   | { op: 'tap'; x: number; y: number; count: 1 | 2 }
   | { op: 'key'; scan: number; holdMs: number }
   /** A press at (x1,y1), a straight-line move, a release at (x2,y2); duration in ms. */
@@ -255,7 +258,8 @@ export type TaskLoad =
   | { readonly ok: false; readonly reason: TaskFileProblem; readonly detail?: string };
 
 export type TravelFailure =
-  | ActionFailure | 'cancelled' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found';
+  | ActionFailure | 'cancelled' | 'capture-unavailable' | 'unknown-location'
+  | 'world-map-control-not-found' | 'location-not-found';
 
 export type TravelOutcome =
   | { readonly ok: true }

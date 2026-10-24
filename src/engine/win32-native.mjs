@@ -60,6 +60,10 @@ const GetDC = user32.func('intptr_t __stdcall GetDC(intptr_t hwnd)');
 const ReleaseDC = user32.func('int __stdcall ReleaseDC(intptr_t hwnd, intptr_t dc)');
 const PrintWindow = user32.func('bool __stdcall PrintWindow(intptr_t hwnd, intptr_t dc, uint32_t flags)');
 const GetForegroundWindow = user32.func('intptr_t __stdcall GetForegroundWindow()');
+const IsIconic = user32.func('bool __stdcall IsIconic(intptr_t hwnd)');
+const ShowWindow = user32.func('bool __stdcall ShowWindow(intptr_t hwnd, int cmd)');
+const SetForegroundWindow = user32.func('bool __stdcall SetForegroundWindow(intptr_t hwnd)');
+const BringWindowToTop = user32.func('bool __stdcall BringWindowToTop(intptr_t hwnd)');
 const SetCursorPos = user32.func('bool __stdcall SetCursorPos(int x, int y)');
 const SendInput = user32.func('uint32_t __stdcall SendInput(uint32_t count, WvdInput *inputs, int size)');
 const RegisterHotKey = user32.func('bool __stdcall RegisterHotKey(intptr_t hwnd, int id, uint32_t mods, uint32_t vk)');
@@ -74,6 +78,9 @@ const BitBlt = gdi32.func('bool __stdcall BitBlt(intptr_t dst, int x, int y, int
 const RtlMoveMemory = kernel32.func('void __stdcall RtlMoveMemory(void *dest, const void *src, intptr_t length)');
 
 const PW_RENDERFULLCONTENT = 0x2;
+/** VK_MENU: a lone Alt tap is what makes SetForegroundWindow legal for a background process. */
+const VK_MENU = 0x12;
+const SW_RESTORE = 9;
 const SRCCOPY = 0x00cc0020;
 const WM_HOTKEY = 0x0312;
 const PM_REMOVE = 0x1;
@@ -116,6 +123,21 @@ export function clientRect(hwnd) {
 
 export function isForeground(hwnd) {
   return hwnd !== 0 && GetForegroundWindow() === hwnd;
+}
+
+/**
+ * Restore (if minimized) and raise the window, then report whether it holds the foreground.
+ * Windows only lets the foreground process hand focus away, so a lone Alt tap goes first — the
+ * technique Coopanion's computer use uses. `SetForegroundWindow` can still be refused; the caller
+ * reads the returned boolean and decides, it never assumes the focus took.
+ */
+export function focusWindow(hwnd) {
+  if (!hwnd) return false;
+  if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+  send([virtualKey(VK_MENU, 0), virtualKey(VK_MENU, KEYEVENTF_KEYUP)]);
+  SetForegroundWindow(hwnd);
+  BringWindowToTop(hwnd);
+  return isForeground(hwnd);
 }
 
 // Two reusable DIB sections: PrintWindow renders the whole window into the first, BitBlt copies the
@@ -224,6 +246,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const mouse = (flags) => ({ type: INPUT_MOUSE, u: { mi: { dx: 0, dy: 0, mouseData: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } });
 const key = (scan, flags) => ({ type: INPUT_KEYBOARD, u: { ki: { wVk: 0, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 } } });
+const virtualKey = (vk, flags) => ({ type: INPUT_KEYBOARD, u: { ki: { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } });
 
 function send(inputs) {
   const sent = SendInput(inputs.length, inputs, INPUT_SIZE);

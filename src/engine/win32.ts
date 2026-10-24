@@ -34,6 +34,17 @@ export interface EngineRequester {
 /** A request that carries input; capture and foreground are reads. */
 export type InputRequest = Extract<EngineRequest, { op: 'tap' } | { op: 'key' } | { op: 'drag' }>;
 
+/**
+ * Bring the game window to the foreground, or report that Windows refused. It does nothing when the
+ * window already holds the foreground, so a session start does not tap Alt into a focused game.
+ */
+export async function focusGame(engine: EngineRequester): Promise<boolean> {
+  const current = await engine.request({ op: 'foreground' });
+  if (current.ok && (current.value as Partial<EngineForeground> | null)?.foreground === true) return true;
+  const focused = await engine.request({ op: 'focus' });
+  return focused.ok && (focused.value as { foreground?: boolean } | null)?.foreground === true;
+}
+
 /** `ActionResult` plus the measured input leg when the child reported one (contracts §5). */
 export type InputOutcome = ActionResult & { readonly inputMs?: number };
 

@@ -28,7 +28,7 @@ import { timeQte } from './actions/qte.ts';
 import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
 import { connectEngine, startEngine, type EngineClient } from './engine/child.ts';
-import { captureJpeg, sendInput, Win32Capture } from './engine/win32.ts';
+import { captureJpeg, focusGame, sendInput, Win32Capture } from './engine/win32.ts';
 import { ChestPerceiver } from './perception/chest.ts';
 import { CombatPerceiver } from './perception/combat.ts';
 import { ChestPromptPerceiver } from './perception/prompt.ts';
@@ -131,6 +131,11 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     task = loaded;
     // Spawning here is the session's first act: `create()` stays idle.
     const client = connect();
+    // The World takes the foreground when the session starts; the console line is the announcement.
+    const focused = await focusGame(client);
+    world?.note(focused
+      ? 'wvd: the game is foreground'
+      : 'wvd: the game did not come to the foreground; presses will be refused');
     const session: WvdSession = {
       source: new Win32Capture(client, {
         // A degraded decode is the child's report reaching the loop, not a silent slowdown (R23).

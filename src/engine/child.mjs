@@ -188,6 +188,10 @@ async function dispatch(request, receivedAt) {
       const hwnd = win32.findWindow(title);
       return { foreground: hwnd !== 0 && win32.isForeground(hwnd) };
     }
+    case 'focus': {
+      const hwnd = requireWindow();
+      return { foreground: win32.focusWindow(hwnd) };
+    }
     case 'capture': {
       // demand wakes the render threads; the reply still comes from the newest frame
       captureWorker.postMessage({ op: 'demand' });

@@ -17,7 +17,7 @@ import { MAX_DRAG_MS } from './gestures.mjs';
 
 export { MAX_DRAG_MS };
 
-const OPS = new Set(['capture', 'foreground', 'tap', 'key', 'drag']);
+const OPS = new Set(['capture', 'foreground', 'focus', 'tap', 'key', 'drag']);
 const FAILURES = new Set(['unavailable', 'rejected', 'timeout']);
 
 /**
@@ -102,6 +102,8 @@ function decodeRequest(request) {
     }
     case 'foreground':
       return { op: 'foreground' };
+    case 'focus':
+      return { op: 'focus' };
     case 'tap':
       if (typeof request.x !== 'number' || !Number.isFinite(request.x)) return null;
       if (typeof request.y !== 'number' || !Number.isFinite(request.y)) return null;
