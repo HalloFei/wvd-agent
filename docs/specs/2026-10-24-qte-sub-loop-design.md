@@ -90,7 +90,7 @@ first velocity estimate, and that needs measuring, not assuming.
    frame; `scanBand` and `readButton` add it back, so `QteState.zones`, `markerX` and `button`
    stay in full-frame device pixels and no caller changes.
 4. **`FrameSource.captureBand?(rect)`** (§1, optional so every existing realizer still conforms),
-   implemented by `Win32FrameSource` as `capture { crop }`. A source without it keeps working: the
+   implemented by `Win32Capture` as `capture { crop }`. A source without it keeps working: the
    sub-loop falls back to a full-frame `capture()`.
 5. **`#timeQte` in `world.ts`**, entered from `#step` when the observation is `chest-qte` and
    before the policy switch: sample the band until three samples span ≥ 66 ms, `qteVelocity`,

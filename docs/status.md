@@ -137,6 +137,14 @@ this survey.
   sub-loop was limited by the decode, and at 30 fps a sample now costs a fifth of a frame, so 60 fps
   stays an experiment to run against the 33 ms cadence, not a decision. `qteMinWindowMs` stays
   **150 ms** until #18 has measured the planned-instant → `SendInput` distribution.
+- **The planning model is checked against the recording** — design acceptance 5, delivered by
+  `planCheck` in `scripts/replay.ts`: each of the recording's `chest-qte` observations, at its own
+  timestamp, feeds the last three readings through `qteVelocity` and `planTap`, and every plan is
+  judged against `measurements.json` — target inside a recorded zone, finite delay inside the
+  horizon, no reversal crossed. The recording yields **51 plans, 0 violations**; triples that
+  straddle a bounce refuse legitimately, so `tests/replay.test.ts` pins ≥ 25 plans rather than the
+  count.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

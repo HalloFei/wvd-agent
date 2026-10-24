@@ -44,11 +44,12 @@
  * recording's zones is our planning model's answer, not perception's, so it is named in its own
  * `planViolations` list. `planned` says how many plans the model returned at all.
  *
- * A malformed or absent `measurements.json` disables only the geometry check (a recording may be
- * replayed before it has measurements); everything else still runs. It **warns** when it does so, so
- * a switched-off cross-check cannot be mistaken for one that passed. A setup failure — no video,
- * `ffmpeg`/`ffprobe` missing, ffmpeg exiting non-zero — throws rather than returning a tally that
- * would look like a measurement.
+ * A malformed or absent `measurements.json` disables only the geometry check — and the plan check,
+ * which needs the same bar to judge a plan against; a recording may be replayed before it has
+ * measurements, and everything else still runs. It **warns** when it does so, so a switched-off
+ * cross-check cannot be mistaken for one that passed. A setup failure — no video, `ffmpeg`/`ffprobe`
+ * missing, ffmpeg exiting non-zero — throws rather than returning a tally that would look like a
+ * measurement.
  *
  * ## Recogniser order and floors
  *
