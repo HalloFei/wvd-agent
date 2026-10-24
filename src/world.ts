@@ -42,6 +42,7 @@ import type {
   ToolOutcome,
   World,
   WorldHost,
+  WorldStreamSocket,
   WorldWebUiDecl,
 } from 'cortico/core/types.ts';
 import { MAX_PRESS_HOLD_MS } from './contracts.ts';
@@ -73,6 +74,19 @@ import { snapshotBlob, takeSnapshot, type SnapshotSource } from './escalation/im
 import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
 import { openerCardCentre } from './perception/chest.ts';
 import { chooseOpener } from './policy/chest.ts';
+import {
+  CONSOLE_GET_METHODS,
+  CONSOLE_LOG_LIMIT,
+  CONSOLE_PANEL_ID,
+  type ConsoleFrame,
+  type ConsoleLamp,
+  type ConsoleLogEntry,
+  type ConsoleLogKind,
+  type ConsoleResult,
+  type ConsoleStart,
+  type ConsoleState,
+  type ConsoleStatus,
+} from './webui/protocol.ts';
 
 /** `classify` from `policy/session.ts` (contracts §6, §9): a verdict, never an action. */
 export type SessionClassifier = (
@@ -132,6 +146,8 @@ const STALL_ESCALATE_DIVISOR = 4;
 const MIN_STALL_ESCALATE_MS = 500;
 /** One hour on the loop's clock: `escalateMaxPerHour`'s window. */
 const HOUR_MS = 60 * 60 * 1000;
+/** A stream pushes at most twice a second: a 10 Hz tick is not a 10 Hz repaint. */
+const BROADCAST_MIN_INTERVAL_MS = 500;
 /** `wvd_act` holdKey defaults, mirroring contracts §8.3's `hazardEscapeHoldMs` and §4's floor. */
 const DEFAULT_ACT_HOLD_MS = 250;
 const MIN_ACT_HOLD_MS = 40;
@@ -162,6 +178,12 @@ const COMMAND_KINDS: ReadonlySet<Intent['kind']> = new Set<Intent['kind']>([
 ]);
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** The badge tone for a state: running is on, offline is off, the rest are neutral. */
+function stateTone(state: ConsoleState): 'on' | 'off' | 'plain' {
+  if (state === 'running' || state === 'escalating') return 'on';
+  return state === 'offline' ? 'off' : 'plain';
+}
 
 /** Every tool the escalation path needs; all four are wired by this loop. */
 export const WVD_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
@@ -368,6 +390,13 @@ export class WvdWorld implements World {
   #nextEscalationId = 1;
   #engineProblem: string | null = null;
   #lastStopReason: string | null = null;
+  /** Whether the last session ended in a failure, which is the `error` state. */
+  #lastFailed = false;
+  /** The console's bounded transition log, oldest first. */
+  #entries: ConsoleLogEntry[] = [];
+  /** Open console streams. Empty unless the operator opened the panel. */
+  #streams = new Set<WorldStreamSocket>();
+  #lastBroadcastAtMs = 0;
 
   readonly #supervisor: Supervisor;
   readonly #cfg: WvdConfigSection;
@@ -401,7 +430,193 @@ export class WvdWorld implements World {
   }
 
   webUi(): WorldWebUiDecl {
-    return { config: [WVD_CONFIG_GROUP] };
+    const status = this.#consoleStatus();
+    return {
+      label: 'WVD',
+      lamps: [{ label: 'WVD', state: status.lamp, hint: status.detail ?? status.state }],
+      badges: [
+        { label: 'state', value: status.state, tone: stateTone(status.state) },
+        { label: 'escalations', value: `${status.escalationsThisHour}/${status.escalateMaxPerHour}` },
+      ],
+      panels: [{
+        id: CONSOLE_PANEL_ID,
+        title: 'WVD console',
+        description: 'The session state, the live strip, the open question and the recent log.',
+        getMethods: CONSOLE_GET_METHODS,
+      }],
+      invoke: (panel, method) => this.invoke(panel, method),
+      stream: (panel, socket) => this.stream(panel, socket),
+      config: [WVD_CONFIG_GROUP],
+    };
+  }
+
+  /**
+   * One panel method, as a value: the panel renders a failure instead of a toast that disappears.
+   * `getMethods` limits GET to the two read-only ones; this surface does not care how it arrived.
+   */
+  async invoke(panel: string, method: string): Promise<ConsoleResult<unknown>> {
+    if (panel !== CONSOLE_PANEL_ID) return { ok: false, error: `no panel ${panel} on this World` };
+    switch (method) {
+      case 'status':
+        return { ok: true, value: this.#consoleStatus() };
+      case 'log':
+        return { ok: true, value: this.#consoleLog() };
+      case 'start':
+        return this.#consoleStart();
+      case 'stop':
+        return this.#consoleStop();
+      case 'cancel-escalation':
+        return this.#consoleCancel();
+      default:
+        return {
+          ok: false,
+          error: `no method ${method} on the ${CONSOLE_PANEL_ID} console`,
+          detail: 'status, log, start, stop, cancel-escalation',
+        };
+    }
+  }
+
+  /**
+   * One push connection: a whole snapshot at once, so reconnecting never needs a diff. The World
+   * broadcasts to every open connection itself; a socket that throws is dropped, never rethrown.
+   */
+  stream(panel: string, socket: WorldStreamSocket): void {
+    if (panel !== CONSOLE_PANEL_ID) {
+      socket.close(`no stream for ${panel}`);
+      return;
+    }
+    socket.onClose(() => {
+      this.#streams.delete(socket);
+    });
+    this.#streams.add(socket);
+    this.#send(socket, this.#statusFrame());
+  }
+
+  async #consoleStart(): Promise<ConsoleResult<ConsoleStatus>> {
+    const refusal = this.#startRefusal();
+    if (!refusal.ok) return { ok: false, error: refusal.reason };
+    if (!await this.startSession()) {
+      return { ok: false, error: this.#lastStopReason ?? 'the session did not start' };
+    }
+    this.#broadcast(this.#now(), true);
+    return { ok: true, value: this.#consoleStatus() };
+  }
+
+  async #consoleStop(): Promise<ConsoleResult<ConsoleStatus>> {
+    // The question is closed before the session ends: a question must not outlive its run. The
+    // paused tick then finds a stopped World and sends nothing.
+    if (this.#supervisor.cancel()) this.#record('cancelled', 'the open question was cancelled first');
+    await this.#endSession('the session was stopped', { report: true });
+    return { ok: true, value: this.#consoleStatus() };
+  }
+
+  async #consoleCancel(): Promise<ConsoleResult<ConsoleStatus>> {
+    if (!this.#supervisor.cancel()) return { ok: false, error: 'no question is open' };
+    this.#broadcast(this.#now(), true);
+    return { ok: true, value: this.#consoleStatus() };
+  }
+
+  /** Why `start` cannot run now, in the operator's words. The console shows it beside the button. */
+  #startRefusal(): ConsoleStart {
+    if (!this.#cfg.enabled) return { ok: false, reason: 'the World is disabled' };
+    if (!this.#openSession) return { ok: false, reason: 'no engine is wired to this World' };
+    if (this.#starting) return { ok: false, reason: 'a session is starting' };
+    if (this.#running) return { ok: false, reason: 'a session is already running' };
+    return { ok: true };
+  }
+
+  /**
+   * The snapshot, derived from the World on every call. A state is never remembered separately from
+   * the fact that produced it, so the panel cannot disagree with the loop.
+   */
+  #consoleStatus(): ConsoleStatus {
+    const now = this.#now();
+    const enabled = this.#cfg.enabled;
+    const engine = this.#openSession !== undefined;
+    const question = this.#supervisor.open;
+    const state: ConsoleState =
+      !enabled || !engine ? 'offline'
+        // Opening a session is not a state of its own: nothing runs yet, and the lamp says loading.
+        : this.#starting ? 'idle'
+          : this.#running ? (question ? 'escalating' : 'running')
+            : this.#lastFailed ? 'error'
+              : this.#lastStopReason !== null ? 'stopped'
+                : 'idle';
+    const lamp: ConsoleLamp =
+      !enabled || !engine ? 'offline'
+        : this.#starting ? 'loading'
+          : this.#running ? 'online'
+            : this.#lastFailed ? 'error'
+              : 'online';
+    const observation = this.#lastObservation;
+    const read = this.#lastMapRead;
+    const intent = this.#lastIntent;
+    const detail =
+      state === 'offline'
+        ? enabled ? 'no engine is wired to this World, so there is no game window to capture'
+          : 'the World is disabled; enable it to start a session'
+        : this.#starting ? 'a session is starting'
+          : state === 'running' ? (this.#engineProblem === null ? null : `the engine reported a problem: ${this.#engineProblem}`)
+            : this.#lastStopReason;
+    return {
+      state,
+      lamp,
+      detail,
+      nowMs: now,
+      screen: observation?.screen ?? null,
+      floor: read?.floor ?? null,
+      x: read?.player.x ?? null,
+      y: read?.player.y ?? null,
+      chestsLeft: read ? read.chests.length : null,
+      intent: intent?.intent.kind ?? null,
+      intentAgeMs: intent === null ? null : Math.max(0, now - intent.atMs),
+      frameAgeMs: observation === null ? null : Math.max(0, now - observation.atMs),
+      escalationsThisHour: this.#spentThisHour(now),
+      escalateMaxPerHour: this.#cfg.escalateMaxPerHour,
+      question: question === null ? null : {
+        id: question.id,
+        text: question.question,
+        askedAtMs: question.atMs,
+        timeoutMs: question.timeoutMs,
+      },
+      canStart: this.#startRefusal(),
+      canCancel: question !== null,
+    };
+  }
+
+  #consoleLog(): readonly ConsoleLogEntry[] {
+    return [...this.#entries];
+  }
+
+  /** One transition, dated by both clocks: the wall time is what a morning reader has to go on. */
+  #record(kind: ConsoleLogKind, text: string): void {
+    this.#entries.push({ at: new Date().toISOString(), atMs: this.#now(), kind, text });
+    if (this.#entries.length > CONSOLE_LOG_LIMIT) this.#entries.splice(0, this.#entries.length - CONSOLE_LOG_LIMIT);
+  }
+
+  #statusFrame(): string {
+    const frame: ConsoleFrame = { type: 'status', value: this.#consoleStatus() };
+    return JSON.stringify(frame);
+  }
+
+  #send(socket: WorldStreamSocket, text: string): void {
+    try {
+      socket.send(text);
+    } catch {
+      this.#streams.delete(socket);
+    }
+  }
+
+  /**
+   * Push the current snapshot to every open console. Costs nothing while no panel is open: the loop
+   * must run exactly as it did before the panel existed.
+   */
+  #broadcast(now: number, force = false): void {
+    if (this.#streams.size === 0) return;
+    if (!force && now - this.#lastBroadcastAtMs < BROADCAST_MIN_INTERVAL_MS) return;
+    this.#lastBroadcastAtMs = now;
+    const text = this.#statusFrame();
+    for (const socket of [...this.#streams]) this.#send(socket, text);
   }
 
   /** Mounting announces nothing; a session starts only when `enabled` is set or the operator asks. */
@@ -443,10 +658,14 @@ export class WvdWorld implements World {
         session = await this.#openSession();
       } catch (error) {
         this.#lastStopReason = `the engine could not be started: ${message(error)}`;
+        this.#lastFailed = true;
+        this.#record('error', this.#lastStopReason);
         return false;
       }
       if (!session) {
         this.#lastStopReason = 'the engine child did not start';
+        this.#lastFailed = true;
+        this.#record('error', this.#lastStopReason);
         return false;
       }
 
@@ -468,6 +687,9 @@ export class WvdWorld implements World {
       this.#openerRefusal = null;
       this.#escalationCooldownUntilMs = 0;
       this.#lastStopReason = null;
+      this.#lastFailed = false;
+      this.#engineProblem = null;
+      this.#record('started', 'the session started');
       this.#unsubscribe = session.onEngineEvent?.((event) => {
         void this.onEngineEvent(event);
       }) ?? null;
@@ -492,10 +714,11 @@ export class WvdWorld implements World {
       await this.#step(session);
     } catch (error) {
       // A module threw across its boundary (contracts §0.6): that is the loop's failure to handle.
-      await this.#endSession(`a module failed: ${message(error)}`, { report: true });
+      await this.#endSession(`a module failed: ${message(error)}`, { report: true, failed: true });
     } finally {
       if (this.#tickId === id) this.#ticking = false;
     }
+    this.#broadcast(this.#now());
   }
 
   // --- the tick body -------------------------------------------------------------------------
@@ -510,7 +733,7 @@ export class WvdWorld implements World {
     try {
       observation = await session.perceiver.observe(frame);
     } catch (error) {
-      await this.#endSession(`perception failed: ${message(error)}`, { report: true });
+      await this.#endSession(`perception failed: ${message(error)}`, { report: true, failed: true });
       return;
     }
     if (!this.#running || this.#session !== session) return;
@@ -581,7 +804,7 @@ export class WvdWorld implements World {
         );
         return null;
       }
-      await this.#endSession(`the engine stopped answering: ${message(error)}`, { report: true });
+      await this.#endSession(`the engine stopped answering: ${message(error)}`, { report: true, failed: true });
       return null;
     }
   }
@@ -857,6 +1080,8 @@ export class WvdWorld implements World {
       onPush: () => {
         // The count arms the cap at the push, not at the answer: an unanswered question is spent.
         this.#recordEscalation(now);
+        this.#record('escalated', question);
+        this.#broadcast(this.#now(), true);
       },
     });
 
@@ -866,6 +1091,7 @@ export class WvdWorld implements World {
 
     switch (outcome.kind) {
       case 'answered':
+        this.#record('answered', outcome.note === null ? 'the question was answered' : `the question was answered: ${outcome.note}`);
         if (outcome.intent) {
           // The model redirected the loop: that is progress, whatever the screen does next.
           this.#lastProgressAtMs = this.#now();
@@ -881,12 +1107,22 @@ export class WvdWorld implements World {
         return;
       case 'timeout':
       case 'undelivered':
+        this.#record(
+          outcome.kind === 'timeout' ? 'timed-out' : 'undelivered',
+          outcome.kind === 'timeout'
+            ? `the question timed out after ${Math.max(1, Math.round(outcome.waitedMs / 1000))} s`
+            : `the question never reached the session (${outcome.why})`,
+        );
         // One wait's worth of cooldown: a screen that stays unknown must not spend the hour in a
         // minute (research §5.2).
         this.#escalationCooldownUntilMs = this.#now() + Math.max(1, timeoutMs);
         await this.#execute(fallback, observation.screen, { session, frame, observation, now });
         return;
       case 'cancelled':
+        // The operator closed the question from the console: the loop resumes on the same tick with
+        // its own recovery, exactly as if the wait had run out (design §4).
+        this.#record('cancelled', 'the question was cancelled from the console');
+        await this.#execute(fallback, observation.screen, { session, frame, observation, now });
         return;
     }
   }
@@ -1106,7 +1342,7 @@ export class WvdWorld implements World {
     this.#host?.log.warn(`wvd: the engine reported a problem: ${event.detail}`);
     if (event.detail === 'stop-hotkey-unregistered') {
       // A session must not run believing the stop key works (contracts §5).
-      await this.#endSession('the stop hotkey is not registered', { report: true });
+      await this.#endSession('the stop hotkey is not registered', { report: true, failed: true });
     }
   }
 
@@ -1123,10 +1359,12 @@ export class WvdWorld implements World {
   }
 
   /** Close the session exactly once: settle the paused tick first, then release the engine. */
-  async #endSession(reason: string, options: { report?: boolean } = {}): Promise<void> {
+  async #endSession(reason: string, options: { report?: boolean; failed?: boolean } = {}): Promise<void> {
     const wasRunning = this.#running;
+    const hadQuestion = this.#supervisor.isOpen();
     this.#running = false;
     this.#lastStopReason = reason;
+    this.#lastFailed = options.failed === true;
     // The session that owned the in-flight tick is gone; a later session's tick owns the flag now.
     this.#ticking = false;
     this.#tickId += 1;
@@ -1151,7 +1389,13 @@ export class WvdWorld implements World {
     } catch (error) {
       this.#host?.log.warn('wvd: the engine did not close cleanly', message(error));
     }
+    if (wasRunning) {
+      // The question is closed before the session ends, and the log says so in that order.
+      if (hadQuestion) this.#record('cancelled', 'the open question was cancelled with the session');
+      this.#record(options.failed === true ? 'error' : 'stopped', reason);
+    }
     if (wasRunning && options.report !== false) await this.#reportStopped(reason);
+    this.#broadcast(this.#now(), true);
   }
 
   /** One event per stopped session, and a push that may not throw into the loop (research §5.3). */

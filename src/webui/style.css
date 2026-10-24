@@ -1,0 +1,70 @@
+/*
+ * The WVD console page. The host's sheet, button, kvtable and logview carry the layout; this file
+ * adds the four things the panel has of its own: the lamp, the strip's values, the question card and
+ * the connection note. Colours come from the host's theme variables so the page follows dark mode.
+ */
+
+.wvd-lamp {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-dim);
+  flex: none;
+}
+
+.wvd-lamp.online { background: var(--ok); }
+.wvd-lamp.loading { background: var(--warn); }
+.wvd-lamp.error { background: var(--danger); }
+.wvd-lamp.offline { background: var(--ink-dim); }
+
+.wvd-state {
+  font: var(--text-detail, 13px) / 1.4 var(--mono, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wvd-detail {
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.wvd-connection {
+  margin-left: auto;
+  color: var(--ink-dim);
+  font: var(--text-detail, 13px) / 1.4 var(--sans, sans-serif);
+}
+
+.wvd-connection.on { color: var(--ok); }
+
+.wvd-strip { margin: 8px 0; }
+.wvd-strip .wvd-value { font-family: var(--mono, monospace); }
+
+.wvd-question {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line-2, var(--line));
+  border-left: 3px solid var(--warn);
+  border-radius: 4px;
+  background: var(--sheet-2, transparent);
+}
+
+.wvd-question[hidden] { display: none; }
+
+.wvd-questiontext {
+  margin: 0 0 4px;
+  font: var(--text-body, 14px) / 1.5 var(--sans, sans-serif);
+}
+
+.wvd-questionmeta {
+  margin: 0 0 6px;
+  color: var(--ink-soft);
+  font: var(--text-detail, 13px) / 1.4 var(--sans, sans-serif);
+}
+
+.wvd-hint {
+  color: var(--ink-soft);
+  font: var(--text-detail, 13px) / 1.4 var(--sans, sans-serif);
+}

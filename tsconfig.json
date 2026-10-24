@@ -1,13 +1,15 @@
 {
-  // Node-side code only. `cortico/*` resolves through the `node_modules/cortico` link that
-  // scripts/setup-dev.mjs creates, which points at the Coopanion checkout's framework source; at run
-  // time the host's own module hook resolves the prefix. vitest.config.ts maps the same files.
+  // Node-side code and the browser panel in one project: `src/webui/client.ts` is the only file with
+  // DOM types, and one `tsc --noEmit` is what keeps it checked. `cortico/*` resolves through the
+  // `node_modules/cortico` link that scripts/setup-dev.mjs creates, which points at the Coopanion
+  // checkout's framework source; at run time the host's own module hook resolves the prefix.
+  // vitest.config.ts maps the same files.
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "strict": true,
     "noUncheckedIndexedAccess": false,

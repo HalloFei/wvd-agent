@@ -18,14 +18,18 @@
   },
   "cortico": {
     "kind": "world",
-    "api": 6
+    "api": 6,
+    "webUiClient": "dist/webui.js",
+    "webUiStyle": "dist/webui.css"
   },
   "files": [
     "src",
+    "dist",
     "README.md"
   ],
   "scripts": {
     "setup:dev": "node scripts/setup-dev.mjs",
+    "build": "node scripts/build-webui.mjs",
     "pretest": "node scripts/setup-dev.mjs",
     "pretypecheck": "node scripts/setup-dev.mjs",
     "test": "vitest run",
@@ -37,6 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "esbuild": "0.21.5",
     "typescript": "5.9.3",
     "vitest": "2.1.9"
   }
