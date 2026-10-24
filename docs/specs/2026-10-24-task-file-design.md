@@ -4,7 +4,9 @@ A JSON task file per location, wvd-style: the steps that get the party there, th
 and the way out. The World keeps its loop, its policy and its contracts; the file only says *what*
 to farm and *where*.
 
-Status: design, v2 after builder review, awaiting approval. Binding declarations go into
+Status: design, v2 after builder review; the entry script is now detection-driven —
+[`2026-10-24-worldmap-entry-design.md`](2026-10-24-worldmap-entry-design.md) supersedes §7.2 and
+the two fixed world-map taps. The rest stands. Binding declarations go into
 [`2026-10-24-contracts.md`](2026-10-24-contracts.md) §3 and §10 and `src/contracts.ts` in the same
 commit.
 

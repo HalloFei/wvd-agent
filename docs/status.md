@@ -4,7 +4,7 @@ Where the plan stands. The plan file is the specification of the work, not the r
 is the record, updated at each milestone, and `docs/plans/2026-10-24-wvd-world-v1.md` stays the
 authority on *what* each task requires.
 
-Last updated 2026-10-24 15:20, on `main`.
+Last updated 2026-10-24 21:40, on `feat/worldmap-entry`.
 
 ## Task table
 
@@ -186,6 +186,32 @@ Identification and initiation meet at one cell: `tileOnScreen` maps the publishe
 point `automoveToTile` clicks, pinned by a test against 第四区's ring (12,18) → (925,446) and its
 measured centre (923.5,449). Navigation design §6 is the record; which entry/exit a floor crosses at
 is left to the live pairing the p0 FFXI session owes.
+## World-map entry (2026-10-24)
+
+Implemented on `feat/worldmap-entry` (`8be41cb`, `713568e`, `87def23`, `b8b1a91`, `75fb3e1`);
+460 tests, typecheck clean. The design is
+[`2026-10-24-worldmap-entry-design.md`](specs/2026-10-24-worldmap-entry-design.md); the plan is
+[`2026-10-24-worldmap-entry.md`](plans/2026-10-24-worldmap-entry.md).
+
+- **Drag** is in the engine protocol and the gesture rules (contracts §4/§5): press, linear moves,
+  release, 500 ms ceiling, inside the teardown grace.
+- **The legacy location art matches the PC UI at 0.675.** Scaled by the matcher: world-map icon 0.975
+  @0.66, panel chevron 0.955 @0.68, 诺森霍洛村 0.955 @0.66, 北穿幽冥城 0.989 @0.68. The icon scores
+  0.475 with the party panel up, and a clipped 北穿幽冥城 0.555 — both refused. `wvd/AGENTS.md`'s
+  "useless against 1920×1080" is false as written.
+- **`TownPerceiver`** names the five town fixtures and the panel-down capture; 16 ms on the live
+  frame. **`WorldMapPerceiver`** uses the black letterbox pillars (0.0 / 1.5 mean luma against
+  ≥20.5 on every other committed screen).
+- **`openWorldMap` / `travelTo`**: icon → chevron + icon → node; then three zoom-outs and eight
+  400-px drags; a score below 0.80 is not a node, and the action never falls back to a coordinate.
+- **`travel`** is a task step; `tasks/ffxi-4f.json` now starts `expect town` → `travel ffxi-gcn`
+  and gates on the measured 第三区 key.
+
+Read-only live check 2026-10-24 21:39: the capture path returns 1920×1080 and the composite names
+the live loot screen `unknown` at 0.2 in 102 ms (the town perceiver alone is 16 ms). Still owed:
+the drag probe and the entry run — both send input and need the operator. The rest town is
+诺森霍洛村 (`vnh`), chosen by the operator.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only
