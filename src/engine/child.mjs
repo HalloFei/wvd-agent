@@ -10,6 +10,10 @@
  * queues behind a render. The newest encoded frame is all this thread keeps; `capture` answers from
  * it with `ageMs`, and a frame older than three ticks is `timeout` (R11).
  *
+ * `capture { maxWidth }` is served differently: the encoder thread downscales the next frame before
+ * encoding it and reports the size it actually encoded, so the perception path never pays for it and
+ * the reply's `width`/`height` describe the JPEG returned rather than the window.
+ *
  * Input is measured, not guessed: `tap`/`key` replies carry `{ inputMs }`, request receipt to the
  * final `SendInput` (R20b). A failed stop-hotkey registration and a JPEG fallback are `engineProblem`
  * events, never silent (R13, R23).
@@ -50,6 +54,14 @@ const write = (line) => {
 
 let stopping = false;
 let latest = null; // { jpeg: Buffer, width, height, capturedAt }
+
+/**
+ * The one `capture { maxWidth }` waiting for a downscaled frame. Requests are serialized by the
+ * queue, so one slot is enough. A render that never delivers one is a `timeout`, not a hung reply.
+ */
+const SNAPSHOT_WAIT_MS = 1000;
+let pendingSnapshot = null; // { snapshotId, resolve, reject, timer }
+let nextSnapshotId = 0;
 
 // The first capture request ever waits for the render threads to produce a frame (bounded), so
 // startup is not a spurious `timeout`. The timer is cleared when the frame wins, and later requests
@@ -96,6 +108,27 @@ function onWorkerMessage(message) {
     case 'problem':
       write(encodeEvent({ kind: 'engineProblem', detail: message.detail }));
       return;
+    case 'snapshot': {
+      const pending = pendingSnapshot;
+      if (!pending || pending.snapshotId !== message.snapshotId) return; // a reply for a timed-out request
+      pendingSnapshot = null;
+      clearTimeout(pending.timer);
+      pending.resolve({
+        jpeg: Buffer.from(message.jpeg),
+        width: message.width,
+        height: message.height,
+        capturedAt: message.capturedAt,
+      });
+      return;
+    }
+    case 'snapshot-problem': {
+      const pending = pendingSnapshot;
+      if (!pending || pending.snapshotId !== message.snapshotId) return;
+      pendingSnapshot = null;
+      clearTimeout(pending.timer);
+      pending.reject(new EngineFailure('unavailable', 'snapshot-failed'));
+      return;
+    }
     case 'log':
       log(message.message);
       return;
@@ -154,6 +187,24 @@ function requireWindow() {
   return hwnd;
 }
 
+/**
+ * Asks the encoder thread for one downscaled JPEG. The next frame is scaled before it is encoded,
+ * and the reply describes that JPEG's size — never the window's. A render that stops delivering is a
+ * named timeout; a late snapshot is dropped by its id.
+ */
+function encodeSnapshot(maxWidth) {
+  return new Promise((resolve, reject) => {
+    const snapshotId = ++nextSnapshotId;
+    const timer = setTimeout(() => {
+      if (pendingSnapshot?.snapshotId !== snapshotId) return;
+      pendingSnapshot = null;
+      reject(new EngineFailure('timeout', 'snapshot-timeout'));
+    }, SNAPSHOT_WAIT_MS);
+    pendingSnapshot = { snapshotId, resolve, reject, timer };
+    encoderWorker.postMessage({ op: 'snapshot', snapshotId, maxWidth });
+  });
+}
+
 async function dispatch(request, receivedAt) {
   switch (request.op) {
     case 'foreground': {
@@ -169,10 +220,14 @@ async function dispatch(request, receivedAt) {
         await warmup;
       }
       if (!latest) throw new EngineFailure('timeout', 'no-frame');
-      const jpeg = latest.jpeg.toString('base64');
-      const ageMs = performance.now() - latest.capturedAt;
+      // a request at or above the native width is already satisfied by the newest frame; only a
+      // genuinely smaller snapshot asks the encoder to scale (the perception path never does)
+      const frame = request.maxWidth !== undefined && request.maxWidth < latest.width
+        ? await encodeSnapshot(request.maxWidth)
+        : latest;
+      const ageMs = performance.now() - frame.capturedAt;
       if (isStaleFrame(ageMs)) throw new EngineFailure('timeout', 'stale-frame');
-      return { jpeg, width: latest.width, height: latest.height, ageMs };
+      return { jpeg: frame.jpeg.toString('base64'), width: frame.width, height: frame.height, ageMs };
     }
     case 'tap': {
       await win32.tap(requireWindow(), request.x, request.y, request.count);

@@ -147,10 +147,10 @@ export interface CapturedJpeg {
  *
  * The World asks for a second capture rather than re-encoding `Frame.toRgba()` — that would spend
  * ~100 ms undoing the encode the child already paid for, and lose a second generation of JPEG. The
- * request carries `maxWidth` (`escalationImageWidth`) so a downscaling child costs the World nothing;
- * **the child does not downscale yet**, so the bytes come back at native size and the returned size
- * says so. The remaining work is child-side: `protocol.mjs`'s `decodeRequest` drops the field and
- * `jpeg-worker.mjs` would encode the downscaled copy. Recorded in the Task 10 report.
+ * request carries `maxWidth` (`escalationImageWidth`), and the child box-filters the next frame
+ * *before* encoding it: the bytes arrive at or below that width and the returned `width`/`height`
+ * describe the JPEG actually returned, not the window. A request at or above the native width comes
+ * back native — the snapshot is never upscaled — and the perception path never scales at all.
  *
  * A failure is the same `EngineCaptureError` the plain capture throws: the caller decides whether a
  * question without an image is still worth asking (it is — the text carries the perception line).

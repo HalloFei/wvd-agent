@@ -4,7 +4,16 @@ import jpeg from 'jpeg-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineEvent, EngineReply, EngineRequest } from '../src/contracts.ts';
 import { MAX_PRESS_HOLD_MS, TEARDOWN_GRACE_MS } from '../src/contracts.ts';
-import { FRAME_MAX_AGE_MS, LineDecoder, decodeLine, encodeEvent, encodeReply, encodeRequest } from '../src/engine/protocol.ts';
+import {
+  FRAME_MAX_AGE_MS,
+  LineDecoder,
+  MAX_CAPTURE_WIDTH,
+  MIN_CAPTURE_WIDTH,
+  decodeLine,
+  encodeEvent,
+  encodeReply,
+  encodeRequest,
+} from '../src/engine/protocol.ts';
 import { connectEngine, startEngine } from '../src/engine/child.ts';
 import { parseHotkey } from '../src/engine/hotkey.mjs';
 import { sendInput, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
@@ -54,6 +63,25 @@ describe('engine protocol', () => {
     expect(decodeLine('{"id":1,"ok":false,"error":"exploded"}')).toBeNull();
     expect(decodeLine('{"id":1,"request":{"op":"teleport"}}')).toBeNull();
     expect(decodeLine('{"id":1,"request":{"op":"tap","x":1,"y":2,"count":3}}')).toBeNull();
+  });
+
+  it('keeps maxWidth on a capture request (contracts §5)', () => {
+    const line = encodeRequest(8, { op: 'capture', maxWidth: 1280 });
+    expect(decodeLine(line)).toEqual({ request: { id: 8, request: { op: 'capture', maxWidth: 1280 } } });
+  });
+
+  it('drops a capture request whose maxWidth is not a sane integer, rather than guessing', () => {
+    for (const maxWidth of [1280.5, '1280', 0, -640, MIN_CAPTURE_WIDTH - 1, MAX_CAPTURE_WIDTH + 1, null, true]) {
+      const line = JSON.stringify({ id: 1, request: { op: 'capture', maxWidth } });
+      expect(decodeLine(line), `maxWidth ${JSON.stringify(maxWidth)}`).toBeNull();
+    }
+  });
+
+  it('accepts a capture request at both declared maxWidth bounds', () => {
+    for (const maxWidth of [MIN_CAPTURE_WIDTH, MAX_CAPTURE_WIDTH]) {
+      expect(decodeLine(JSON.stringify({ id: 2, request: { op: 'capture', maxWidth } })))
+        .toEqual({ request: { id: 2, request: { op: 'capture', maxWidth } } });
+    }
   });
 
   it('splits a byte stream into lines across chunk boundaries', () => {

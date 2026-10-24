@@ -4,7 +4,7 @@ Where the plan stands. The plan file is the specification of the work, not the r
 is the record, updated at each milestone, and `docs/plans/2026-10-24-wvd-world-v1.md` stays the
 authority on *what* each task requires.
 
-Last updated 2026-10-24 07:00, at `61b341b` on `feat/world-v1`.
+Last updated 2026-10-24 12:10, on `main`.
 
 ## Task table
 
@@ -22,7 +22,7 @@ Last updated 2026-10-24 07:00, at `61b341b` on `feat/world-v1`.
 | 10 | The loop and the composition root | done, final fix wave reviewed clean | `b7ad52b`, `2cff58c`, `61b341b` |
 | 11 | Recognise the 3D view | done, reviewed clean | `2be0357`, `6df13ff` |
 
-214 tests across 14 files, `pnpm typecheck` clean.
+226 tests across 16 files, `pnpm typecheck` clean.
 
 ## What runs
 
@@ -48,13 +48,11 @@ Last updated 2026-10-24 07:00, at `61b341b` on `feat/world-v1`.
    tested; nothing can reach it until this panel is captured and parsed.
 2. **`planTap` has no caller in the loop.** The QTE needs a sub-loop that samples three frames inside a
    150 ms decision window; a 100 ms tick cannot. It is a design, not a patch, and it is deferred.
-3. **`capture { maxWidth }` is declared in contracts §5 and not implemented by the child.** The
-   escalation snapshot is therefore taken at native size.
-4. **The blob reaching a live Coo turn is still unobserved.** It needs a running app with a multimodal
+3. **The blob reaching a live Coo turn is still unobserved.** It needs a running app with a multimodal
    endpoint; the mechanism is followed by hand, not proven.
-5. **A town exit is not a documented command.** The loop opens the map there and the town menu may
+4. **A town exit is not a documented command.** The loop opens the map there and the town menu may
    appear; out of scope for v1.
-6. Config keys owned by modules the loop does not yet wire are unread: `hazardEscapeSteps`,
+5. Config keys owned by modules the loop does not yet wire are unread: `hazardEscapeSteps`,
    `hazardEscapeHoldMs`, `resumeMaxAttempts`, `willpowerFloor`, `maxRerolls`, `rerollLeadRatio`, the
    QTE timing quartet, the loot taps, `autoBattleEnableAttempts`, `fightTimeoutMs`.
 

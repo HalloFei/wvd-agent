@@ -6,6 +6,8 @@ export type { EngineCapture, EngineEvent, EngineRequest, EngineReply } from '../
 export type { EngineForeground, EngineInputAck, WireMessage, WireRequest } from './protocol.mjs';
 export {
   FRAME_MAX_AGE_MS,
+  MAX_CAPTURE_WIDTH,
+  MIN_CAPTURE_WIDTH,
   LineDecoder,
   decodeLine,
   encodeEvent,

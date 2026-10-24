@@ -6,10 +6,12 @@
  * spend ~100 ms undoing that encode and pay a second generation of JPEG loss, so the snapshot asks
  * the source for its own JPEG again, at `maxWidth` (contracts §5 declares `capture { maxWidth }`).
  *
- * `SnapshotSource` is the port the composition root binds to that engine capture. The child does
- * **not downscale yet** — the request carries `maxWidth` and the child ignores it, so the image
- * arrives at native size (see the Task 10 report, "not implemented"). The width is always carried
- * with the bytes, which is what keeps `wvd_act`'s coordinate mapping correct either way.
+ * `SnapshotSource` is the port the composition root binds to that engine capture. The request's
+ * `maxWidth` is honoured in the child's render path — the encoder downscales the frame *before*
+ * encoding it and reports the size of the JPEG it actually returned, so `width`/`height` here are
+ * the size the model is reading, not the window. A window already narrower than the request comes
+ * back native (the snapshot is never upscaled), and the width is always carried with the bytes,
+ * which is what keeps `wvd_act`'s coordinate mapping correct.
  */
 import type { BlobInput } from 'cortico/core/types.ts';
 

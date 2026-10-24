@@ -31,6 +31,10 @@ export type WireMessage =
 /** Three ticks at the default 100 ms tick: a frame older than this is refused (ruling R11). */
 export declare const FRAME_MAX_AGE_MS: number;
 
+/** The bounds on `capture.maxWidth` (contracts §5); a request outside them is malformed. */
+export declare const MIN_CAPTURE_WIDTH: number;
+export declare const MAX_CAPTURE_WIDTH: number;
+
 export declare function isStaleFrame(ageMs: number): boolean;
 
 export declare function encodeRequest(id: number, request: EngineRequest): string;

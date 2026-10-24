@@ -22,6 +22,14 @@ const FAILURES = new Set(['unavailable', 'rejected', 'timeout']);
  */
 export const FRAME_MAX_AGE_MS = 300;
 
+/**
+ * The bounds on `capture.maxWidth`, in device pixels (contracts §5). Below the floor a snapshot is
+ * too small to read; above the ceiling the number is a client bug, not a request for a huge image.
+ * A value outside these is a malformed request, not something to clamp: guessing would hide the bug.
+ */
+export const MIN_CAPTURE_WIDTH = 64;
+export const MAX_CAPTURE_WIDTH = 16384;
+
 const isObject = (value) => typeof value === 'object' && value !== null;
 const isInteger = (value) => typeof value === 'number' && Number.isInteger(value);
 
@@ -72,8 +80,13 @@ export function decodeLine(line) {
 function decodeRequest(request) {
   if (!isObject(request) || typeof request.op !== 'string' || !OPS.has(request.op)) return null;
   switch (request.op) {
-    case 'capture':
-      return { op: 'capture' };
+    case 'capture': {
+      // absent is native size, which is what perception needs; present must be a sane integer
+      if (request.maxWidth === undefined) return { op: 'capture' };
+      const maxWidth = request.maxWidth;
+      if (!isInteger(maxWidth) || maxWidth < MIN_CAPTURE_WIDTH || maxWidth > MAX_CAPTURE_WIDTH) return null;
+      return { op: 'capture', maxWidth };
+    }
     case 'foreground':
       return { op: 'foreground' };
     case 'tap':
