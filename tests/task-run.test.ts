@@ -5,7 +5,7 @@ import type {
 } from '../src/contracts.ts';
 import { createTaskPolicy } from '../src/tasks/policy.ts';
 import { createTaskRunner } from '../src/tasks/runner.ts';
-import { runSteps, TASK_KEYS } from '../src/tasks/steps.ts';
+import { isExpectedFloor, runSteps, TASK_KEYS } from '../src/tasks/steps.ts';
 import { routePolicy } from '../src/policy/route.ts';
 
 const frame = (atMs = 0): Frame => ({
@@ -215,5 +215,19 @@ describe('createTaskPolicy', () => {
       id: 't', label: 't', floor: { titleKey: 'k'.repeat(32) }, entry: script([{ op: 'wait', ms: 1 }]),
     }));
     expect(policy.next(state('dungeon', 0))).toEqual({ kind: 'exit' });
+  });
+});
+
+describe('isExpectedFloor', () => {
+  it('accepts the same floor within tolerance and refuses another floor', () => {
+    // Two captures of 第三区-城内2F- with and without the harken glow behind the map.
+    const clean = '0c0280000d6ff0000d7ffc0008c37000';
+    const glow = '0c0280000d6ff8000d7ffc0008437000';
+    const other = '000000007f3ffe007f7efe00220ba600';
+
+    expect(isExpectedFloor(clean, glow)).toBe(true);
+    expect(isExpectedFloor(glow, clean)).toBe(true);
+    expect(isExpectedFloor(clean, other)).toBe(false);
+    expect(isExpectedFloor(clean, 'not-hex')).toBe(false);
   });
 });

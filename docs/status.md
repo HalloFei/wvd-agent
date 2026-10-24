@@ -56,8 +56,17 @@ Measured live the same day, and binding for the next attempt:
 - **The FFXI map's icons are not the B1F icons.** On `第四区` the map parses (title, player,
   `X:11 Y:23`) but yields **zero icons**; `L` (移动至宝箱) is inert on both FFXI floors. The route
   policy therefore sees "no chests" and would leave, so a task session cannot farm there yet.
-- **`第三区-城内2F-` does not parse at all**: the X/Y readout gate refuses that frame, so the
-  title fingerprint never gets a chance. Fixture: `testdata/nav-2026-10-24-ffxi4f/`.
+- **`第三区-城内2F-` now parses, with three chests.** Its readout band carries the panel's
+  scrollbar and the frame has single-digit coordinates; R28 (chrome columns), R28a (one or two
+  digits), R28b (the scrollbar's glow on the last glyph) and R28c (a colon touching its label) are
+  the four fixes, plus one extracted glyph for `5`. Fixtures:
+  `testdata/nav-2026-10-24-ffxi4f/{third-floor,third-floor-glow}.jpg`.
+- **The map is translucent over the 3D view**, so a lit background raises the lattice residual to
+  ~5.8 and R29 raises its ceiling to 6.5. The same glow moves the title fingerprint by 2 of 128
+  bits, so the floor gate compares with a tolerance (R27b).
+- **The harken menu is the zone teleporter**: `第一区` / `第二区` / `第三区` / `第四区` (the zones
+  that are not current), `归还` (town), `什么也不做`; it opens on *arrival* at the sparkle, not on
+  `F`. `层数` switches which zone's map is drawn.
 - **The harken is the white sparkle** (wvd's `harken.png` matches it), and the altar's `移动` menu
   (`第一区` / `第二区` / `第三区` / `归还` / `什么也不做`) is its teleporter. Standing on the
   sparkle does not open it; arriving by 自动移动 does.

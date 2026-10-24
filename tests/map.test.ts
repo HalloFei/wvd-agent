@@ -3,6 +3,7 @@ import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import type { Frame, RgbaImage } from '../src/contracts.ts';
 import { MapPerceiver, readMap } from '../src/perception/map.ts';
+import { floorKeyDistance } from '../src/tasks/steps.ts';
 
 /**
  * R26: the engine hands the World JPEG, not PNG, so the fixtures under test are the JPEGs the
@@ -163,5 +164,40 @@ describe('readMap — the floor title fingerprint', () => {
 
   it('still refuses the HUD frame at the title ink gate', async () => {
     expect(await readMap(await jpegFrame('minimap-and-hud.jpg'))).toBeNull();
+  });
+});
+
+/**
+ * The FFXI collab floors are translucent over the 3D view, so the map panel carries the scene's
+ * glow; the readout band also picks up the panel's scrollbar. Both are handled (R28, R29) and this
+ * is the frame class that first exposed them.
+ */
+describe('readMap — the FFXI third floor', () => {
+  const FFXI = new URL('../testdata/nav-2026-10-24-ffxi4f/', import.meta.url);
+
+  async function ffxiFrame(name: string): Promise<Frame> {
+    const bytes = await readFile(new URL(name, FFXI));
+    const decoded = jpeg.decode(bytes, { useTArray: true });
+    const image: RgbaImage = { data: decoded.data, width: decoded.width, height: decoded.height };
+    return { atMs: 1_000, width: decoded.width, height: decoded.height, toRgba: async () => image };
+  }
+
+  it('reads the floor, the party cell and three chests', async () => {
+    const map = await readMap(await ffxiFrame('third-floor.jpg'));
+
+    expect(map).not.toBeNull();
+    expect(map!.player).toEqual({ x: 13, y: 23 });
+    const chests = map!.icons.filter((icon) => icon.kind === 'chest').map((icon) => cell(icon.at)).sort();
+    expect(chests).toEqual(['5,16', '6,17', '9,13']);
+  });
+
+  it('keeps the floor key under the harken glow, within the gate tolerance', async () => {
+    const clean = await readMap(await ffxiFrame('third-floor.jpg'));
+    const glow = await readMap(await ffxiFrame('third-floor-glow.jpg'));
+
+    expect(glow).not.toBeNull();
+    expect(glow!.player).toEqual({ x: 7, y: 24 });
+    // R27b: the glow shifts a couple of bits; the task's gate compares with a small tolerance.
+    expect(floorKeyDistance(clean!.titleKey, glow!.titleKey)).toBeLessThanOrEqual(8);
   });
 });

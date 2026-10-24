@@ -35,6 +35,36 @@ export const TASK_KEYS: Readonly<Record<TaskKeyName, number>> = {
   space: 0x39,
 };
 
+/**
+ * How many of the fingerprint's 128 bits may differ and still be the same floor (R27b). The FFXI
+ * collab draws its map translucent over a lit 3D scene; the glow shifts a couple of bits in the
+ * title profile (measured: 2 bits between two captures of the same floor) while two different
+ * floors differ in roughly half of them.
+ */
+const FLOOR_KEY_TOLERANCE_BITS = 8;
+
+/** Hamming distance over the 32-hex fingerprint. A malformed key matches nothing. */
+export function floorKeyDistance(a: string, b: string): number {
+  if (a.length !== b.length) return Number.POSITIVE_INFINITY;
+  let distance = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    const left = Number.parseInt(a[index]!, 16);
+    const right = Number.parseInt(b[index]!, 16);
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return Number.POSITIVE_INFINITY;
+    let xor = left ^ right;
+    while (xor !== 0) {
+      distance += xor & 1;
+      xor >>= 1;
+    }
+  }
+  return distance;
+}
+
+/** Is this the floor the task expects? Same key within tolerance (R27b). */
+export function isExpectedFloor(expected: string, observed: string): boolean {
+  return floorKeyDistance(expected, observed) <= FLOOR_KEY_TOLERANCE_BITS;
+}
+
 /** A press is held at least 60 ms (contracts §4): a 0 ms press is dropped at 30 fps. */
 const DEFAULT_HOLD_MS = 60;
 
@@ -159,7 +189,7 @@ async function pollFloor(step: TaskStep, index: number, env: ScriptEnv, floorKey
     if (isStop(captured)) return stopped(index, captured.reason, captured.detail);
     const observation = await env.observe(captured);
     if (observation.screen === 'dungeonmap') {
-      if (observation.map.titleKey === floorKey) return null;
+      if (isExpectedFloor(floorKey, observation.map.titleKey)) return null;
       seen = `floor ${observation.map.titleKey}`;
     } else {
       seen = `screen ${observation.screen}`;

@@ -51,16 +51,20 @@ const UNIFORM_MEAN = 8;
 /** G1 — the coordinate readout: the decisive structural gate (research §3). */
 const READOUT_X = 1010;
 const READOUT_Y = 898;
-const READOUT_W = 136;
+const READOUT_W = 130;
 const READOUT_H = 16;
 const READOUT_INK_LUMA = 85;
 const READOUT_LABEL_X = [1017, 1094] as const;
 const READOUT_LABEL_TOLERANCE = 2;
+/** A band column with any ink at all counts; the chrome filter below is what removes noise. */
+const READOUT_INK_ROWS_MIN = 1;
+/** …and fewer than this, or it is the panel's border rather than a glyph (R28). */
+const READOUT_CHROME_ROWS = 13;
 const READOUT_LABEL_MIN_W = 9;
 const READOUT_LABEL_MAX_W = 13;
 /** Digit widths measured 4–9 px; 3–10 leaves the proportional advances room (research §3). */
 const READOUT_DIGIT_MIN_W = 3;
-const READOUT_DIGIT_MAX_W = 10;
+const READOUT_DIGIT_MAX_W = 13;
 /** Refuse below either floor; never round to the nearest plausible tile (research §8 item 7). */
 const DIGIT_NCC_FLOOR = 0.75;
 const DIGIT_MARGIN_FLOOR = 0.15;
@@ -129,6 +133,14 @@ const PITCH_STEP = 0.05;
 const PHASE_STEP = 0.1;
 /** Best 36.0-px fit must be tighter than this, or the frame is not the lattice being read. */
 const LATTICE_RMS_MAX = 3.5;
+/**
+ * R29: the FFXI collab draws its map translucent over the 3D view, so a lit background (the harken's
+ * glow) adds ink the clean fixtures never had and the fit residual rises to ~5.8. The lattice is one
+ * of five gates and the only one that is a *quality* test rather than a presence test — the readout,
+ * the dark title bar, the map ink and the title string all still have to pass — so the ceiling is
+ * raised for the translucent style rather than spending the residual's discrimination on it.
+ */
+const LATTICE_RMS_MAX_TRANSLUCENT = 6.5;
 /** Confidence 1.0 needs rms ≤ 2 px (research §9). */
 const LATTICE_CLEAN_RMS = 2;
 /** A chevron further than this from a cell centre has no trustworthy click origin (research §8). */
@@ -201,6 +213,7 @@ const DIGIT_TEMPLATE_B64: Readonly<Record<string, string>> = {
   '2': 'AAAAAAAAAAAAAAAmLwwAAAAwhLHVuj8AAAAJDkTLhgQAAAAAAKR6BgAAAAAAnEwAAAAAAE9nCgAAAAAhbxYAAAAAM3YoAAAABlCssWx0bBoVV4GBfoFNDAAAAAAAAQAA',
   '3': 'AAAAAAAAAAAAAhcoJA8AACRNgKvBokUAAAAAHHzEeAkAAAAHVZZIAQAAIl+LawoAACFcntPUgQ8AAAAMR6TJVAAAAAAPXMJcPhcIBiFgjS1FOSMcOUwjAAACAwICAQAA',
   '4': 'AAAAAAAAAAAAAAAAAAseAAAAAAAcbaYAAAAAFWPKzwAAAAQ2itjPAAACFjlvus8ACk4pC0OzzwJUPxocX8LXKjgmGzZ8zt5PAAAADlrG2DMAAAAWR3d8TAAAAAAAAQIA',
+  '5': 'AAAAAAAAAAAAAAAXOTwbAAAAfLz73WQAAAowKi8dAAAAcloeAAAAAADD7s97OgAAACiLz+/2KAEAAAAjc//EFAAAAAAIt+8jK0UQBwqkeAErXTshIU0AAAAAAwMAAAAA',
   '7': 'AAAAAAAAAAAAHisrKSwqAkK51dXV1bsgLyAVEh1OTwAAAAAACmMBAAAAAABDYwAAAAAAKYQPAAAAAAJekQAAAAAAIoV7AAAAAABer1UAAAAAADtgIwAAAAAAAAAAAAAA',
   '9': 'AAAAAAAAAAAAAAQbHxEAAAA6XC0KZlEABKtkAAAssT8i2GEAAAPIdh7ahggAA8qLAIfCl1mG9HwADDI5Nm/QTgAAAAAUmHUIAAAJHmJwCAAAABsxJQAAAAAAAAAAAAAA',
 };
@@ -338,7 +351,7 @@ function parseImage(image: RgbaImage): ParsedMap | null {
   const latticeX = fitLattice(panel.columns, LATTICE_X);
   const latticeY = fitLattice(panel.rows, LATTICE_Y);
   if (!latticeX || !latticeY) return null;
-  if (latticeX.rms > LATTICE_RMS_MAX || latticeY.rms > LATTICE_RMS_MAX) return null;
+  if (latticeX.rms > LATTICE_RMS_MAX_TRANSLUCENT || latticeY.rms > LATTICE_RMS_MAX_TRANSLUCENT) return null;
 
   // 6. G5: the chevron (the click origin) ----------------------------------------------------
   const chevron = findChevron(panel.yellow, width, latticeX.phase, latticeY.phase);
@@ -427,41 +440,85 @@ function readReadout(data: Uint8Array, width: number): Readout | null {
   for (let y = READOUT_Y; y < READOUT_Y + READOUT_H; y += 1) {
     const row = y * width;
     for (let x = 0; x < READOUT_W; x += 1) {
-      if (lumaAt(data, (row + READOUT_X + x) * 4) > READOUT_INK_LUMA) columnInk[x] = 1;
+      if (lumaAt(data, (row + READOUT_X + x) * 4) > READOUT_INK_LUMA) columnInk[x] += 1;
     }
   }
 
-  const runs = columnRuns(columnInk);
-  // Exactly the measured structure: X, :, digit, digit, Y, :, digit, digit (research §3).
-  if (runs.length !== 8) return null;
+  // R28: a column lit through the whole band is UI chrome — the map panel's border scrolls into
+  // this band on some frames and merges with the last digit, which used to make `X: 13 Y: 23`
+  // unreadable. A glyph never fills all 16 rows; the border does.
+  const lit = new Uint8Array(READOUT_W);
+  for (let x = 0; x < READOUT_W; x += 1) {
+    lit[x] = columnInk[x] >= READOUT_INK_ROWS_MIN && columnInk[x] < READOUT_CHROME_ROWS ? 1 : 0;
+  }
 
-  const widths = runs.map(([from, to]) => to - from + 1);
-  const labelRuns: ReadonlyArray<readonly [number, number]> = [runs[0], runs[4]];
-  for (let i = 0; i < 2; i += 1) {
-    const [from, to] = labelRuns[i];
-    if (to - from + 1 < READOUT_LABEL_MIN_W || to - from + 1 > READOUT_LABEL_MAX_W) return null;
-    if (Math.abs(READOUT_X + from - READOUT_LABEL_X[i]) > READOUT_LABEL_TOLERANCE) return null;
+  const allRuns = columnRuns(lit);
+  // A run touching the band's first column is the panel's left border, never a label (R28c).
+  while (allRuns.length > 0 && allRuns[0]![0] === 0) allRuns.shift();
+  const runs = allRuns;
+  const labelAt = (expected: number): number =>
+    runs.findIndex(([from]) => Math.abs(READOUT_X + from - expected) <= READOUT_LABEL_TOLERANCE);
+  const xLabel = labelAt(READOUT_LABEL_X[0]);
+  const yLabel = labelAt(READOUT_LABEL_X[1]);
+  if (xLabel < 0 || yLabel < 0 || yLabel <= xLabel + 1) return null;
+
+  for (const index of [xLabel, yLabel]) {
+    const [from, to] = runs[index]!;
+    // A label may carry its colon when the two touch (17–18 px); anything wider is another glyph.
+    if (to - from + 1 < READOUT_LABEL_MIN_W || to - from + 1 > READOUT_LABEL_MAX_W + 5) return null;
   }
-  for (const index of [2, 3, 6, 7]) {
-    if (widths[index] < READOUT_DIGIT_MIN_W || widths[index] > READOUT_DIGIT_MAX_W) return null;
-  }
+
+  // One or two digits per axis: a corridor reads `X: 7`, a side corridor `X: 13`. The colon is the
+  // narrow run right after each label and is not a digit; when it touches the label it is already
+  // part of that run (R28a, R28c).
+  const colonAfter = (label: number, limit: number): boolean => {
+    const run = runs[label + 1];
+    if (run === undefined || label + 1 >= limit) return false;
+    return run[0] - runs[label]![1] <= 6 && run[1] - run[0] + 1 <= 4;
+  };
+  const xFrom = xLabel + (colonAfter(xLabel, yLabel) ? 2 : 1);
+  const yFrom = yLabel + (colonAfter(yLabel, runs.length) ? 2 : 1);
+  const xRuns = runs.slice(xFrom, yLabel);
+  const yRuns = runs.slice(yFrom);
+  if (xRuns.length < 1 || xRuns.length > 2 || yRuns.length < 1 || yRuns.length > 2) return null;
 
   const digits: string[] = [];
   const margins: number[] = [];
-  for (const index of [2, 3, 6, 7]) {
-    const [from, to] = runs[index];
-    const feature = glyphFeature(data, width, READOUT_X + from, READOUT_X + to);
-    if (!feature) return null;
-    const match = matchDigit(feature);
+  for (const [from, to] of [...xRuns, ...yRuns]) {
+    if (to - from + 1 < READOUT_DIGIT_MIN_W || to - from + 1 > READOUT_DIGIT_MAX_W) return null;
+    const match = readDigit(data, width, from, to);
     if (!match) return null;
     digits.push(match.digit);
     margins.push(match.margin);
   }
 
-  const x = Number(digits[0] + digits[1]);
-  const y = Number(digits[2] + digits[3]);
+  const x = Number(digits.slice(0, xRuns.length).join(''));
+  const y = Number(digits.slice(xRuns.length).join(''));
   if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
   return { x, y, margins };
+}
+
+/**
+ * One digit, with the panel's glow at the band's right edge tolerated (R28b). The map panel draws a
+ * scrollbar whose left edge bleeds into the band and lengthens the last glyph; a digit that does not
+ * match over its full span is retried with up to five columns trimmed from its right edge, and the
+ * first match wins. A glyph trimmed past its own ink is refused like any other.
+ */
+function readDigit(
+  data: Uint8Array,
+  width: number,
+  from: number,
+  to: number,
+): { digit: string; margin: number } | null {
+  for (let trim = 0; trim <= 5; trim += 1) {
+    const end = to - trim;
+    if (end - from + 1 < READOUT_DIGIT_MIN_W) return null;
+    const feature = glyphFeature(data, width, READOUT_X + from, READOUT_X + end);
+    if (!feature) continue;
+    const match = matchDigit(feature);
+    if (match) return match;
+  }
+  return null;
 }
 
 /**
