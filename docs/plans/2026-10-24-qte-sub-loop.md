@@ -447,7 +447,10 @@ export interface BarReading {
 }
 export type BarSample =
   | { readonly ok: true; readonly reading: BarReading }
-  | { readonly ok: false; readonly reason: 'bar-gone' };   // the QTE screen is not there any more
+  | { readonly ok: false; readonly reason: 'bar-gone' | 'capture-failed' };
+// 'bar-gone'       - the QTE screen is not there any more (a parse refusal)
+// 'capture-failed' - we could not look at all. A different fact from "the bar is unreadable",
+//                    and the only one that must reach the tick's failure accounting.
 
 export interface QteSampler { sample(previousMarkerX?: number): Promise<BarSample>; }
 
@@ -457,7 +460,9 @@ export type QteRefusal =
   | 'no-velocity'       // samples came, but no three spanned a steady 66 ms before the budget ran out
   | 'no-reachable-zone' // no zone centre can be reached in the current pass, inside the horizon
   | 'budget-spent'      // the bar outlived `budgetMs`
-  | 'press-refused';    // the actuator declined the press (not foreground, engine gone)
+  | 'press-refused'     // the actuator declined the press (not foreground, engine gone)
+  | 'capture-failed'    // the sampler could not look: the tick retries and owns the session-end
+  | 'misconfigured';    // a non-finite budget or clock: a config bug, not a gamble worth taking
 
 export interface QteTiming {
   readonly ok: true;
@@ -547,7 +552,7 @@ Expected: FAIL — `Failed to resolve import "../src/actions/qte.ts"`.
 
 - [ ] **Step 3: Implement `timeQte` and `bandSampler`**
 
-The loop: `sampler.sample(previousMarkerX)`; refuse on `bar-gone`; refuse `resolved` when `reading.enabled` is false — the button's dimmed state is how the parser separates "the QTE is live" from "this pass is answered" without waiting for the screen to change (chest spec §8a). Keep the last three readings as `QteSample`s; `qteVelocity` over three, and while it is `null` keep sampling (the "walking the first 66 ms" case). With a velocity, `planTap`; gate on `minWindowMs` — under the floor, drop the reading and re-plan on the next; over it, `await wait(max(0, planDueAt - now()))` then `press()`. After a successful press, sample until two consecutive readings agree within 2 px (or `REST_READ_MS` = 600 elapses) and report that as `restX`; a refusal first means the bar vanished — `restX: null`, still `ok`. `budgetMs` bounds the whole call: `budget-spent` if nothing was pressed, `no-velocity` if readings came without a speed.
+The loop: `sampler.sample(previousMarkerX)`; refuse on `bar-gone`; refuse `resolved` when `reading.enabled` is false — the button's dimmed state is how the parser separates "the QTE is live" from "this pass is answered" without waiting for the screen to change (chest spec §8a). Keep the last three readings as `QteSample`s; `qteVelocity` over three, and while it is `null` keep sampling (the "walking the first 66 ms" case). With a velocity, `planTap`; gate on `minWindowMs` — under the floor, drop the reading and re-plan on the next; over it, `await wait(max(0, planDueAt - now()))` then `press()`. After a successful press, sample until two consecutive readings agree within 2 px (or `REST_READ_MS` = 600 elapses) and report that as `restX`; a refusal first means the bar vanished — `restX: null`, still `ok`. `budgetMs` bounds the pre-press loop and, with `REST_READ_MS`, the whole call; the rest read polls with `REST_POLL_MS` (16 ms) so a frozen clock cannot spin. `budget-spent` when the pre-press loop expires having pressed nothing; `no-velocity` only when fewer than three readings arrived; `misconfigured` immediately for a non-finite budget or clock; `capture-failed` whenever the sampler cannot capture - no retry here, because the tick's own capture path owns warm-up and the session-end.
 
 `bandSampler(source)`: take one reading per call — `source.captureBand?.(window)` when the source has one (with `window = qteWindow({ width: 1920, height: 1080 })`, and the perceiver's size gate refusing a foreign window), else `source.capture()` — then `parseQte(frame, previousMarkerX, origin)` and map `{ atMs: frame.atMs, markerX, zones, enabled }`. A `QteParse` refusal maps to `{ ok: false, reason: 'bar-gone' }`. **`atMs` is the frame's clock, never `now()`** — contracts §7's one trap.
 
