@@ -86,6 +86,18 @@ The two outcomes are distinguishable once they arrive: the QTE screen has the ba
 frame, loot is the reward list. `chest-open` is a fork, and the thing that decides it is time, not the
 first frame.
 
+## 3b. The disarm is a key, not a click
+
+Recorded 2026-10-24 (operator): **Space disarms the trap**. The on-screen 解除 hand at (960, 662) is a
+touch target; the keyboard does the same thing. So the QTE action needs no coordinate, no button
+detection and no pointer-mode dance — one press of Space at the planned instant:
+
+- the timing model in §3 is unchanged: the bar, the zones and `planTap` still decide *when*;
+- `QteState.button` stays in the contract because recognising the 解除 control is a cheap way to know
+  the QTE is live and armed, but the **action** is `holdKey(SCAN.SPACE, pressHoldMs)`;
+- this also removes the button-glyph detector from the critical path, which was the part of the
+  original profile that needed an enabled/dimmed contrast reading to be trustworthy.
+
 ## 4. The speed reroll, and why it matters
 
 The wiki states the cursor's speed is **not** affected by any stat, and that for chests on the floor
