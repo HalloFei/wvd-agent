@@ -22,7 +22,7 @@ Last updated 2026-10-24 15:20, on `main`.
 | 10 | The loop and the composition root | done, final fix wave reviewed clean | `b7ad52b`, `2cff58c`, `61b341b` |
 | 11 | Recognise the 3D view | done, reviewed clean | `2be0357`, `6df13ff` |
 
-236 tests across 18 files, `pnpm typecheck` clean.
+421 tests across 28 files, `pnpm typecheck` clean.
 
 ## What runs
 
