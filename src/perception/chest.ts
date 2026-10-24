@@ -269,9 +269,10 @@ interface ButtonReading {
  * `undefined` when there is no previous frame.
  *
  * `origin` says the frame is a crop of a full frame at that point — what `qteWindow` asked the
- * engine for. The frame must then be exactly the window's size, and every number returned stays in
- * full-frame device pixels. Without `origin` the frame must be a whole 1920 × 1080 frame: a crop is
- * never read as one, and a full frame is never accepted as a crop.
+ * engine for. The frame must then be exactly the window's size **at the window's origin**, and
+ * every number returned stays in full-frame device pixels. Without `origin` the frame must be a
+ * whole 1920 × 1080 frame: a crop is never read as one, and a full frame is never accepted as a
+ * crop.
  */
 export async function parseQte(
   frame: Frame,
@@ -281,8 +282,16 @@ export async function parseQte(
   // Dimensions come from the frame (contracts §0.5), and a foreign size is refused before its
   // decode is paid for: a 1080p JPEG costs ~190 ms here, more than the whole half-tick.
   if (origin) {
+    // The origin is part of the gate, not a hint. Production can only ever produce the window's
+    // rectangle, and a same-sized crop cut anywhere else would parse at full confidence against the
+    // wrong columns — a silently shifted answer, which is worse than a refusal.
     const window = referenceWindow();
-    if (frame.width !== window.width || frame.height !== window.height) {
+    if (
+      frame.width !== window.width ||
+      frame.height !== window.height ||
+      origin.x !== window.x ||
+      origin.y !== window.y
+    ) {
       return { ok: false, reason: 'unsupported-size' };
     }
   } else if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) {

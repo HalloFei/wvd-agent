@@ -307,6 +307,32 @@ describe('parseQte from the QTE window', () => {
     expect(await parseQte(full, undefined, { x: 0, y: 0 })).toEqual({ ok: false, reason: 'unsupported-size' });
   });
 
+  it('refuses a same-sized crop taken at another origin', async () => {
+    // A 631x699 crop is only the QTE window if it was cut at the window's top-left. The same pixels
+    // at another origin would parse at full confidence against the wrong columns, so the origin is
+    // part of the size gate — and a foreign one is refused before the decode is paid for.
+    const full = await jpegFrame('frame-0.jpg', 1_000, FIXTURES);
+    const rect = qteWindow(full);
+    const cropped = await cropOf(full, rect);
+    let decodes = 0;
+    const guarded: Frame = {
+      ...cropped,
+      toRgba: async () => {
+        decodes += 1;
+        return cropped.toRgba();
+      },
+    };
+
+    expect(await parseQte(guarded, undefined, { x: rect.x + 8, y: rect.y }))
+      .toEqual({ ok: false, reason: 'unsupported-size' });
+    expect(await parseQte(guarded, undefined, { x: rect.x, y: rect.y + 8 }))
+      .toEqual({ ok: false, reason: 'unsupported-size' });
+    expect(decodes).toBe(0);
+    // At the window's own origin the same crop parses, so the refusal above is the origin.
+    expect((await parseQte(guarded, undefined, { x: rect.x, y: rect.y })).ok).toBe(true);
+    expect(decodes).toBe(1);
+  });
+
   it('keeps refusing a non-1080p full frame', async () => {
     const full = await jpegFrame('frame-0.jpg', 1_000, FIXTURES);
     const cropped = await cropOf(full, { x: 0, y: 0, width: 1280, height: 720 });
