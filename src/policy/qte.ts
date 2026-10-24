@@ -18,8 +18,10 @@
  * - **`atMs` is a delay, not a timestamp.** `planTap` is given no clock (§0.4: the frame carries the
  *   only clock), so it answers "press this many ms from now"; the caller adds it to `frame.atMs`.
  * - **The minimum window is the caller's gate.** Contracts §7 refuses "a window shorter than
- *   `qteMinWindowMs`", but that value is config the planner never sees. The policy compares the
- *   returned `atMs` against `qteMinWindowMs` (150 ms) and waits for the next pass when it is short.
+ *   `qteMinWindowMs`", but that value is config the planner never sees. The caller
+ *   (`actions/qte.ts`) measures what is left of the plan's instant from its own clock —
+ *   `reading.atMs + plan.atMs - now()` — against `qteMinWindowMs` (150 ms) and waits for the next
+ *   pass when it is short.
  *
  * The bounce points are the marker's *core-centre* reversals, not the zone edges: 656.5 and 1261.5
  * on the recorded bar, ~40 px outside each zone, off the bar's end caps (research §5, §12 item 1;

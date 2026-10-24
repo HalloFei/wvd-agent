@@ -24,9 +24,11 @@
  *
  * `reading.atMs` is the capturing frame's clock, and `plan.atMs` is a delay from *that* reading
  * (contracts §7, and `policy/qte.ts` says so at length). The instant to press is therefore
- * `reading.atMs + plan.atMs` in `now()`'s domain, and the sleep is what remains of it, clamped at
- * zero. Stamping a reading with `now()` instead — or comparing the plan's delay to `now()` — would
- * be wrong by the whole capture latency (~50 ms) against a 150 ms floor.
+ * `reading.atMs + plan.atMs` in `now()`'s domain, and the sleep is what remains of it. There is no
+ * clamp at zero: a plan whose instant has already passed is dropped by the `minWindowMs` floor
+ * before the sleep, and the next reading re-plans. Stamping a reading with `now()` instead — or
+ * comparing the plan's delay to `now()` — would be wrong by the whole capture latency (~50 ms)
+ * against a 150 ms floor.
  *
  * ## What bounds the call
  *
@@ -121,13 +123,13 @@ export interface QteSampler {
 
 export type QteRefusal =
   | 'bar-gone'          // a sample looked for the bar and did not find it
-  | 'capture-failed'    // the capture or parse threw: we could not look, which is not the same fact
+  | 'capture-failed'    // we could not look: the capture/parse threw, or the crop would not decode
   | 'resolved'          // the 解除 button reads dimmed: this pass was already answered
   | 'no-velocity'       // fewer than three readings arrived before the budget ran out
   | 'no-reachable-zone' // speeds came, but no zone centre was reachable inside the horizon
   | 'budget-spent'      // three readings or more, no press, and nothing more specific to report
   | 'press-refused'     // the actuator declined the press (not foreground, engine gone)
-  | 'misconfigured';    // non-finite/non-positive budget or non-finite clock: refused before sampling
+  | 'misconfigured';    // bad budget, minWindowMs or clock: refused before sampling
 
 export interface QteTiming {
   readonly ok: true;
