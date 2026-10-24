@@ -48,7 +48,25 @@ export type ScreenId =
 
 export interface Point { readonly x: number; readonly y: number }
 
-export interface MapIcon { readonly kind: 'chest' | 'stairs' | 'hazard' | 'haken'; readonly at: Point }
+/**
+ * One icon drawn on the dungeon map, at its **grid cell**.
+ *
+ * Which markers cross a floor and which do not is the operator's account (2026-10-24), and it is the
+ * distinction the route needs:
+ * - **`harken`** — the white 4-point sparkle. The harken, and the point a party changes floor by.
+ * - **`stairs`, `hole`** — the entries and exits: the staircase, and the down-arrow over an oval.
+ *   No fixture carries the mirrored (`stair_down`) staircase, so no up/down direction is published.
+ * - **`teleport`** — the orchid ring (the mobile art's `stair_teleport`). **Within one floor only**:
+ *   it never crosses, so no route may use it to change floor.
+ * - **`chest`, `hazard`** — the resource and the obstacle.
+ *
+ * The kind names the glyph; where a mechanic is asserted above it is the operator's, not the
+ * picture's. Navigation design §6 records what is measured and what is not.
+ */
+export interface MapIcon {
+  readonly kind: 'chest' | 'stairs' | 'hazard' | 'teleport' | 'hole' | 'harken';
+  readonly at: Point;
+}
 
 export interface MapState {
   readonly floorTitle: string;          // the Latin token (`B1F`), or '' when the title is not Latin

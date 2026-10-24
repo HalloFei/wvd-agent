@@ -166,6 +166,26 @@ this survey.
   recording — `planTap` already refuses those targets — so `tests/replay-plan.test.ts` proves they
   fire with synthetic inputs instead of implying coverage from the recording.
 
+## Round 5 — the floor-transition markers (2026-10-24)
+
+The map now names its own crossing markers. Which of them cross is the operator's account: **the
+harken and the entries/exits cross; the orchid ring only moves the party within a floor.**
+
+- **`harken`** (哈肯, the white 4-point sparkle) is read on every floor — B1F (20,21), 第三区 (6,24),
+  第四区 (10,23). The game draws it at two sizes (16 px, 12 px) and one scale cannot carry it: at
+  16 px it scores 0.84 on the hole glyph and 0.78 on a B1F background cell that outranks that floor's
+  own sparkle. Matching both scales behind an ink gate gives 0.72 / 1.00 / 0.72 against a 0.63 best
+  impostor — and it is what finally reads 第四区 and the glow frames, which parsed as *zero icons*.
+- **`teleport`** — the orchid ring. Five on 第四区, matched as a colour rule (R≈148 G≈50 B≈188) with
+  no false pixel on any other committed frame. It is an intra-floor marker: no route may cross on it.
+- **`hole`** — the white down-arrow over an oval, two on 第三区 at NCC 1.00 / 0.98 vs 0.65 elsewhere.
+  **`stairs`** is unchanged (B1F only); no direction is published, because no fixture carries the
+  mirrored `stair_down` orientation.
+
+Identification and initiation meet at one cell: `tileOnScreen` maps the published cell to the screen
+point `automoveToTile` clicks, pinned by a test against 第四区's ring (12,18) → (925,446) and its
+measured centre (923.5,449). Navigation design §6 is the record; which entry/exit a floor crosses at
+is left to the live pairing the p0 FFXI session owes.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

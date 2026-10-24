@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
-import type { Frame, MapState, RgbaImage } from '../src/contracts.ts';
+import type { Frame, MapIcon, MapState, RgbaImage } from '../src/contracts.ts';
 import { MapPerceiver, readMap, tileOnScreen } from '../src/perception/map.ts';
 import { floorKeyDistance } from '../src/tasks/steps.ts';
 
@@ -51,8 +51,9 @@ describe('readMap', () => {
     // floor, so this asserts the pipeline, not that the glyph generalizes.
     expect(map!.icons.some((icon) => icon.kind === 'stairs')).toBe(true);
 
-    // `haken` is not identifiable in any fixture and must never be emitted (research §6).
-    expect(map!.icons.some((icon) => icon.kind === 'haken')).toBe(false);
+    // The harken: the white sparkle the operator changes floor by, matched at two drawn sizes
+    // (12 px here, 16 px on 第三区) — cell (20,21), the floor's only one.
+    expect(map!.icons.filter((icon) => icon.kind === 'harken').map((icon) => cell(icon.at))).toEqual(['20,21']);
 
     // contracts §3 `origin`: the chevron's own screen point, the anchor every tile click is placed
     // from. The canvas scrolls, so this is the only absolute position a walk may use. It is a blob
@@ -259,3 +260,70 @@ describe('tileOnScreen', () => {
     expect(aim.y).toBeLessThan(920);
   });
 });
+
+/**
+ * The floor-transition markers (2026-10-24): what the map draws where a party changes floor. The
+ * kinds are named by glyph — the mechanic they serve is not asserted here — and every positive below
+ * is also a negative on the other two floors, which is what stops a marker from being invented.
+ */
+describe('readMap — floor-transition markers', () => {
+  const FFXI = new URL('../testdata/nav-2026-10-24-ffxi4f/', import.meta.url);
+
+  async function frame(name: string, base = FFXI): Promise<Frame> {
+    const bytes = await readFile(new URL(name, base));
+    const decoded = jpeg.decode(bytes, { useTArray: true });
+    const image: RgbaImage = { data: decoded.data, width: decoded.width, height: decoded.height };
+    return { atMs: 1_000, width: decoded.width, height: decoded.height, toRgba: async () => image };
+  }
+
+  const of = (map: MapState, kind: MapIcon['kind']): string[] =>
+    map.icons.filter((icon) => icon.kind === kind).map((icon) => cell(icon.at)).sort();
+
+  it('reads the two holes on the FFXI third floor and nothing else that crosses', async () => {
+    const map = await readMap(await frame('third-floor.jpg'));
+
+    // The down-arrow-over-an-oval glyph: two instances, at cell centre + (-1, +1). Measured NCC 1.00
+    // and 0.98; the best score anywhere else in any committed map frame is 0.65.
+    expect(of(map!, 'hole')).toEqual(['1,17', '20,8']);
+    expect(of(map!, 'harken')).toEqual(['6,24']);
+    expect(of(map!, 'teleport')).toEqual([]);
+    expect(of(map!, 'stairs')).toEqual([]);
+  });
+
+  it('reads all five orchid rings on the FFXI fourth floor — the floor that read zero icons', async () => {
+    const map = await readMap(await frame('map.jpg'));
+
+    expect(map).not.toBeNull();
+    expect(map!.player).toEqual({ x: 11, y: 23 });
+    expect(of(map!, 'teleport')).toEqual(['12,18', '17,13', '17,15', '4,9', '7,13']);
+    // Five rings move the party *within* the floor; the one harken is what crosses it.
+    expect(of(map!, 'harken')).toEqual(['10,23']);
+    expect(map!.icons).toHaveLength(6);
+    expect(of(map!, 'chest')).toEqual([]);
+    expect(of(map!, 'hole')).toEqual([]);
+  });
+
+  it('invents no transition marker on B1F, which draws only the staircase', async () => {
+    const map = await readMap(await frame('map.jpg', new URL('../testdata/nav-1024-0213/', import.meta.url)));
+
+    expect(of(map!, 'hole')).toEqual([]);
+    expect(of(map!, 'teleport')).toEqual([]);
+    expect(of(map!, 'stairs')).toEqual(['25,25']);
+    expect(of(map!, 'harken')).toEqual(['20,21']);
+  });
+
+  it('aims a walk at the ring it identified: the identified cell is the cell a tap would hit', async () => {
+    const map = await readMap(await frame('map.jpg'));
+    const ring = map!.icons.find((icon) => icon.kind === 'teleport' && icon.at.x === 12 && icon.at.y === 18);
+    expect(ring).toBeDefined();
+
+    // contracts §3: a consumer converts the published cell once, with `origin` and `tileOnScreen`,
+    // and hands `automoveToTile` a screen point. The ring's measured centre is (923.5, 449), so the
+    // transform lands inside the glyph — identification and initiation meet at one cell.
+    const aim = tileOnScreen(map!, ring!.at);
+    expect(aim).toEqual({ x: 925, y: 446 });
+    expect(Math.abs(aim.x - 923.5)).toBeLessThanOrEqual(3);
+    expect(Math.abs(aim.y - 449)).toBeLessThanOrEqual(4);
+  });
+});
+

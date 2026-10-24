@@ -89,9 +89,9 @@ existed (`research-map-parser.md`). What it settled:
 - **The readout** `X: n Y: n` is 12 px digits at a fixed rect (ink rows 900–911, x 1010–1146). No OCR
   exists on this machine; template matching read 26 of 26 map frames, but only seven of the ten digit
   glyphs have ever been seen. An unseen digit returns `null`.
-- **Icons**, by reliability: chest (high — every instance matched at NCC 0.97–1.00, no false positive
-  above 0.55), hazard (high — an 85×36 red bar, `R−B ≥ 45`), stairs (medium, one sample), **haken
-  (not identifiable)**. `haken` must therefore never be emitted, and no policy may depend on it.
+- **Icons**, as measured then: chest (high — every instance matched at NCC 0.97–1.00, no false
+  positive above 0.55), hazard (high — an 85×36 red bar, `R−B ≥ 45`), stairs (medium, one sample),
+  and the sparkle, which was not identifiable at one scale and is read at two since 2026-10-24 (§6).
 - **Map versus not-a-map** is decided by structure, not colour: the readout's eight glyph runs, the white
   ink count (15k–200k px), eight wall lines at 36 px pitch, then the chevron. Across 198 non-map frames
   the run count was never eight; the HUD-only fixture yields two runs and 1 424 ink px against the map's
@@ -209,3 +209,47 @@ and a task file may press it, but no route intent depends on it.
 2. Does the popup appear for every tile, or only for reachable ones? How does an unreachable tile
    behave?
 3. `移动至出口` (F) — next floor down, or the dungeon exit? Does it always prefer a haken?
+
+## 6. Crossing a floor — the markers, measured 2026-10-24
+
+Which markers cross a floor is the operator's account, and it splits the vocabulary three ways:
+
+- **The harken crosses.** The white 4-point sparkle is 哈肯; its arrival menu lists the zones
+  (第一区/第二区/第三区/第四区, 归还, 什么也不做) — verified 2026-10-24.
+- **The entries and exits cross.** The staircase and the down-arrow over an oval.
+- **The orchid ring does not.** It moves the party within one floor. 第四区 draws five of them; none
+  of them changes the floor, and no route may treat one as a crossing.
+
+| Marker | What it is | Read where | Margin |
+| --- | --- | --- | --- |
+| `harken` | the white 4-point sparkle, 哈肯 | B1F (20,21), 第三区 (6,24), 第四区 (10,23) — one per floor | 0.72 / 1.00 / 0.72, best impostor 0.63 |
+| `stairs` | the staircase | B1F (25,25) | 1.00, next best 0.63 there, ≤ 0.65 anywhere else |
+| `hole` | the white down-arrow over an oval | 第三区 (1,17) and (20,8) | 1.00 / 0.98, best elsewhere 0.65 |
+| `teleport` | the orchid ring — **within a floor** | 第四区 ×5: (12,18) (7,13) (17,13) (17,15) (4,9) | colour rule, zero false pixels off 第四区 |
+
+**How the harken is read.** The game draws it at two sizes — 16 px on 第三区, 12 px on B1F and
+第四区 — and one scale cannot carry it: at 16 px it scores 0.84 on the hole glyph and 0.78 on a B1F
+background cell that outranks that floor's own sparkle. So the parser matches both scales at the cell
+centre and keeps the better score, behind an ink gate (30–140 lit px in a chest-sized box). That is
+what makes 第四区 and the glow frames readable at all: they parsed as **zero icons** before.
+
+**The mechanic, as far as it is measured.**
+
+- `F` (移动至出口) crosses a floor: pressed on B1F the party walked to the tile and the screen came up
+  B2F (2026-10-24). `L` (移动至宝箱) never leaves the floor. B1F draws one harken and one staircase,
+  so on that floor the crossing has exactly two candidates.
+- **Up is unproven.** No committed frame carries the mirrored staircase (`stair_down` in the mobile
+  art); the mirrored template matches nothing anywhere (best 0.68, on a wall cell). Descending has
+  candidates on B1F; ascending has none.
+- Which of a floor's markers the menu actually opens on is unmeasured. This section says what each
+  glyph **is** and what the operator says it **does**; it does not claim the pairing.
+
+**Initiating the move.** Identification and initiation meet at one cell. The parser publishes the
+marker's grid cell; `tileOnScreen(map, cell)` turns it into the screen point; `automoveToTile` presses
+`R`, clicks that point and clicks the 自动移动 element 79–84 px above it (§3e). The link is tested, not
+assumed: 第四区's ring (12,18) maps to (925,446) against a measured ring centre of (923.5,449), and
+the harken's cell is the same cell a walk would be aimed at (`tests/map.test.ts`).
+
+**Still open:** which entry/exit a floor crosses at (needs one live pairing of a marker with a floor
+change — the p0 FFXI session); and the door-with-arrow drawn at the top edge of both FFXI maps, which
+no template of ours matches yet (0.48 at best) and which is the most likely entrance marker.

@@ -86,7 +86,18 @@ policy either clicks on a black frame or waits forever on a normal view.
 ```ts
 export interface Point { readonly x: number; readonly y: number }
 
-export interface MapIcon { readonly kind: 'chest' | 'stairs' | 'hazard' | 'haken'; readonly at: Point }
+/** One icon drawn on the map, at its grid cell. The kind names the **glyph**; where a mechanic is
+ *  asserted it is the operator's account (2026-10-24), not the picture's.
+ *  - 'harken' — the white 4-point sparkle. The harken: the point a party changes floor by.
+ *  - 'stairs' | 'hole' — the entries and exits (the staircase; the down-arrow over an oval).
+ *  - 'teleport' — the orchid ring. **Within one floor only**: it never crosses, so no route may
+ *    use it to change floor.
+ *  - 'chest' | 'hazard' — the resource and the obstacle.
+ *  Direction is not published: no committed frame carries the mirrored `stair_down` orientation. */
+export interface MapIcon {
+  readonly kind: 'chest' | 'stairs' | 'hazard' | 'teleport' | 'hole' | 'harken';
+  readonly at: Point;
+}
 
 export interface MapState {
   /** The Latin floor token, e.g. 'B1F'. The localized name beside it is not read: one sample is not
@@ -141,6 +152,16 @@ constant; the chevron sits at the centre of the party's cell and is measured per
 conversion is done once, by the consumer, with `tileOnScreen(map, tile)` (`src/perception/map.ts`),
 which is the exact inverse of the transform that placed `icons`. A walk intent carries a grid cell
 (`§6`), never a screen point: the policy must not know where the canvas happens to sit.
+
+**The markers, as measured 2026-10-24.** Which markers cross a floor is the operator's account: the
+**harken** and the **entries/exits** do, and the orchid ring does **not** — it moves the party within
+one floor. The parser reads five of them: `stairs` (B1F cell 25,25, NCC 1.00, next best 0.63 on the
+same floor, ≤ 0.65 anywhere), `hole` (two on 第三区, NCC 1.00/0.98, 0.65 elsewhere), `teleport`
+(five on 第四区, a colour rule with zero false pixels on every other committed frame), `harken` (one
+per floor — B1F (20,21), 第三区 (6,24), 第四区 (10,23) — matched at the two sizes the game draws it
+at, 0.72/1.00/0.72 against a 0.63 best impostor), and the long-standing `chest`/`hazard`. The
+mirrored staircase appears in no fixture, so no up/down direction is published. Navigation design §6
+records each marker and what is still unobserved.
 
 ## 4. Actuation
 

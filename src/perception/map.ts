@@ -18,7 +18,12 @@
  * Geometry: 1920×1080 device pixels. A frame of another size is unsupported (contracts §0.5: refuse,
  * do not mis-scale the fixed rects). The digits are 12 px at a fixed rect and only seven of the ten
  * glyphs have ever been seen; a glyph below the match/margin floor makes the whole readout `null`.
- * `haken` is not identifiable in any fixture, so it is never emitted.
+ *
+ * The map's markers, measured 2026-10-24 against every committed map frame: chest, hazard, stairs,
+ * the orchid `teleport` ring (within a floor), the `hole` (down-arrow over an oval) and the `harken`
+ * — the white sparkle the operator changes floor by. The harken is drawn at two sizes across floors
+ * (16 px on 第三区, 12 px on B1F and 第四区), which is why it is matched at both scales: at one scale
+ * it fires on the hole glyph and on B1F background cells. Navigation design §6 has the numbers.
  */
 import type {
   Frame,
@@ -182,6 +187,41 @@ const CHEST_NCC_FLOOR = 0.9;
  */
 const STAIRS_NCC_FLOOR = 0.85;
 
+/**
+ * Hole — the white down-arrow over an oval, a 31×33 glyph inside a 36×36 cell (第三区 x 512–542,
+ * y 466–498). Two instances in the corpus, both at cell centre + (−1, +1), NCC 1.00 and 0.98; the
+ * best score anywhere else in any committed map frame is 0.65. One floor sample of the glyph, but a
+ * two-instance floor and a 0.25 margin, so it is emitted.
+ */
+const HOLE_NCC_FLOOR = 0.9;
+
+/**
+ * Teleport — the orchid ring (the mobile art's `stair_teleport`). Colour, like the hazard, because
+ * the ring's core is a saturated magenta that nothing else on the map draws: measured R≈148 G≈50
+ * B≈188 over its most saturated pixels, five instances on 第四区 and **zero** false pixels on every
+ * other committed frame. Area gates a ring (≈80 px) away from stray antialiasing (the combat
+ * fixture leaks 8 px).
+ */
+const TELEPORT_R_MIN = 110;
+const TELEPORT_G_MAX = 100;
+const TELEPORT_B_MIN = 140;
+const TELEPORT_B_MAX = 230;
+const TELEPORT_BR_MIN = 25;
+const TELEPORT_AREA_MIN = 30;
+
+/**
+ * Harken — the white 4-point sparkle, the point the party changes floor by (operator, 2026-10-24).
+ * One glyph at two drawn sizes: 16 px on 第三区 (NCC 1.00) and 12 px on B1F (0.72) and 第四区 (0.72).
+ * A single-scale template cannot carry it — at 16 px it scores 0.84 on the hole glyph and 0.78 on a
+ * B1F background cell that outranks that floor's own sparkle — so both scales are matched and the
+ * better score wins. With the ink gate below, the three instances score 1.00 / 0.72 / 0.72 and the
+ * best impostor in the corpus is 0.63. The ink band also gates out the chest (≈125 px in the same
+ * box is the top of the band, and it is a template match of its own).
+ */
+const HARKEN_NCC_FLOOR = 0.7;
+const HARKEN_INK_MIN = 30;
+const HARKEN_INK_MAX = 140;
+
 /** Hazard: a translucent red bar with white spikes; colour is a difference rule (research §6). */
 const HAZARD_RB_MIN = 45;
 const HAZARD_RG_MIN = 40;
@@ -274,7 +314,29 @@ const DIGIT_TEMPLATES: ReadonlyArray<{ digit: string; template: Template }> = Ob
   DIGIT_TEMPLATE_B64,
 ).map(([digit, base64]) => ({ digit, template: decodeTemplate(base64, 8, 12) }));
 const CHEST_TEMPLATE = decodeTemplate(CHEST_TEMPLATE_B64, 22, 23);
+/**
+ * Hole: a 36×36 cell-sized crop at the first instance (`third-floor.jpg` x 509–544, y 464–499),
+ * including the bright cell frame it sits in. Two samples on one floor; the second matches at 0.98.
+ */
+const HOLE_TEMPLATE_B64 =
+  'RENBVllbVlBMRTw+OCxQSkhGQEBGQzcyOj07Ojk5Oz5APz86Q0A8S1FUUUxIQTgnIiVfaWtraXNxWDAcJTAwMjExNDc4NzQ3Qz42PERISEZCOS8jHzGFoaenqaikejYQFyUlKSgoKSssKikyR0A0MjtCQ0I8MCYbFS2Rtbi2ure6jj8QFyQeJSQkJSYmJCMwTEQ1MTpERUM8LyQbEiuRtLWvs661jjwNFCMeJSMkJScnJiMvTkY1MzxGSEY/MiciGzSWt7m1t7K1ijoJEiMkJiUlJykqJyUvTUUzMDlCRUM+MyoWFjCPrrWys7q3iToLDyEkIyMjJigpKCYuSkMxKDI7Pz46MigTGDWRsLm4t7mzhjwMChgbICAgIycoJyUsS0kyKykwPD0yJiIUCjSRubO5ra+3jjkEChoWFxcfIx0gKCQwS0cwKCwxMy0iGxkWDTGHsLG7s8G1h0MZFhoTHRMWHx4iKCUuSkUuKCwvMztGUFNUS1yYtLK7tbmrjGZPS0pITS4fIyIhIyEsSUUtKyknL0tzk6Cjmpaxu7K4s7O2saOcnp6bckIjISEfISIqSUYvKSklIzFajK24u6+0t661s6+7vbe6vq2SVSkSGh8hJCQqSkk0JiwtIhYnWYajvLa2t6+3uLK1sayzrYNQJw8NHSQkJCAqS0w5LCsuLR8ZME95qbS3vLW5usG+ubWqjFkuFhAaJiUkIx0qS04+NSQhMTMhFhxHiKSvubS4urq5ubGOVScTFBUhJR8hJyMrSUpEPDAqLjEqGxITT42rsre7u7bEv5VSHg8VFxoeICAhIiMvS0tEPjUtLC4sIhcNG0N9qLOysrGwkFIgEA8MHB8iIyIiIyUsTUxEPzsyKiswKh0bDRhLh6mztbGSXSkQEhseICIkJCIhISMpTkxCPD85LC02MCIYFhAaRX+lr4hTJhwaERYoIiMkIyAfHyApTkk9OUE/NDI5MiQYGxMKHEt7k0kiDRskGhooIiMjIiAfICIqTUY4Nj0+ODUzLSIjFAsPFR02ThsTDxMdJCIdHh8gICAhIyYsSUAwLjI0MywlHxsYCwUMDwoMFAwODg0RFhIKFRcZGhwfIyYtRz0sKCcoKCEXERMSHB4ZHikqISUbGyUkFQ0RDA4RExYaICQuQzgpIhQTISUjL0dNVWJveXx6eXp5d3FrX0w6MRsUGRcWGBUeRzUbDhYmOlRreoCVmqGpsLKysqytq6inpJmNe15KPSMQEhkeQCUMIEZpeY+st66vsLK0t7m6u7e3tbO3u7q1s52TiWhAIg8ZLxgZVYiws7C8wLi1tLOzs7S0tbS0srC0ury5vLW3ua2QVxwXJSVRkKzCv7W2uLe7vLy8vLu6uba4t7W3vL26ury5sba9llUhKDh+t7i3tLS3ubi0tbe4ubi2tbG1t7W2ubm2tsLBrq7CsHwvKy5kp6+zsbO7vbm4uLm5u7u7u7i8vbu6vby6tLzBu7e5nGkvKhQscpi1tbC3vLq9vLu6u7y/wLq+vbi2uLi1uK6vuLutfkglLh8RL2CXsLS2uLnBv7y8vr++vL28u7u8u7i2tK+1u6VvNREdNCcZEyxMZHaJnam1uLu/wcC+vcHAwcC+uLCqppF5ZEwxHxowOTAjHRodKDlMYG+FjpqlrK6vrqaloJuShHRrXk88LB0WHiw+Pjo0MiEXGRwaHiQ7Q1FbY2RnZ2VjXVZOQTIpERMYHBwdJjFC';
+
+/**
+ * Harken: two matched scales of the same glyph, both cut from its one clean instance
+ * (`third-floor.jpg` x 700–716, y 221–237) — the 16 px drawing itself, and the 12 px drawing the
+ * other two floors use, produced by Lanczos downscale.
+ */
+const HARKEN_TEMPLATE_B64_16 =
+  'Hx8eHigaK26UZComIiIiIx0dHR0lHkWTsoFBJSIiIiIcGxsZHjFopr2hXyEhISAiHBkaICZIorq5r5UwIyAhJCQiISIyW62/v7eiVDgoHSAgIictUnyytrq4r4ZINiYhJjJOZn2arKOptrmxgXFZPUhigJSQoZuTnrS7xLapj26TpaGUh5CGi5Wusby7urivprWrloWKg5GQq6+6u8DEwFt2jZaYl46flK+6x8C4oX41RFhkkZelp6Ksu7qceldCJiw4QWKDtayxtr2QWUMvKh8fIyc5bL2zwL60XS8jGyEiISEkKVGguL+1kzgpIR8lICEiJCUyara2o2MmHxweIw==';
+const HARKEN_TEMPLATE_B64_12 =
+  'Hx4gJB1qlkcjIyIjHBwcHzeSuG8mISIhHBoeI263uqM/HyIjIyAgOIvCvLRrMSAeIC5EbaKwsbmhYEUtRGiLlKKWo7nBr5VroqyXiImImrC3vL25iaCbkIqSmLG+wb6pOVVwlJ2lobXAonVNJC05XaC1sr+TSy8mICAjMYy8vrdbJB4hISIkJVKsu4wzHh4j';
+
 const STAIRS_TEMPLATE = decodeTemplate(STAIRS_TEMPLATE_B64, 36, 36);
+const HOLE_TEMPLATE = decodeTemplate(HOLE_TEMPLATE_B64, 36, 36);
+const HARKEN_TEMPLATES = [
+  decodeTemplate(HARKEN_TEMPLATE_B64_16, 16, 16),
+  decodeTemplate(HARKEN_TEMPLATE_B64_12, 12, 12),
+];
 const TITLE_TEMPLATES: Readonly<Record<string, Template>> = Object.fromEntries(
   Object.entries(TITLE_TEMPLATE_B64).map(([char, base64]) => {
     const slot = TITLE_SLOTS.find((entry) => entry.char === char);
@@ -722,6 +784,8 @@ interface Panel {
   readonly yellow: readonly number[];
   /** Frame pixel indices of the hazard's colour rule. */
   readonly red: readonly number[];
+  /** Frame pixel indices of the teleport ring's colour rule. */
+  readonly orchid: readonly number[];
 }
 
 const PANEL_SCAN_X0 = LATTICE_X;
@@ -734,6 +798,7 @@ function scanPanel(data: Uint8Array, width: number): Panel {
   const rows = new Float64Array(LATTICE_H);
   const yellow: number[] = [];
   const red: number[] = [];
+  const orchid: number[] = [];
   let mapInk = 0;
 
   for (let y = PANEL_SCAN_Y0; y < PANEL_SCAN_Y1; y += 1) {
@@ -783,10 +848,20 @@ function scanPanel(data: Uint8Array, width: number): Panel {
       ) {
         red.push(row + x);
       }
+
+      if (
+        r >= TELEPORT_R_MIN &&
+        g <= TELEPORT_G_MAX &&
+        b >= TELEPORT_B_MIN &&
+        b <= TELEPORT_B_MAX &&
+        b - r >= TELEPORT_BR_MIN
+      ) {
+        orchid.push(row + x);
+      }
     }
   }
 
-  return { mapInk, columns, rows, yellow, red };
+  return { mapInk, columns, rows, yellow, red, orchid };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -932,6 +1007,20 @@ function findIcons(
 
       const stairs = bestNcc(data, width, STAIRS_TEMPLATE, cx, cy);
       if (stairs.score >= STAIRS_NCC_FLOOR) push('stairs', toGrid(cx + stairs.dx, cy + stairs.dy));
+
+      const hole = bestNcc(data, width, HOLE_TEMPLATE, cx, cy);
+      if (hole.score >= HOLE_NCC_FLOOR) push('hole', toGrid(cx + hole.dx, cy + hole.dy));
+
+      // The harken is cell-centred on every instance and drawn at two sizes, so both scales are
+      // matched at the cell centre and the better one decides.
+      if (bright >= HARKEN_INK_MIN && bright <= HARKEN_INK_MAX) {
+        let harken: NccResult = { score: -1, dx: 0, dy: 0 };
+        for (const template of HARKEN_TEMPLATES) {
+          const match = bestNcc(data, width, template, cx, cy);
+          if (match.score > harken.score) harken = match;
+        }
+        if (harken.score >= HARKEN_NCC_FLOOR) push('harken', toGrid(cx + harken.dx, cy + harken.dy));
+      }
     }
   }
 
@@ -942,7 +1031,12 @@ function findIcons(
     push('hazard', toGrid(blob.sumX / blob.area, blob.sumY / blob.area));
   }
 
-  // `haken` is never pushed: nothing in the fixtures can label one (research §6, §9).
+  // The orchid ring is a colour rule, not a template: its core is saturated and nothing else on the
+  // map is, so the area gate is all the precision it needs.
+  for (const blob of blobs(panel.orchid, width, REFERENCE_HEIGHT)) {
+    if (blob.area < TELEPORT_AREA_MIN) continue;
+    push('teleport', toGrid(blob.sumX / blob.area, blob.sumY / blob.area));
+  }
 
   return icons;
 }
