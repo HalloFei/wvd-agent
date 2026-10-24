@@ -34,10 +34,13 @@
  * next tick may try again (the marker bounces forever and passes are free, chest spec §8a). The
  * rest read after a successful press adds its own settle window, `REST_READ_MS`, and is clamped to
  * `budgetMs + REST_READ_MS` from the call's start — so the whole call is bounded by the pre-press
- * budget plus the rest read, never by the budget alone. `minWindowMs` is the caller's floor over
- * `plan.atMs`: a pass tighter than that is dropped and the next reading re-plans (contracts §7
- * keeps the floor here, not in the planner). A dimmed 解除 button is `resolved`, not a live pass
- * (chest spec §8a) — nothing is pressed, because this pass was already answered.
+ * budget plus the rest read, never by the budget alone. `minWindowMs` is the caller's floor over the
+ * time left to the plan's instant, `reading.atMs + plan.atMs - now()`: a pass tighter than that is
+ * dropped and the next reading re-plans (contracts §7 keeps the floor here, not in the planner).
+ * The reading's clock is not `now()` — a frame can be up to `FRAME_MAX_AGE_MS` (300 ms) old when it
+ * is planned — so the floor has to be taken from what is actually left, not from the plan's own
+ * delay. A dimmed 解除 button is `resolved`, not a live pass (chest spec §8a) — nothing is pressed,
+ * because this pass was already answered.
  *
  * ## The refusals
  *
@@ -45,13 +48,14 @@
  * that could not look at all (a capture or a parse that threw, a crop that could not be decoded, or
  * one that is not the rectangle that was asked for). They are different facts on purpose — only the
  * second may reach the tick's failure accounting — and neither is retried here: the World's own
- * capture path owns warm-up retries and the session-end decision, and it runs on the very next tick. `resolved` is a dimmed button; `press-refused` the actuator's answer;
- * `misconfigured` a non-finite or non-positive budget (or non-finite clock) refused before the
- * first sample, in the same spirit as `planTap`'s own input guards. The three that end a spent
- * budget are split by what the loop had: `no-velocity` when fewer than three readings arrived (a
- * speed needs three), `no-reachable-zone` when speeds came but `planTap` never found a centre
- * inside the horizon, and `budget-spent` otherwise — including the stream whose readings never
- * form a steady velocity, which is what the recording's duplicate frames produce.
+ * capture path owns warm-up retries and the session-end decision, and it runs on the very next
+ * tick. `resolved` is a dimmed button; `press-refused` the actuator's answer; `misconfigured` a
+ * non-finite or non-positive budget, a non-finite or negative `minWindowMs`, or a non-finite clock,
+ * refused before the first sample in the same spirit as `planTap`'s own input guards. The three
+ * that end a spent budget are split by what the loop had: `no-velocity` when fewer than three
+ * readings arrived (a speed needs three), `no-reachable-zone` when speeds came but `planTap` never
+ * found a centre inside the horizon, and `budget-spent` otherwise — including the stream whose
+ * readings never form a steady velocity, which is what the recording's duplicate frames produce.
  */
 import type { ActionResult, Frame, FrameSource, Point, QteZone } from '../contracts.ts';
 import { parseQte, qteWindow, type QteRefusalReason } from '../perception/chest.ts';
@@ -146,7 +150,9 @@ export type QteOutcome = QteTiming | { readonly ok: false; readonly reason: QteR
 /**
  * `budgetMs` is the **pre-press** budget. The rest read that follows a successful press adds
  * `REST_READ_MS`, so the whole call is bounded by `budgetMs + REST_READ_MS`; a non-finite or
- * non-positive budget is refused as `misconfigured` rather than run unbounded.
+ * non-positive budget is refused as `misconfigured` rather than run unbounded. `minWindowMs` is the
+ * floor over the time remaining to the plan's instant; a non-finite or negative value is refused
+ * the same way (zero is a legitimate "no floor").
  */
 export interface QteTimingOptions {
   readonly sampler: QteSampler;
@@ -182,8 +188,15 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
   const { sampler, press, now, wait, latencyMs, decelPxPerS2, minWindowMs, budgetMs } = options;
 
   // A mis-typed number must not become a press, and an unbounded loop is the one failure this
-  // module could not report as a value: refuse both before the first sample.
-  if (!Number.isFinite(budgetMs) || budgetMs <= 0) return { ok: false, reason: 'misconfigured' };
+  // module could not report as a value: refuse both before the first sample. `minWindowMs` belongs
+  // in the same guard — `NaN` makes `delayMs < NaN` false and silently disables the one floor
+  // between a plan and a gamble, and a negative floor is not a floor. Zero is a floor of zero.
+  if (
+    !Number.isFinite(budgetMs) || budgetMs <= 0
+    || !Number.isFinite(minWindowMs) || minWindowMs < 0
+  ) {
+    return { ok: false, reason: 'misconfigured' };
+  }
   const startedAtMs = now();
   if (!Number.isFinite(startedAtMs)) return { ok: false, reason: 'misconfigured' };
   const restDeadlineLimitMs = startedAtMs + budgetMs + REST_READ_MS;
@@ -240,13 +253,20 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
     // No centre is reachable in this pass and horizon: keep sampling; a bounce is free.
     if (plan === null) continue;
     planFound = true;
-    // The caller's floor (contracts §7): a late press is worse than no press. The reading stays in
-    // the rolling window; only this press is withheld.
-    if (plan.atMs < minWindowMs) continue;
+    // The floor guards the lead time we can still act on. `plan.atMs` is a delay from the reading's
+    // clock (§7), and that clock can already be hundreds of ms old when the plan is made — a frame
+    // carries up to `FRAME_MAX_AGE_MS` (300 ms) of age — so a plan whose own delay looks generous
+    // can name an instant only a few ms away. Compare what is left from *now*. The old
+    // `plan.atMs < minWindowMs` test is subsumed: a reading is stamped before `now()` (contracts
+    // §0.4), so `reading.atMs + plan.atMs - now() <= plan.atMs`. A pass tighter than the floor is
+    // dropped and the next reading re-plans; the reading stays in the rolling window (contracts §7
+    // keeps the floor here, not in the planner).
+    const delayMs = reading.atMs + plan.atMs - now();
+    if (delayMs < minWindowMs) continue;
 
-    // `plan.atMs` is a delay from the reading's clock, so the instant is absolute in `now()`'s
-    // domain. During the wait the budget cannot be overrun: `remainingMs` was the horizon.
-    await wait(Math.max(0, reading.atMs + plan.atMs - now()));
+    // `delayMs` is already the remaining time, so the wait is exactly it (never negative after the
+    // floor) and the budget cannot be overrun: `remainingMs` was the horizon.
+    await wait(delayMs);
 
     const pressed = await press();
     if (!pressed.ok) return { ok: false, reason: 'press-refused' };

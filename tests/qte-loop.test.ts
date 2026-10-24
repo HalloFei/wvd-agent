@@ -228,6 +228,52 @@ describe('timeQte', () => {
     expect(presses[0]).toBeGreaterThan(66 + 10);
   });
 
+  it('refuses a plan whose instant is inside the floor by now(), then presses on the next pass', async () => {
+    // The third frame arrives 400 ms late, so by the time it is planned `now()` is 466 ms while the
+    // plan's instant is 66 + 451. The plan's own delay (451 ms) clears the floor, but only 51 ms
+    // are actually left; comparing the delay rather than the time remaining would press 51 ms later
+    // — a gamble the floor exists to refuse. The next pass, on fresh frames, presses normally.
+    const clock = virtualClock(0);
+    const script: ReadonlyArray<{ atMs: number; markerX: number; costMs?: number }> = [
+      { atMs: 0, markerX: 700 },
+      { atMs: 33, markerX: 720 },
+      { atMs: 66, markerX: 740, costMs: 400 },
+      // The game moved on while the decode was slow: the next frame is stamped after it.
+      { atMs: 500, markerX: 760 },
+      { atMs: 533, markerX: 780 },
+      { atMs: 566, markerX: 800 },
+    ];
+    let index = 0;
+    let last = { atMs: 0, markerX: 700 };
+    const sampler: QteSampler = {
+      async sample() {
+        const entry = script[index];
+        index += 1;
+        last = entry ?? { ...last, atMs: last.atMs + SAMPLE_CADENCE_MS };
+        clock.advanceTo(last.atMs + (entry?.costMs ?? 10));
+        return {
+          ok: true,
+          reading: { atMs: last.atMs, markerX: last.markerX, zones: ZONES, enabled: true },
+        };
+      },
+    };
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    // The press is the fresh 566 ms pass's: marker 800, its plan's instant 566 + ~352 ms. The stale
+    // frame at 66 ms came first and named an instant only ~51 ms away; it must not have pressed.
+    expect(out.tapX).toBe(800);
+    expect(out.atMs).toBeCloseTo(352.1, 0);
+    expect(presses).toHaveLength(1);
+    expect(presses[0]).toBeCloseTo(566 + out.atMs, 0);
+  });
+
   it('stops with bar-gone when a sample refuses', async () => {
     const clock = virtualClock(0);
     const sampler = scriptedSampler(
@@ -408,6 +454,12 @@ describe('timeQte', () => {
     }
     expect(await timeQte({ ...base, now: () => Number.NaN, budgetMs: 4000 }))
       .toEqual({ ok: false, reason: 'misconfigured' });
+    // A non-finite or negative floor is the same kind of misconfiguration: NaN silently disables the
+    // guard (`delayMs < NaN` is false), and a negative floor is not a floor.
+    for (const minWindowMs of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+      expect(await timeQte({ ...base, minWindowMs, budgetMs: 4000 }))
+        .toEqual({ ok: false, reason: 'misconfigured' });
+    }
 
     // Refused before the first sample: nothing was looked at and nothing was pressed.
     expect(sampler.passedPrevious).toHaveLength(0);
