@@ -33,7 +33,8 @@ is 900×1600 mobile, but the PC build draws the same UI at 1080/1600 = 0.675 and
 - Which town the party stands in. The four `City_*` templates are destination anchors on the world
   map, not scene fingerprints; every town has the same world-map control.
 - OCR. Templates are matched as images.
-- The dungeon-select list. Its rows sit at x≈1082 and stay static taps in the task file.
+- Driving the dungeon-select screen. Only the row's position is matched, so a `travel` to a
+  `dungeon-select` destination is one tap; nothing on that screen is panned, zoomed or waited on.
 - The inn rest chain. §4 records where it belongs in the cycle; it is a separate task.
 - A map model or inertial panning. The search is a bounded spiral.
 
@@ -184,7 +185,7 @@ mid-entry.
     { "op": "expect", "screen": "town", "timeoutMs": 20000 },
     { "op": "travel", "to": "ffxi-gcn" },
     { "op": "wait", "ms": 8000 },
-    { "op": "tap", "at": [1082, 535] },
+    { "op": "travel", "to": "ffxi-zone3" },
     { "op": "expect", "screen": "dungeon", "timeoutMs": 45000 },
     { "op": "tap", "at": [1787, 96] },
     { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },
@@ -193,8 +194,9 @@ mid-entry.
 }
 ```
 
-The two world-map taps leave the file; the dungeon-select tap stays (fixed list, 第三区 at the live
-(1082,535)) and the minimap tap is the live centre (1787,96), not the board's (1849,110).
+The world-map taps leave the file; the dungeon-select row is matched by its label (`ffxi-zone3`,
+0.781 at scale 0.70 on the live frame — the fixed (1082,535) it replaces is inside the matched row)
+and the minimap tap is the live centre (1787,96), not the board's (1849,110).
 `exit` is unchanged in this slice; `{ "op": "travel", "to": "vnh" }` is added when the 归还 exit
 is verified (board p0), so the next cycle starts in 诺森霍洛村. The entry is defined from town: a
 session started mid-dungeon stops at the first step instead of clicking a map it is not on.

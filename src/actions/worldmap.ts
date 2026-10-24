@@ -42,6 +42,11 @@ const ZOOM_IN_SCAN = 0x12;
 const PRESS_MS = 60;
 /** The parchment between the letterboxed pillars; all nodes live inside it. */
 const MAP_AREA = { x: 450, y: 0, width: 1_200, height: 1_080 } as const;
+/** The Dungeon Select list: its rows sit 56 px apart inside this band, the label art at 0.66–0.70. */
+const DUNGEON_SELECT_AREA = { x: 850, y: 300, width: 500, height: 400 } as const;
+const DUNGEON_SELECT_SCALES = [0.64, 0.66, 0.68, 0.70] as const;
+/** 第三区-城内2F- measures 0.781 here; the matcher's 0.80 floor is the world map's node floor. */
+const DUNGEON_SELECT_FLOOR = 0.72;
 const TOWN_ICON_BAND = { x: 1_100, y: 900, width: 220, height: 180 } as const;
 const PANEL_BAND = { x: 480, y: 720, width: 400, height: 360 } as const;
 const CONTROL_SCALES = [0.66, 0.68] as const;
@@ -141,6 +146,7 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
   const now = env.now ?? (() => Date.now());
   const entry = destinationOf(id);
   if (entry === null) return { ok: false, reason: 'unknown-location', detail: id };
+  if (entry.kind === 'dungeon-select') return selectDungeon(entry, env);
 
   const current = await captureAndObserve(env);
   if (!current.ok) return current;
@@ -204,6 +210,37 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
     }
     return { ok: false, reason: 'location-not-found', detail: `${entry.label} was not found on the map` };
   }
+}
+
+/**
+ * Tap a floor row on the Dungeon Select screen by its label.
+ *
+ * The screen is not a `ScreenId` and nothing drives it: the party arrives by tapping the dungeon's
+ * node on the world map, and the only decision left is where the row is. So this action positions
+ * one click and returns — the task's own `expect` steps judge what happened.
+ *
+ * Measured 2026-10-25 on the live 1920×1080 frame: 第三区-城内2F- scores 0.781 at scale 0.70 and
+ * 第一区-城外- 0.762 at 0.66; the rows sit 56 px apart, and the fixed tap this replaces (1082,535)
+ * is inside the row the 第三区 match centres on (1098,534).
+ */
+async function selectDungeon(entry: LocationEntry, env: WorldMapEnv): Promise<TravelResult> {
+  const current = await captureAndObserve(env);
+  if (!current.ok) return current;
+  const image = await decode(current.frame);
+  if (image === null) {
+    return { ok: false, reason: 'capture-unavailable', detail: 'frame did not decode' };
+  }
+  const match = findTemplate(image, DUNGEON_SELECT_AREA, entry.template, {
+    scales: DUNGEON_SELECT_SCALES,
+    minScore: DUNGEON_SELECT_FLOOR,
+  });
+  if (match === null) {
+    return { ok: false, reason: 'location-not-found', detail: `${entry.label} is not on the Dungeon Select list` };
+  }
+  const pressed = await env.actuator.tap(centre(match, entry.anchor));
+  if (!pressed.ok) return failure(pressed.reason, pressed.detail);
+  env.log?.(`wvd: selected ${entry.label} on the Dungeon Select list`);
+  return { ok: true };
 }
 
 function isPastTheEntry(screen: string): boolean {

@@ -114,7 +114,7 @@ function help(): void {
     controls: {
       'world-map icon': { x: 1177, y: 1012 },
       'minimap (open dungeon map)': { x: 1787, y: 96 },
-      'dungeon-select 第三区': { x: 1082, y: 535 },
+      'dungeon-select row': 'travel ffxi-zone1 | ffxi-zone2 | ffxi-zone3 — the row is matched by its label',
     },
   });
 }

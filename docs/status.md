@@ -224,6 +224,10 @@ Live run 2026-10-24 23:33, from the town to the floor:
   it: **48 unknown + 3 dungeon** (was 51 unknown) — see the screen table below.
 - A stale capture during the first travel is now retried three times; the action also zooms in (E)
   after the drags, per 诺村/北穿.
+- **The Dungeon Select row is matched by its label**, not clicked at a coordinate: the catalog's
+  `ffxi-zone1/2/3` entries are `dungeon-select` destinations, and `travel` to one taps the row its
+  template matches (第三区 0.781 at scale 0.70, centre (1098,534)). `ffxi-4f.json` uses
+  `travel ffxi-zone3`; a frame without the row is `location-not-found` and taps nothing.
 
 The rest town is 诺森霍洛村 (`vnh`), chosen by the operator.
 
