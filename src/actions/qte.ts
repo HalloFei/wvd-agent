@@ -42,10 +42,10 @@
  * ## The refusals
  *
  * `bar-gone` is a sample that looked for the bar and did not find it; `capture-failed` is a sample
- * that could not look at all (a capture or a parse that threw). They are different facts on
- * purpose — only the second may reach the tick's failure accounting — and neither is retried here:
- * the World's own capture path owns warm-up retries and the session-end decision, and it runs on
- * the very next tick. `resolved` is a dimmed button; `press-refused` the actuator's answer;
+ * that could not look at all (a capture or a parse that threw, a crop that could not be decoded, or
+ * one that is not the rectangle that was asked for). They are different facts on purpose — only the
+ * second may reach the tick's failure accounting — and neither is retried here: the World's own
+ * capture path owns warm-up retries and the session-end decision, and it runs on the very next tick. `resolved` is a dimmed button; `press-refused` the actuator's answer;
  * `misconfigured` a non-finite or non-positive budget (or non-finite clock) refused before the
  * first sample, in the same spirit as `planTap`'s own input guards. The three that end a spent
  * budget are split by what the loop had: `no-velocity` when fewer than three readings arrived (a
@@ -54,7 +54,7 @@
  * form a steady velocity, which is what the recording's duplicate frames produce.
  */
 import type { ActionResult, Frame, FrameSource, Point, QteZone } from '../contracts.ts';
-import { parseQte, qteWindow } from '../perception/chest.ts';
+import { parseQte, qteWindow, type QteRefusalReason } from '../perception/chest.ts';
 import { planTap, qteVelocity, type QteSample } from '../policy/qte.ts';
 
 // ---------------------------------------------------------------------------------------------
@@ -105,8 +105,8 @@ export type BarSample =
       readonly ok: false;
       /**
        * `bar-gone`: the sample looked for the bar and it is not there. `capture-failed`: the sample
-       * could not look at all (a capture or a parse threw) — a different fact, and the one the
-       * tick's failure accounting must see.
+       * could not look at all (a capture or a parse threw, or a crop could not be decoded or was the
+       * wrong rectangle) — a different fact, and the one the tick's failure accounting must see.
        */
       readonly reason: 'bar-gone' | 'capture-failed';
     };
@@ -294,9 +294,16 @@ async function readRest(
  *
  * With a source that can crop, the rectangle asked for is the QTE window of the reference frame —
  * the band plus the 解除 annulus — and that rectangle's top-left becomes `parseQte`'s `origin`. A
- * source without `captureBand` keeps working: its full frame is parsed at its own origin. A
- * `QteParse` refusal — including `unsupported-size` — is `bar-gone`: the bar was looked for and is
- * not there.
+ * source without `captureBand` keeps working: its full frame is parsed at its own origin.
+ *
+ * A `QteParse` refusal is split by what it is a fact about. The bar's shape — `no-bar`, `no-marker`,
+ * `multi-marker`, `no-zones`, `bad-gap`, `gap-not-dark`, `no-button` — is a fact about the screen:
+ * the bar was looked for and is not there, which is `bar-gone`, the normal end of a pass.
+ * `decode-failed` and `unsupported-size` are facts about our own eyes: the crop could not be
+ * decoded, or it is not the rectangle that was asked for, so nothing was learned about the screen.
+ * Those are `capture-failed`, the fact the tick's failure accounting exists for — read as
+ * `bar-gone` they would be logged at `info` as an ordinary pass and a broken crop or decode path
+ * would stay invisible until the 120 s stall stop.
  *
  * A capture that throws is **not** `bar-gone`. `parseQte` with an origin checks the crop's size
  * against the reference window, not the game window's, so a 2560×1440 client area is cropped at the
@@ -314,7 +321,7 @@ export function bandSampler(source: FrameSource): QteSampler {
       try {
         const { frame, origin } = await readFrame(source);
         const parsed = await parseQte(frame, previousMarkerX, origin);
-        if (!parsed.ok) return { ok: false, reason: 'bar-gone' };
+        if (!parsed.ok) return { ok: false, reason: sampleRefusal(parsed.reason) };
         return {
           ok: true,
           reading: {
@@ -331,6 +338,16 @@ export function bandSampler(source: FrameSource): QteSampler {
       }
     },
   };
+}
+
+/**
+ * Which sample refusal a `parseQte` refusal is. A shape refusal is a fact about the screen — the bar
+ * was looked for and is not there. A decode or size refusal is a fact about our own eyes — nothing
+ * was learned about the screen — and only the second belongs to the tick's failure accounting (see
+ * `bandSampler`).
+ */
+function sampleRefusal(reason: QteRefusalReason): 'bar-gone' | 'capture-failed' {
+  return reason === 'decode-failed' || reason === 'unsupported-size' ? 'capture-failed' : 'bar-gone';
 }
 
 /** One capture, cropped when the source can crop, with the crop's origin in full-frame pixels. */

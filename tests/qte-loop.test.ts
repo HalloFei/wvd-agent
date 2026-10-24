@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { bandSampler, timeQte, type QteSampler } from '../src/actions/qte.ts';
 import type { Frame, FrameSource, PixelRect, QteZone } from '../src/contracts.ts';
 import { cropBgra } from '../src/engine/crop.mjs';
+import { qteWindow } from '../src/perception/chest.ts';
 
 /**
  * The sub-loop's subject is timing, so its tests drive it with a sampler that answers with the
@@ -571,5 +572,65 @@ describe('bandSampler', () => {
       },
     };
     expect(await bandSampler(broken).sample()).toEqual({ ok: false, reason: 'capture-failed' });
+  });
+
+  it('reports a decode or size refusal as capture-failed, not bar-gone', async () => {
+    const window = qteWindow({ width: 1920, height: 1080 });
+
+    // A crop of the right size whose pixels cannot be decoded: parseQte says `decode-failed`, which
+    // is a fact about our own eyes, not about the screen.
+    const undecodable: FrameSource = {
+      capture: async () => {
+        throw new Error('bandSampler fell back to capture()');
+      },
+      captureBand: async () => ({
+        atMs: 1_000,
+        width: window.width,
+        height: window.height,
+        toRgba: async () => {
+          throw new Error('GDI+ could not decode the crop');
+        },
+      }),
+    };
+    expect(await bandSampler(undecodable).sample())
+      .toEqual({ ok: false, reason: 'capture-failed' });
+
+    // A crop that is not the rectangle qteWindow asked for: `unsupported-size`, also our eyes. The
+    // wrong-size frame is refused from its declared size, before its decode.
+    const wrongSize: FrameSource = {
+      capture: async () => {
+        throw new Error('bandSampler fell back to capture()');
+      },
+      captureBand: async () => ({
+        atMs: 1_000,
+        width: window.width,
+        height: window.height - 1,
+        toRgba: async () => ({
+          data: new Uint8Array(window.width * (window.height - 1) * 4),
+          width: window.width,
+          height: window.height - 1,
+        }),
+      }),
+    };
+    expect(await bandSampler(wrongSize).sample())
+      .toEqual({ ok: false, reason: 'capture-failed' });
+
+    // A crop of the right size that simply has no bar is still a fact about the screen: `bar-gone`.
+    const noBar: FrameSource = {
+      capture: async () => {
+        throw new Error('bandSampler fell back to capture()');
+      },
+      captureBand: async () => ({
+        atMs: 1_000,
+        width: window.width,
+        height: window.height,
+        toRgba: async () => ({
+          data: new Uint8Array(window.width * window.height * 4),
+          width: window.width,
+          height: window.height,
+        }),
+      }),
+    };
+    expect(await bandSampler(noBar).sample()).toEqual({ ok: false, reason: 'bar-gone' });
   });
 });
