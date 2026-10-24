@@ -52,9 +52,21 @@ in Node mode and dies on `app.commandLine` being undefined. Launch it as:
     env -u ELECTRON_RUN_AS_NODE pnpm dev
 
 Coopanion then starts as a tray/pet application with **no titled window** — the pet window has no
-title, so it cannot be found or captured by title. That is why the operator console's host-side look is
-still unverified: the World is linked (`build/data/extensions/node_modules/cortico-world-wvd`) and its
-panel methods answer, but nobody has seen the panel rendered in the running app yet.
+title, so it cannot be found or captured by title. Left-click the tray icon for the settings window.
+
+**Link the extension from the main checkout, never from a worktree.** The World is loaded from
+`Coopanion/build/data/extensions/node_modules/cortico-world-wvd`, and a link to an old worktree loads
+old code with no error in the app — the World simply appears with no console. Point it at the
+repository root:
+
+    cd Coopanion/build/data/extensions
+    pnpm remove cortico-world-wvd
+    pnpm add "C:/Personal/game/DeepSeek_Coopanion/wvd-agent"
+
+The console was verified against the running app on 2026-10-24: `/api/worlds` reports the World's lamp
+and badges (`state`, `escalations used/cap`), and the panel answers under
+`/api/webui/providers/world%3Awvd/panels/wvd-console/{status,log}` — `status` returns the six-state
+snapshot and the exact reason for the current state, `log` the recent transitions.
 
 `pnpm dev` re-stages `build/` on every start; the linked World lives under `build/data/extensions` and
 survives it.
