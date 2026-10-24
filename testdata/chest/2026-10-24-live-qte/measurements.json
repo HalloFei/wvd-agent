@@ -1,0 +1,25 @@
+{
+  "capturedAt": "2026-10-24T11:53+08:00",
+  "game": "Wizardry Variants Daphne (Steam), 1920x1080, live chest in a corridor",
+  "note": "ONE CHEST, captured live to settle what the chest flow actually does. Two sequences: an untrapped opening (open-*.jpg) and a trapped disarm (qte-*.jpg, qte-bar-*.jpg).",
+  "flow": [
+    "approach the chest: a two-line menu 打开 / 什么也不做 appears",
+    "打开 -> the 由谁打开? panel (see ../2026-10-24-opener/)",
+    "pick a member -> the chest opens; if it is NOT trapped the lid animation and the hand play with no bar (open-*.jpg)",
+    "if it IS trapped the disarm bar appears at the top with a red time bar under it (qte-*.jpg, qte-bar-*.jpg)"
+  ],
+  "bar": {
+    "measuredFrom": "qte-bar-00..05.jpg, warm fill runs in rows 36-82",
+    "leftZone": [712, 905],
+    "hazardGap": [905, 1014],
+    "rightZone": [1014, 1207],
+    "zoneWidthPx": 194,
+    "gapPx": 109,
+    "markerCoreWidthPx": [7, 8],
+    "markerSamples": [1047, 1108, 1189, 1250, 1215, 1154],
+    "bounceRightPx": 1254,
+    "note": "the marker runs ~47 px past the right zone before reversing, which is the same 'bounce outside the zone' the spec records; the 656.5/1261.5 clamp from the two earlier chests still fits this one, so it is not a per-chest constant after all."
+  },
+  "attemptsIndicator": "a small red 3 sits at (612, 128) under the time bar",
+  "button": "the 解除 hand control is at (960, 662) as the spec says, with a dimmed 关闭 X to its left at (663, 675)"
+}
