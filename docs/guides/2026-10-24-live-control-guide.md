@@ -23,9 +23,10 @@ was not reproduced; do not treat it as procedure.
 | Session verdicts (`classify`) | done | `src/policy/session.ts` |
 | The 10 Hz loop, the composition root, the escalation to Coo | done | `src/world.ts`, `src/main.ts`, `src/escalation/` |
 
-The World runs a tick loop now, and this guide stays useful for driving the game **by hand or by a
-probe** while the two declared gaps remain: the opener panel `由谁打开` has no parser (no fixture), and
-`planTap` has no caller in the loop yet. See `docs/status.md`.
+The World runs a tick loop now, reads the opener panel, and honours `capture { maxWidth }` for the
+snapshot it sends the model. This guide stays useful for driving the game **by hand or by a probe**,
+and for the two gaps that remain: the heart numeral atlas is partial (0/1/9 only), and `planTap` has no
+caller in the loop yet. See `docs/status.md`.
 
 ## 2. Safety rules (non-negotiable)
 
@@ -175,6 +176,7 @@ All four were settled on 2026-10-24 night, and one more was found:
    nothing at all, which is correct behaviour to encode rather than retry.
 3. **Altar teleporter** — still a modal the loop must never click blindly; `什么也不做` dismisses it.
 4. **Panning** the world map — still unverified.
-5. **The opener panel** (`由谁打开?`, 陷阱发现/陷阱解除 per member) — no fixture exists, so no parser
-   does. It is the first of the two declared gaps in `docs/status.md`.
+5. **The opener panel** (`由谁打开?`, 陷阱发现/陷阱解除 per member) — captured on 2026-10-24 and parsed;
+   the fixture lives in `testdata/chest/2026-10-24-opener/`. The disarm is **Space**, not a click (§3b
+   of the chest spec). What remains is the willpower atlas, which knows 0/1/9 only.
 5. **UU**: unusable from this session (elevated); acceleration is the operator's manual step.
