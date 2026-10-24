@@ -31,8 +31,11 @@
  * and the contract makes the field nullable precisely so that an unvalidated OCR can stay absent.
  *
  * Geometry: 1920×1080 device pixels. Another size is unsupported, not re-scaled (contracts §0.5).
+ * A sample may instead be the single crop `qteWindow` names — the bar's band and the button's annulus
+ * in one rectangle — and `parseQte` then takes that rectangle's origin and still answers in full-frame
+ * device pixels, so a caller never does the offset arithmetic itself.
  */
-import type { Frame, Observation, Perceiver, Point, QteState, RgbaImage } from '../contracts.ts';
+import type { Frame, Observation, Perceiver, PixelRect, Point, QteState, RgbaImage } from '../contracts.ts';
 import { parseOpenerDetailed } from './opener.ts';
 
 // ---------------------------------------------------------------------------------------------
@@ -144,6 +147,36 @@ const CONFIDENCE_NARROW_GAP = 0.05;
 const CONFIDENCE_DISABLED_BUTTON = 0.2;
 
 // ---------------------------------------------------------------------------------------------
+// The QTE window
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The rectangle one QTE sample needs, in the frame's own device pixels: the bar's clipped band and
+ * the 解除 control's annulus. It is derived from the measured fractions, never from four numbers
+ * typed in a second place, and it scales with the frame it is asked about.
+ *
+ * The button is inside the rectangle on purpose, although it sits 580 rows below the band and is read
+ * only after the zones located it. **One rectangle means one parser and one set of refusals**: the
+ * crop can still answer `no-bar`, `no-marker`, `no-zones`, `bad-gap`, `gap-not-dark` and `no-button`,
+ * so the World never has to fall back to a full frame and `parseQte` never has to ask what a sample
+ * contains. The lower edge is the price: 631 × 699 = 21.3 % of a 1080p frame rather than the band's
+ * 1.4 %, and still cheap enough to take three times a pass (contracts §0.7).
+ */
+export function qteWindow(frame: { width: number; height: number }): PixelRect {
+  const x = Math.round(BAR_X0_FRACTION * frame.width);
+  const x1 = Math.round(BAR_X1_FRACTION * frame.width);
+  const y = Math.round(BAND_Y0_FRACTION * frame.height);
+  // Both far edges are inclusive pixels: the bar's right clip, and the annulus's lowest row.
+  const bottom = Math.round(BUTTON_Y_FRACTION * frame.height) + BUTTON_ANNULUS_OUTER;
+  return { x, y, width: x1 - x + 1, height: bottom - y + 1 };
+}
+
+/** The only size a crop may be: the QTE window of the frame size the anchors were measured at. */
+function referenceWindow(): PixelRect {
+  return qteWindow({ width: REFERENCE_WIDTH, height: REFERENCE_HEIGHT });
+}
+
+// ---------------------------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------------------------
 
@@ -178,7 +211,22 @@ export type QteParse =
     }
   | { readonly ok: false; readonly reason: QteRefusalReason };
 
+/**
+ * Where the pixels being read sit in the full frame. The fractions' denominators are the **full
+ * frame's** size — a crop is 631 × 699, so its own width would re-scale every anchor — and `origin`
+ * is the crop's top-left in frame pixels. A full frame is its own size at origin (0, 0).
+ */
+interface FrameGeometry {
+  readonly frameWidth: number;
+  readonly frameHeight: number;
+  readonly origin: Point;
+}
+
+/** A frame that is not a crop: its own coordinates are the frame's. */
+const FRAME_ORIGIN: Point = { x: 0, y: 0 };
+
 interface BandScan {
+  /** The band's first column in full-frame pixels; the column arrays are indexed from there. */
   readonly x0: number;
   readonly columns: number;
   /** Band rows that are warm, per column: the zone profile. */
@@ -219,11 +267,25 @@ interface ButtonReading {
  * `previousMarkerX` is the last parsed frame's marker centre. It is used only to drop a static
  * white run when two candidates appear — belt and braces, never a load path (research §5). Pass
  * `undefined` when there is no previous frame.
+ *
+ * `origin` says the frame is a crop of a full frame at that point — what `qteWindow` asked the
+ * engine for. The frame must then be exactly the window's size, and every number returned stays in
+ * full-frame device pixels. Without `origin` the frame must be a whole 1920 × 1080 frame: a crop is
+ * never read as one, and a full frame is never accepted as a crop.
  */
-export async function parseQte(frame: Frame, previousMarkerX?: number): Promise<QteParse> {
+export async function parseQte(
+  frame: Frame,
+  previousMarkerX?: number,
+  origin?: Point,
+): Promise<QteParse> {
   // Dimensions come from the frame (contracts §0.5), and a foreign size is refused before its
   // decode is paid for: a 1080p JPEG costs ~190 ms here, more than the whole half-tick.
-  if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) {
+  if (origin) {
+    const window = referenceWindow();
+    if (frame.width !== window.width || frame.height !== window.height) {
+      return { ok: false, reason: 'unsupported-size' };
+    }
+  } else if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) {
     return { ok: false, reason: 'unsupported-size' };
   }
   let image: RgbaImage;
@@ -233,17 +295,26 @@ export async function parseQte(frame: Frame, previousMarkerX?: number): Promise<
     // Failure is a value (contracts §0.6): an undecodable frame is "not observed", not a throw.
     return { ok: false, reason: 'decode-failed' };
   }
-  return parseImage(image, previousMarkerX);
+  return parseImage(image, previousMarkerX, origin);
 }
 
-function parseImage(image: RgbaImage, previousMarkerX?: number): QteParse {
+function parseImage(image: RgbaImage, previousMarkerX?: number, origin?: Point): QteParse {
   const { data, width, height } = image;
-  if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) {
+  // A crop is judged by the window's size and a full frame by the anchors' size; neither is ever
+  // read as the other, and neither is re-scaled (contracts §0.5).
+  const expected = origin ? referenceWindow() : { width: REFERENCE_WIDTH, height: REFERENCE_HEIGHT };
+  if (width !== expected.width || height !== expected.height) {
     return { ok: false, reason: 'unsupported-size' };
   }
 
+  // The fractions keep the full frame's denominators; `origin` moves only the reads, so the offsets
+  // below subtract it from an absolute anchor. A full frame is at its own origin.
+  const geometry: FrameGeometry = origin
+    ? { frameWidth: REFERENCE_WIDTH, frameHeight: REFERENCE_HEIGHT, origin }
+    : { frameWidth: width, frameHeight: height, origin: FRAME_ORIGIN };
+
   // 1. One pass over the band: the three profiles, the row profile and the marker's extents. -----
-  const band = scanBand(image);
+  const band = scanBand(image, geometry);
 
   // 2. The bar's row profile. Refusing here is what makes "the QTE screen is gone" immediate. ---
   let peak = 0;
@@ -270,7 +341,7 @@ function parseImage(image: RgbaImage, previousMarkerX?: number): QteParse {
   if (gapLumaRatio(band, left, right) > GAP_LUMA_RATIO_MAX) return { ok: false, reason: 'gap-not-dark' };
 
   // 6. The 解除 control: anchored from the zones, then verified. -------------------------------
-  const button = readButton(data, width, height, left, right);
+  const button = readButton(data, width, height, left, right, geometry);
   if (!button.onScreen) return { ok: false, reason: 'no-button' };
 
   // 7. Confidence: a claim about whether a timed tap can trust these two centres. --------------
@@ -342,15 +413,24 @@ export class ChestPerceiver implements Perceiver {
 // The band
 // ---------------------------------------------------------------------------------------------
 
-/** One pass over rows 36–82 × 645–1275: 29 657 pixels, 2.2 % of a 1080p frame. */
-function scanBand(image: RgbaImage): BandScan {
-  const { data, width, height } = image;
-  const y0 = Math.round(BAND_Y0_FRACTION * height);
-  const x0 = Math.round(BAR_X0_FRACTION * width);
-  const x1 = Math.round(BAR_X1_FRACTION * width);
-  const zoneX0 = Math.round(ZONE_WINDOW_X0_FRACTION * width);
-  const zoneX1 = Math.round(ZONE_WINDOW_X1_FRACTION * width);
+/**
+ * One pass over rows 36–82 × 645–1275, in the pixels `image` actually holds: 29 657 pixels, 2.2 % of
+ * a 1080p frame. The anchors come from the full frame's fractions and `geometry.origin` moves them
+ * into a crop; the returned `x0` is the absolute column, so every consumer below stays in
+ * full-frame coordinates.
+ */
+function scanBand(image: RgbaImage, geometry: FrameGeometry): BandScan {
+  const { data, width } = image;
+  const x0 = Math.round(BAR_X0_FRACTION * geometry.frameWidth);
+  const x1 = Math.round(BAR_X1_FRACTION * geometry.frameWidth);
+  const y0 = Math.round(BAND_Y0_FRACTION * geometry.frameHeight);
+  const zoneX0 = Math.round(ZONE_WINDOW_X0_FRACTION * geometry.frameWidth);
+  const zoneX1 = Math.round(ZONE_WINDOW_X1_FRACTION * geometry.frameWidth);
   const columns = x1 - x0 + 1;
+  // The same three edges inside the buffer being read: zero for a full frame.
+  const localX0 = x0 - geometry.origin.x;
+  const localX1 = x1 - geometry.origin.x;
+  const localY0 = y0 - geometry.origin.y;
 
   const columnWarm = new Uint16Array(columns);
   const columnWhite = new Uint16Array(columns);
@@ -360,19 +440,20 @@ function scanBand(image: RgbaImage): BandScan {
   const rowWarm = new Uint16Array(BAND_ROWS);
 
   for (let bandRow = 0; bandRow < BAND_ROWS; bandRow += 1) {
-    const rowOffset = (y0 + bandRow) * width;
-    for (let x = x0; x <= x1; x += 1) {
+    const rowOffset = (localY0 + bandRow) * width;
+    for (let x = localX0; x <= localX1; x += 1) {
       const offset = (rowOffset + x) * 4;
       const r = data[offset];
       const g = data[offset + 1];
       const b = data[offset + 2];
-      const column = x - x0;
+      const column = x - localX0;
 
       columnLuma[column] += (77 * r + 150 * g + 29 * b) >> 8;
 
       if (r >= WARM_R_MIN && r - b >= WARM_RB_MIN && g >= WARM_G_MIN) {
         columnWarm[column] += 1;
-        if (x >= zoneX0 && x < zoneX1) rowWarm[bandRow] += 1;
+        const absoluteX = x + geometry.origin.x;
+        if (absoluteX >= zoneX0 && absoluteX < zoneX1) rowWarm[bandRow] += 1;
       }
 
       if (r >= WHITE_MIN && g >= WHITE_MIN && b >= WHITE_MIN && Math.abs(r - b) <= WHITE_RB_MAX) {
@@ -530,6 +611,9 @@ const BUTTON_ANNULUS: ReadonlyArray<readonly [number, number]> = (() => {
  * Verify the control at its anchor: the glyph box's mean luma against the disc annulus's. A
  * uniformly bright background scores ≈ 0 however pale it is, which is why the contrast test — not
  * a pale-pixel search — is what makes the anchor safe (research §6).
+ *
+ * The anchor is absolute, computed from the zones and the full frame's y fraction; the scan runs in
+ * the pixels `data` holds (`localX`/`localY`), and the point returned is the absolute one.
  */
 function readButton(
   data: Uint8Array,
@@ -537,25 +621,28 @@ function readButton(
   height: number,
   left: ZoneRun,
   right: ZoneRun,
+  geometry: FrameGeometry,
 ): ButtonReading {
   const x = Math.round((left.from + right.to) / 2);
-  const y = Math.round(BUTTON_Y_FRACTION * height);
+  const y = Math.round(BUTTON_Y_FRACTION * geometry.frameHeight);
   const point: Point = { x, y };
+  const localX = x - geometry.origin.x;
+  const localY = y - geometry.origin.y;
 
   // A frame whose anchor is not fully inside it cannot carry this control.
-  if (x - BUTTON_ANNULUS_OUTER < 0 || x + BUTTON_ANNULUS_OUTER >= width) {
+  if (localX - BUTTON_ANNULUS_OUTER < 0 || localX + BUTTON_ANNULUS_OUTER >= width) {
     return { point, onScreen: false, enabled: false };
   }
-  if (y - BUTTON_ANNULUS_OUTER < 0 || y + BUTTON_ANNULUS_OUTER >= height) {
+  if (localY - BUTTON_ANNULUS_OUTER < 0 || localY + BUTTON_ANNULUS_OUTER >= height) {
     return { point, onScreen: false, enabled: false };
   }
 
   let boxSum = 0;
   let pale = 0;
   for (let dy = -BUTTON_BOX_HALF_HEIGHT; dy <= BUTTON_BOX_HALF_HEIGHT; dy += 1) {
-    const rowOffset = (y + dy) * width;
+    const rowOffset = (localY + dy) * width;
     for (let dx = -BUTTON_BOX_HALF_WIDTH; dx <= BUTTON_BOX_HALF_WIDTH; dx += 1) {
-      const offset = (rowOffset + x + dx) * 4;
+      const offset = (rowOffset + localX + dx) * 4;
       const r = data[offset];
       const g = data[offset + 1];
       const b = data[offset + 2];
@@ -570,7 +657,7 @@ function readButton(
 
   let annulusSum = 0;
   for (const [dx, dy] of BUTTON_ANNULUS) {
-    const offset = ((y + dy) * width + x + dx) * 4;
+    const offset = ((localY + dy) * width + localX + dx) * 4;
     annulusSum += (77 * data[offset] + 150 * data[offset + 1] + 29 * data[offset + 2]) >> 8;
   }
   const annulusMean = annulusSum / BUTTON_ANNULUS.length;

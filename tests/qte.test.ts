@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
-import type { Frame, Observation, Perceiver, QteZone, RgbaImage } from '../src/contracts.ts';
-import { ChestPerceiver, parseQte } from '../src/perception/chest.ts';
+import type { Frame, Observation, Perceiver, PixelRect, QteZone, RgbaImage } from '../src/contracts.ts';
+import { cropBgra } from '../src/engine/crop.mjs';
+import { ChestPerceiver, parseQte, qteWindow } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
 import { planTap, qteVelocity } from '../src/policy/qte.ts';
 
@@ -62,6 +63,20 @@ async function jpegFrame(name: string, atMs = 1_000, dir = FIXTURES): Promise<Fr
 
 function copyOf(image: RgbaImage): RgbaImage {
   return { data: Uint8Array.from(image.data), width: image.width, height: image.height };
+}
+
+/**
+ * The full frame's `rect`, as a `Frame` of the rectangle's own size: the shape the engine's
+ * `capture { crop }` reply has. `cropBgra` copies bytes and never interprets channels, so the decoded
+ * RGBA buffer can go straight in.
+ */
+async function cropOf(frame: Frame, rect: PixelRect): Promise<Frame> {
+  const image = await frame.toRgba();
+  const cropped = cropBgra(image.data, image.width, image.height, rect);
+  return frameOf(
+    { data: cropped.pixels, width: cropped.width, height: cropped.height },
+    frame.atMs,
+  );
 }
 
 interface Rect {
@@ -257,6 +272,45 @@ describe('parseQte', () => {
     expect(parsed.enabled).toBe(false);
     // Research §9: a dimmed control subtracts 0.20 and nothing else is wrong with this frame.
     expect(parsed.confidence).toBe(0.8);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// parseQte — the QTE window crop (a sample reads the bar's own rectangle, not the whole frame)
+// ---------------------------------------------------------------------------------------------
+
+describe('parseQte from the QTE window', () => {
+  it('returns the same QteState from a crop as from the full frame', async () => {
+    for (let index = 0; index < MARKER_X.length; index += 1) {   // the six stills the file already loads
+      const name = `frame-${index}.jpg`;
+      const full = await jpegFrame(name, 1_000, FIXTURES);
+      const fromFull = await parseQte(full);
+      const rect = qteWindow(full);
+      const origin = { x: rect.x, y: rect.y };
+      const cropped = await cropOf(full, rect);     // decode once, cropBgra, re-encode as a Frame
+      const fromCrop = await parseQte(cropped, undefined, origin);
+      expect(fromCrop).toEqual(fromFull);
+    }
+  });
+
+  it('refuses a crop whose size is not the QTE window', async () => {
+    const full = await jpegFrame('frame-0.jpg', 1_000, FIXTURES);
+    const cropped = await cropOf(full, { x: 645, y: 36, width: 631, height: 400 });
+    expect(await parseQte(cropped, undefined, { x: 645, y: 36 })).toEqual({
+      ok: false,
+      reason: 'unsupported-size',
+    });
+  });
+
+  it('refuses the full frame when asked to read it as a crop', async () => {
+    const full = await jpegFrame('frame-0.jpg', 1_000, FIXTURES);
+    expect(await parseQte(full, undefined, { x: 0, y: 0 })).toEqual({ ok: false, reason: 'unsupported-size' });
+  });
+
+  it('keeps refusing a non-1080p full frame', async () => {
+    const full = await jpegFrame('frame-0.jpg', 1_000, FIXTURES);
+    const cropped = await cropOf(full, { x: 0, y: 0, width: 1280, height: 720 });
+    expect(await parseQte(cropped)).toEqual({ ok: false, reason: 'unsupported-size' });
   });
 });
 
