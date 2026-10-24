@@ -74,10 +74,15 @@ const OBSERVE_INTERVAL_MS = 100;
 /** When a step does not say how long to wait for its screen. One loading screen measured ~12 s. */
 const DEFAULT_EXPECT_TIMEOUT_MS = 8_000;
 
-/** A warming child misses its first frame; three attempts is what the loop itself allows (§5). */
-const CAPTURE_ATTEMPTS = 3;
+/**
+ * A warming child misses its first frame; three attempts is what the loop itself allows (§5).
+ * Exported because `tests/fixtures/warmup-capture.ts` replays this policy against the real child:
+ * one constant, so a change here moves the fixture too instead of leaving a second copy to drift.
+ */
+export const CAPTURE_ATTEMPTS = 3;
 
-const CAPTURE_RETRY_MS = 200;
+/** The wait between those attempts, exported for the same reason. */
+export const CAPTURE_RETRY_MS = 200;
 
 /** Resolve after `ms`, or as soon as the script is aborted — a stop never waits out a `wait`. */
 function sleepUnlessAborted(env: ScriptEnv, ms: number): Promise<void> {

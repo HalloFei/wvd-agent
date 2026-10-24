@@ -7,23 +7,20 @@
  * GDI+) has finished starting; under full-suite load that worker was measured ready 503–596 ms after
  * the banner, so the first reply can legitimately be `{ ok:false, error:'timeout', detail:'no-frame' }`.
  *
- * The policy below is production's, not invented for tests:
- * - three attempts total: `WARMUP_TICKS = 3` (`src/world.ts:162`) and `CAPTURE_ATTEMPTS = 3`
- *   (`src/tasks/steps.ts:78`, `captureWithRetry`) are both three;
- * - 200 ms between attempts: `CAPTURE_RETRY_MS = 200` (`src/tasks/steps.ts:80`).
+ * The policy is production's, not invented for tests: the attempt count and the wait between
+ * attempts are imported from `src/tasks/steps.ts`, where `captureWithRetry` owns them. That does not
+ * prove production uses them — `engine-child-warmup.test.ts` pins this helper's own 3 × 200 ms
+ * sleeps — but a change to the production constants now moves the fixture in the same edit instead
+ * of leaving a second copy to drift.
  *
  * Only that one documented warm-up reply is retried. A success, or any other failure (`rejected`,
  * `unavailable`, `stale-frame`, a request timeout), is returned at once: a hung renderer still fails
- * the caller after three bounded attempts, and no real failure is hidden behind the retry.
+ * the caller after `CAPTURE_ATTEMPTS` bounded attempts, and no real failure is hidden behind the
+ * retry.
  */
 import type { EngineReply } from '../../src/contracts.ts';
 import type { EngineRequester } from '../../src/engine/win32.ts';
-
-/** Total attempts, warm capture included — `WARMUP_TICKS` / `CAPTURE_ATTEMPTS` in production. */
-const WARMUP_CAPTURE_ATTEMPTS = 3;
-
-/** Delay between attempts — `CAPTURE_RETRY_MS` in production. */
-const WARMUP_CAPTURE_RETRY_MS = 200;
+import { CAPTURE_ATTEMPTS, CAPTURE_RETRY_MS } from '../../src/tasks/steps.ts';
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -44,9 +41,9 @@ export async function captureWarm(
   sleep: (ms: number) => Promise<void> = defaultSleep,
 ): Promise<EngineReply> {
   let reply = await engine.request({ op: 'capture' });
-  for (let attempt = 1; attempt < WARMUP_CAPTURE_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt < CAPTURE_ATTEMPTS; attempt += 1) {
     if (!isWarmupMiss(reply)) return reply;
-    await sleep(WARMUP_CAPTURE_RETRY_MS);
+    await sleep(CAPTURE_RETRY_MS);
     reply = await engine.request({ op: 'capture' });
   }
   return reply;
