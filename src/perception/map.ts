@@ -103,7 +103,25 @@ const TITLE_INK_Y = 40;
 const TITLE_INK_W = 400;
 const TITLE_INK_H = 40;
 const TITLE_INK_LUMA = 170;
-const TITLE_INK_MIN = 400;
+export const TITLE_BAR_INK_MIN = 400;
+
+/**
+ * G4's ink count: pixels in the centred title band above `TITLE_INK_LUMA`. Exported because the band
+ * also answers "this frame is not a battle" for `CombatPerceiver`, whether or not the rest of this
+ * parser accepts the map: no battle draws a title bar, and every 1920×1080 battle frame measured
+ * carries 0–1 px of it.
+ */
+export function titleBarInk(image: RgbaImage): number {
+  const { data, width } = image;
+  let ink = 0;
+  for (let y = TITLE_INK_Y; y < TITLE_INK_Y + TITLE_INK_H; y += 1) {
+    const row = y * width;
+    for (let x = TITLE_INK_X; x < TITLE_INK_X + TITLE_INK_W; x += 1) {
+      if (lumaAt(data, (row + x) * 4) > TITLE_INK_LUMA) ink += 1;
+    }
+  }
+  return ink;
+}
 
 /**
  * R27: the floor title is the Latin token only. These three fixed slots were measured on one frame
@@ -422,7 +440,7 @@ function parseImage(image: RgbaImage): ParsedMap | null {
   if (panel.mapInk < MAP_INK_MIN || panel.mapInk > MAP_INK_MAX) return null;
 
   // 4. G4 + R27: a centred Latin floor token that lands in the measured slots. ----------------
-  const title = readTitle(data, width);
+  const title = readTitle(image);
   if (!title) return null;
 
   // 5. G6: the wall lattice ----------------------------------------------------------------
@@ -742,23 +760,22 @@ function titleKeyOf(data: Uint8Array, width: number, cells: Float64Array): strin
   return hex;
 }
 
-function readTitle(data: Uint8Array, width: number): Title | null {
+function readTitle(image: RgbaImage): Title | null {
+  const { data, width } = image;
+  // The ink floor is the gate that refuses a HUD (0 lit px); the Latin slots are an extra check,
+  // never the only one, so a title of another script still yields a map.
+  if (titleBarInk(image) < TITLE_BAR_INK_MIN) return null;
   const cells = new Float64Array(TITLE_KEY_COLS * TITLE_KEY_ROWS);
-  let ink = 0;
   for (let y = TITLE_INK_Y; y < TITLE_INK_Y + TITLE_INK_H; y += 1) {
     const row = y * width;
     const cellY = Math.min(TITLE_KEY_ROWS - 1, Math.floor(((y - TITLE_INK_Y) * TITLE_KEY_ROWS) / TITLE_INK_H));
     for (let x = TITLE_INK_X; x < TITLE_INK_X + TITLE_INK_W; x += 1) {
       if (lumaAt(data, (row + x) * 4) > TITLE_INK_LUMA) {
-        ink += 1;
         const cellX = Math.min(TITLE_KEY_COLS - 1, Math.floor(((x - TITLE_INK_X) * TITLE_KEY_COLS) / TITLE_INK_W));
         cells[cellY * TITLE_KEY_COLS + cellX] += 1;
       }
     }
   }
-  // The ink floor is the gate that refuses a HUD (0 lit px); the Latin slots are an extra check,
-  // never the only one, so a title of another script still yields a map.
-  if (ink < TITLE_INK_MIN) return null;
   const key = titleKeyOf(data, width, cells);
 
   let text = '';
