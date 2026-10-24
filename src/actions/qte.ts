@@ -123,7 +123,7 @@ export interface QteSampler {
 
 export type QteRefusal =
   | 'bar-gone'          // a sample looked for the bar and did not find it
-  | 'capture-failed'    // we could not look: the capture/parse threw, or the crop would not decode
+  | 'capture-failed'    // we could not look: capture/parse threw, crop undecodable or wrong size
   | 'resolved'          // the 解除 button reads dimmed: this pass was already answered
   | 'no-velocity'       // fewer than three readings arrived before the budget ran out
   | 'no-reachable-zone' // speeds came, but no zone centre was reachable inside the horizon

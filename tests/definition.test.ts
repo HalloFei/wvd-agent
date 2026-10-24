@@ -116,9 +116,11 @@ describe('WVD World definition', () => {
     // `timeQte` refuses a budget below 1 as `misconfigured`; the schema is where a bad setting is
     // caught before the World has to run it.
     expect(properties['worlds.wvd.qteSubLoopMs']).toMatchObject({ type: 'integer', minimum: 1 });
-    // The three timer inputs have no runtime guard that can name them: a latency or decel of zero
-    // is not a measurement, and a negative window floor is not a floor (zero is a legal "no
-    // floor"). The schema is where a bad setting stops, before the sub-loop plans a press with it.
+    // The schema is the only place a bad timer setting is named. `planTap` refuses a zero decel by
+    // returning no plan at all (it would look like an unreachable zone), a zero latency is finite
+    // and silently plans with no lead, and `timeQte` refuses a non-finite or negative window floor
+    // only as a bare `misconfigured` — while zero is a legal "no floor". A latency or decel of zero
+    // is not a measurement, so both minima stay 1.
     expect(properties['worlds.wvd.qteLatencyMs']).toMatchObject({ type: 'integer', minimum: 1 });
     expect(properties['worlds.wvd.qteDecelPxPerS2']).toMatchObject({ type: 'integer', minimum: 1 });
     expect(properties['worlds.wvd.qteMinWindowMs']).toMatchObject({ type: 'integer', minimum: 0 });
