@@ -69,3 +69,6 @@ directory; the source of truth stays here.
 - `src/contracts.ts` mirrors `docs/specs/2026-10-24-contracts.md` declaration for declaration; a
   change to one is a change to the other in the same commit.
 - Commit at every milestone, staged by explicit path.
+- **The task board is the single authority for open work.** Specs and `docs/status.md` record
+  decisions and measurements; they do not keep their own backlog. A gap that is not pinned is not
+  tracked, and a pinned item carries its reproduction, fixtures and acceptance test.

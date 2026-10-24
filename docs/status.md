@@ -104,20 +104,15 @@ So two of the five screens a farm cycle needs are unnamed on these floors: **com
 a session on this floor would escalate the moment a battle starts — which it did, twice, during
 this survey.
 
-## Known gaps — declared, not hidden
+## Open work — the task board is the authority
 
-1. **The opener panel `由谁打开?` has no parser.** There is no fixture for it anywhere in `testdata/`,
-   so `chest-open` is never emitted and the chest step cannot be entered. The QTE parser exists and is
-   tested; nothing can reach it until this panel is captured and parsed.
-2. **`planTap` has no caller in the loop.** The QTE needs a sub-loop that samples three frames inside a
-   150 ms decision window; a 100 ms tick cannot. It is a design, not a patch, and it is deferred.
-3. **The blob reaching a live Coo turn is still unobserved.** It needs a running app with a multimodal
-   endpoint; the mechanism is followed by hand, not proven.
-4. **A town exit is not a documented command.** The loop opens the map there and the town menu may
-   appear; out of scope for v1.
-5. Config keys owned by modules the loop does not yet wire are unread: `hazardEscapeSteps`,
-   `hazardEscapeHoldMs`, `resumeMaxAttempts`, `willpowerFloor`, `maxRerolls`, `rerollLeadRatio`, the
-   QTE timing quartet, the loot taps, `autoBattleEnableAttempts`, `fightTimeoutMs`.
+This file records what landed and what was measured. **Open work lives on the task board and only
+there**: pinned items carry the reproduction, the fixtures and the acceptance test, and a gap that is
+not on the board is not being tracked. The board is the operator's list; a duplicate list here went
+stale the moment the work moved (2026-10-24), which is why this section is now a pointer.
+
+Specs (`docs/specs/`) and guides (`docs/guides/`) still record decisions and measured procedure —
+they are the record of *why* and *how*, not a backlog.
 
 ## The standing instruction
 
