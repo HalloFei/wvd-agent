@@ -32,6 +32,8 @@ export interface WvdConfigSection extends WorldSection {
   qteDecelPxPerS2: number;
   qteMinWindowMs: number;
   qteAttemptsFallback: number;
+  /** How long the QTE timing sub-loop may hold the tick before it gives up, milliseconds. */
+  qteSubLoopMs: number;
   lootTapIntervalMs: number;
   lootTapMax: number;
   autoBattleEnableAttempts: number;
@@ -67,6 +69,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   qteDecelPxPerS2: 3000,
   qteMinWindowMs: 150,
   qteAttemptsFallback: 2,
+  qteSubLoopMs: 4000,
   lootTapIntervalMs: 400,
   lootTapMax: 10,
   autoBattleEnableAttempts: 3,
@@ -162,6 +165,10 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.wvd.qteAttemptsFallback': {
         type: 'integer', title: 'QTE 次数兜底', description: '读不出计数时使用。',
+      },
+      'worlds.wvd.qteSubLoopMs': {
+        type: 'integer', title: 'QTE 计时预算',
+        description: '开箱 QTE 的计时子循环最多占用多久，毫秒；超过即放弃这一拍。',
       },
       'worlds.wvd.lootTapIntervalMs': {
         type: 'integer', title: '拾取间隔', description: '连续点击拾取的间隔，毫秒。',

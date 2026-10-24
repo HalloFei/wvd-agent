@@ -78,8 +78,8 @@ const REST_SETTLE_PX = 2;
 /**
  * The frame size the bar's anchors were measured at (contracts §0.5). The rectangle below is asked
  * for in these coordinates whatever the client area is: `qteWindow` cannot see the game window, so
- * the 1920×1080 client-size invariant is the composition root's to assert (Task 7), not something
- * this module can promise.
+ * the 1920×1080 client-size invariant is the composition root's to assert — `WvdWorld#timeQte` does,
+ * and refuses any other size (Task 7).
  */
 const REFERENCE_FRAME = { width: 1920, height: 1080 } as const;
 
@@ -150,6 +150,14 @@ export interface QteTimingOptions {
   readonly minWindowMs: number;
   readonly budgetMs: number;
 }
+
+/**
+ * The sub-loop as a dependency (contracts §0.2): the World owns *when* — the tick, the clock, the
+ * actuator, the session that may end mid-wait — and this owns the timing arithmetic. Injecting it is
+ * what lets a test drive the sub-loop without a bar on screen, exactly as `policy`, `classify` and
+ * `commands` are injected. `timeQte` is the production realization.
+ */
+export type QteTimer = (options: QteTimingOptions) => Promise<QteOutcome>;
 
 // ---------------------------------------------------------------------------------------------
 // The sub-loop
@@ -291,8 +299,8 @@ async function readRest(
  *
  * A capture that throws is **not** `bar-gone`. `parseQte` with an origin checks the crop's size
  * against the reference window, not the game window's, so a 2560×1440 client area is cropped at the
- * 1920-anchored rectangle and parsed — the 1920×1080 client-size invariant belongs to the
- * composition root, which asserts it (Task 7). Every engine failure — a refused crop, a stale
+ * 1920-anchored rectangle and parsed — the 1920×1080 client-size invariant is the composition root's,
+ * which asserts it (`WvdWorld#timeQte`, Task 7). Every engine failure — a refused crop, a stale
  * frame, a dead child — is the separate fact `capture-failed`, and this sampler never rethrows it:
  * failure is a value (contracts §0.6).
  *

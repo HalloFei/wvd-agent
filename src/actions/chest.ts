@@ -1,7 +1,7 @@
 /**
- * The two taps a chest needs before its panel (design §7, chest policy §3b).
+ * The chest's fixed inputs: the two taps before its panel, and the disarm key (design §7, chest §3b).
  *
- * Both are fixed UI points of the 1920×1080 client area, measured on the live game (2026-10-24):
+ * The taps are fixed UI points of the 1920×1080 client area, measured on the live game (2026-10-24):
  *
  * - the party standing next to a chest is offered `打开` at (955, 858); `什么也不做` sits below it
  *   and is never tapped;
@@ -20,6 +20,16 @@ export const CHEST_OPEN_AT: Point = { x: 955, y: 858 };
 /** The battle buttons, in the order they are pressed: speed first, then auto. */
 export const BATTLE_SPEED_AT: Point = { x: 691, y: 708 };
 export const BATTLE_AUTO_AT: Point = { x: 1231, y: 708 };
+
+/**
+ * The key that disarms a trapped chest's QTE: **Space**, Windows set-1 scan code `0x39`.
+ *
+ * The disarm is a key, not a click (chest spec §3b, recorded 2026-10-24): the on-screen 解除 hand at
+ * (960, 662) is a touch target, and the keyboard does the same thing at the planner's instant. So
+ * the QTE action needs no coordinate and no button detection — one press of this scan code, held for
+ * `pressHoldMs`. It lives here, beside the chest's other actions, because the chest owns the fact.
+ */
+export const DISARM_SCAN = 0x39;
 
 /** The pause between two UI taps: the game draws the first button's state before the second lands. */
 const TAP_SETTLE_MS = 300;

@@ -28,6 +28,7 @@ import type {
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 import { acceptChestPrompt, enableBattleAuto } from '../src/actions/chest.ts';
+import { timeQte } from '../src/actions/qte.ts';
 import { routePolicy } from '../src/policy/route.ts';
 import { classify } from '../src/policy/session.ts';
 import { WvdWorld, type WvdSession } from '../src/world.ts';
@@ -195,6 +196,8 @@ function makeConsole(options: {
     timezone: 'Asia/Shanghai',
     policy: routePolicy,
     classify,
+    // The real sub-loop: this harness never shows a bar, so it can only refuse — honestly.
+    timing: timeQte,
     commands: {
       openMap: () => openMap(actuator, cfg.pressHoldMs),
       automoveToTile: (at) => automoveToTile(actuator, at, cfg.pressHoldMs),

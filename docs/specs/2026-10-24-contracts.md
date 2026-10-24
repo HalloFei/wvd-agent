@@ -350,6 +350,7 @@ object (§0 rule 3).
 | `qteDecelPxPerS2` | integer | `3000` | chest | fitted slide constant, provisional |
 | `qteMinWindowMs` | integer | `150` | chest | refuse a pass tighter than this |
 | `qteAttemptsFallback` | integer | `2` | chest | used when the counter is unreadable |
+| `qteSubLoopMs` | integer | `4000` | chest | how long the QTE sub-loop may hold the tick before it gives up |
 | `lootTapIntervalMs` | integer | `400` | chest | between loot taps |
 | `lootTapMax` | integer | `10` | chest | taps before giving up on loot |
 

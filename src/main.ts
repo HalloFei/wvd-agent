@@ -24,6 +24,7 @@ import {
 } from './contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
 import { acceptChestPrompt, enableBattleAuto } from './actions/chest.ts';
+import { timeQte } from './actions/qte.ts';
 import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
 import { connectEngine, startEngine, type EngineClient } from './engine/child.ts';
@@ -164,6 +165,8 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     timezone,
     policy: createTaskPolicy(() => task, routePolicy),
     classify,
+    // The QTE sub-loop is a dependency like the policy: `timeQte` is the production timing.
+    timing: timeQte,
     commands: {
       // `pressHoldMs` is read per command, like every other key this World owns (§0.3).
       openMap: () => openMap(actuator, pressHoldMs()),

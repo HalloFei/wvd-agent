@@ -26,7 +26,8 @@ import type {
   Point,
 } from '../src/contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
-import { acceptChestPrompt, enableBattleAuto } from '../src/actions/chest.ts';
+import { acceptChestPrompt, DISARM_SCAN, enableBattleAuto } from '../src/actions/chest.ts';
+import { timeQte, type QteTimer, type QteTimingOptions } from '../src/actions/qte.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { MAX_PRESS_HOLD_MS } from '../src/contracts.ts';
 import { routePolicy } from '../src/policy/route.ts';
@@ -279,6 +280,23 @@ const openerUnread: Observation = {
  */
 const refusedPanel: Observation = { screen: 'unknown', atMs: 100, confidence: 0.3 };
 
+/**
+ * A live bar, from the recording: two zones, the marker somewhere inside the first, and the 解除
+ * button where the recording found it. Nothing here is pressed until the World hands the tick to
+ * the timing sub-loop.
+ */
+const qteBar: Observation = {
+  screen: 'chest-qte',
+  atMs: 100,
+  confidence: 1,
+  qte: {
+    zones: [{ from: 694, to: 922 }, { from: 997, to: 1223 }],
+    markerX: 800,
+    button: { x: 958, y: 662 },
+    attempts: null,
+  },
+};
+
 function makeWorld(options: {
   cfg?: Partial<WvdConfigSection>;
   observation?: Observation;
@@ -290,6 +308,11 @@ function makeWorld(options: {
   /** Held open to keep two concurrent startSession calls overlapping. */
   openSessionGate?: Promise<void>;
   host?: FakeHost;
+  /**
+   * The QTE timing sub-loop. The real one unless a test scripts it: a bar on screen would then
+   * sample this fake source (which has no bar) and refuse, never press — the honest default.
+   */
+  timing?: QteTimer;
 } = {}) {
   const source = options.source ?? new ScriptedSource();
   const perceiver = new ScriptedPerceiver(options.observation ?? dungeonMap);
@@ -321,6 +344,7 @@ function makeWorld(options: {
     timezone: 'Asia/Shanghai',
     policy: routePolicy,
     classify,
+    timing: options.timing ?? timeQte,
     commands: {
       // `main.ts` reads `pressHoldMs` per command; the harness does the same, so a configured hold
       // that the loop ignored would show up here (Important 2).
@@ -483,6 +507,118 @@ describe('the tick', () => {
     const stopped = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stopped');
     expect(stopped).toHaveLength(1);
     expect(stopped[0]!.event.text).toContain('capture');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The chest QTE: the tick belongs to the bar, one press, then back to the route
+// ---------------------------------------------------------------------------------------------
+
+describe('the chest QTE', () => {
+  it('times the bar before the policy acts, and presses Space once', async () => {
+    const seen: QteTimingOptions[] = [];
+    const timing: QteTimer = async (options) => {
+      seen.push(options);
+      await options.press();
+      return { ok: true, v: 606, atMs: 120, target: 808, tapX: 700, restX: 809 };
+    };
+    const { world, host, actuator } = makeWorld({ observation: qteBar, timing });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(seen).toHaveLength(1);
+    // The sub-loop's own bounds come from config, not from the caller's guess.
+    expect(seen[0]!.minWindowMs).toBe(WVD_DEFAULTS.qteMinWindowMs);
+    expect(seen[0]!.budgetMs).toBe(WVD_DEFAULTS.qteSubLoopMs);
+    // The disarm is Space (0x39), held for the configured duration — a key, not a tap, not a literal.
+    expect(actuator.calls).toEqual([`key ${DISARM_SCAN} ${WVD_DEFAULTS.pressHoldMs}`]);
+  });
+
+  it('does not press when the sub-loop gives up, and the tick carries on', async () => {
+    let calls = 0;
+    const timing: QteTimer = async () => {
+      calls += 1;
+      return { ok: false, reason: 'resolved' };
+    };
+    const { world, host, actuator } = makeWorld({ observation: qteBar, timing });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual([]);
+
+    // A resolved pass is not a stop: the tick that follows asks the sub-loop again.
+    await world.tick();
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(world.isRunning()).toBe(true);
+  });
+
+  it('leaves without a press when a stop lands during the sub-loop', async () => {
+    let worldRef: WvdWorld | null = null;
+    const timing: QteTimer = async (options) => {
+      // A stop from the console lands while the sub-loop is working; the next press must not.
+      await worldRef!.stop();
+      const pressed = await options.press();
+      return pressed.ok
+        ? { ok: true, v: 0, atMs: 0, target: 0, tapX: 0, restX: null }
+        : { ok: false, reason: 'press-refused' };
+    };
+    const made = makeWorld({ observation: qteBar, timing });
+    worldRef = made.world;
+    await started(made.world, made.host);
+
+    await made.world.tick();
+
+    expect(made.actuator.calls).toEqual([]);
+    expect(made.world.isRunning()).toBe(false);
+  });
+
+  it('does not time the bar when the client area is not 1920x1080', async () => {
+    // The crop's origin is 1920-anchored (contracts §0.5); timing from another size would press
+    // against the wrong pixels, so the composition root's invariant is enforced here.
+    const seen: QteTimingOptions[] = [];
+    const timing: QteTimer = async (options) => {
+      seen.push(options);
+      return { ok: false, reason: 'resolved' };
+    };
+    const source = new ScriptedSource();
+    const { world, host, actuator } = makeWorld({ observation: qteBar, timing, source });
+    await started(world, host);
+
+    // The fake source is 1920x1080: the bar is timed.
+    await world.tick();
+    expect(seen).toHaveLength(1);
+
+    // Another client size: nothing is sampled and nothing is pressed.
+    source.capture = async (): Promise<Frame> => ({ ...frame(100), width: 2560, height: 1440 });
+    await world.tick();
+    expect(seen).toHaveLength(1);
+    expect(actuator.calls).toEqual([]);
+    expect(world.isRunning()).toBe(true);
+  });
+
+  it('sends no press in a dry run, even on the bar', async () => {
+    const seen: QteTimingOptions[] = [];
+    const timing: QteTimer = async (options) => {
+      seen.push(options);
+      await options.press();
+      return { ok: true, v: 606, atMs: 120, target: 808, tapX: 700, restX: 809 };
+    };
+    const dry = makeWorld({ observation: qteBar, timing, cfg: { dryRun: true } });
+    await started(dry.world, dry.host);
+
+    await dry.world.tick();
+
+    expect(seen).toEqual([]);
+    expect(dry.actuator.calls).toEqual([]);
+
+    // The same bar without the dry run does reach the sub-loop and the key, so the guard above
+    // is the dry run and not "the QTE is never timed in this harness".
+    const live = makeWorld({ observation: qteBar, timing });
+    await started(live.world, live.host);
+    await live.world.tick();
+    expect(seen).toHaveLength(1);
+    expect(live.actuator.calls).toEqual([`key ${DISARM_SCAN} ${WVD_DEFAULTS.pressHoldMs}`]);
   });
 });
 

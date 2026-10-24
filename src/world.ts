@@ -64,6 +64,7 @@ import type {
   SessionVerdict,
 } from './contracts.ts';
 import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
+import { DISARM_SCAN } from './actions/chest.ts';
 import {
   fallbackPhrase,
   observationLine,
@@ -75,6 +76,7 @@ import { sceneIsStill, sceneSignature, type SceneSignature } from './frames/stil
 import { snapshotBlob, takeSnapshot, type SnapshotSource } from './escalation/image.ts';
 import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
 import { tapOpenerCard } from './actions/opener.ts';
+import { bandSampler, type QteOutcome, type QteTimer } from './actions/qte.ts';
 import { openerCardCentre, openerSlot } from './perception/opener.ts';
 import { tileOnScreen } from './perception/map.ts';
 import { chooseOpener } from './policy/chest.ts';
@@ -140,6 +142,12 @@ export interface WvdWorldOptions {
   policy: FarmPolicy;
   classify: SessionClassifier;
   commands: RouteCommands;
+  /**
+   * The QTE timing sub-loop (`actions/qte.ts`, contracts §7). Required, not optional: a World that
+   * silently declined to time the bar would be lying about the chest step, so a deployment must say
+   * which realization it runs — `timeQte` in `main.ts`, a scripted one in tests.
+   */
+  timing: QteTimer;
   /** Builds the engine for one session; absent means this World cannot farm at all. */
   openSession?: (() => Promise<SessionOpen>) | undefined;
   /** The loop's scheduler: on in production, off in tests so a tick runs only when asked. */
@@ -169,6 +177,13 @@ const BROADCAST_MIN_INTERVAL_MS = 500;
 /** `wvd_act` holdKey defaults, mirroring contracts §8.3's `hazardEscapeHoldMs` and §4's floor. */
 const DEFAULT_ACT_HOLD_MS = 250;
 const MIN_ACT_HOLD_MS = 40;
+/**
+ * The client size the QTE anchors were measured at (contracts §0.5). `qteWindow` is asked for in
+ * these coordinates whatever the window is, so the composition root asserts the invariant: another
+ * size would crop the 1920-anchored rectangle out of a larger frame and read the wrong pixels.
+ */
+const REFERENCE_WIDTH = 1920;
+const REFERENCE_HEIGHT = 1080;
 /** Windows set-1 scan codes for the WASD keys; the model names letters, the engine gets integers. */
 const MOVEMENT_SCAN: Readonly<Record<string, number>> = { w: 0x11, a: 0x1e, s: 0x1f, d: 0x20 };
 /**
@@ -429,6 +444,7 @@ export class WvdWorld implements World {
   readonly #policy: FarmPolicy;
   readonly #classify: SessionClassifier;
   readonly #commands: RouteCommands;
+  readonly #timing: QteTimer;
   readonly #openSession: (() => Promise<SessionOpen>) | undefined;
   readonly #autoTick: boolean;
   readonly #now: () => number;
@@ -439,6 +455,7 @@ export class WvdWorld implements World {
     this.#policy = options.policy;
     this.#classify = options.classify;
     this.#commands = options.commands;
+    this.#timing = options.timing;
     this.#openSession = options.openSession;
     this.#autoTick = options.autoTick !== false;
     this.#now = options.now ?? (() => performance.now());
@@ -800,6 +817,16 @@ export class WvdWorld implements World {
     const stalledMs = now - this.#lastProgressAtMs;
     if (stalledMs >= this.#cfg.stallStopSeconds * 1000) {
       await this.#endSession(`nothing changed for ${this.#cfg.stallStopSeconds} s`, { report: true });
+      return;
+    }
+
+    // The bar is a modal, sub-second window, and this tick's one command is the timing sub-loop. It
+    // runs before the in-flight book-keeping on purpose: the press is the time-critical act, and the
+    // command the bar answers (the opener click) is released by the screen that follows the bar, on
+    // the next tick. No intent is taken from the policy and no route command is sent while the QTE
+    // is on screen.
+    if (observation.screen === 'chest-qte') {
+      await this.#timeQte(session, frame);
       return;
     }
 
@@ -1263,6 +1290,75 @@ export class WvdWorld implements World {
     this.#willpower = [];
     this.#openerRefusal = null;
     this.#escalationCooldownUntilMs = 0;
+  }
+
+  /**
+   * Hand the tick to the QTE timing sub-loop (`actions/qte.ts`, contracts §7). The World owns what
+   * the sub-loop must not: the client-size invariant, the press's session, and the session that may
+   * end during the wait.
+   *
+   * - **The size gate is `qteWindow`'s precondition.** The crop is asked for in the reference frame's
+   *   coordinates whatever the client area is, so another size would read the wrong pixels with full
+   *   confidence. `actions/qte.ts` names this as the composition root's promise; this is where the
+   *   promise becomes code (contracts §0.5).
+   * - **A dry run records and sends nothing**, exactly as `#press` does for every other command.
+   * - **A throw from `press` or `now` is a skipped press, not a dead session.** `timeQte` returns a
+   *   value for every sampler refusal, but those two closures are the World's; without this catch a
+   *   throw would reach the tick's catch and end the session as "a module failed".
+   * - **A stop during the wait sends nothing**: `press` re-checks the session, and an outcome that
+   *   arrives after the session ended is dropped rather than logged as this session's.
+   *
+   * The success line is the fit input for `qteDecelPxPerS2` (chest spec §3, task #18): the recorded
+   * speed, the planned delay, the zone centre, where the marker was and where it parked.
+   */
+  async #timeQte(session: WvdSession, frame: Frame): Promise<void> {
+    if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) {
+      this.#host?.log.warn(
+        `wvd: not timing the chest QTE: the game window is ${frame.width}x${frame.height}, not `
+          + `${REFERENCE_WIDTH}x${REFERENCE_HEIGHT}`,
+      );
+      return;
+    }
+    if (this.#cfg.dryRun) {
+      this.#host?.log.info('wvd: dry run, would time the chest QTE and press the disarm key');
+      return;
+    }
+    const cfg = this.#cfg;
+    let outcome: QteOutcome;
+    try {
+      outcome = await this.#timing({
+        sampler: bandSampler(session.source),
+        // The disarm is Space, held for the configured duration — a key, not the 解除 click (§3b).
+        press: async () => {
+          if (!this.#running || this.#session !== session) {
+            return { ok: false, reason: 'unavailable', detail: 'the session ended during the wait' };
+          }
+          return session.actuator.holdKey(DISARM_SCAN, cfg.pressHoldMs);
+        },
+        now: () => this.#now(),
+        wait: (ms) => new Promise<void>((resolve) => {
+          setTimeout(resolve, ms);
+        }),
+        latencyMs: cfg.qteLatencyMs,
+        decelPxPerS2: cfg.qteDecelPxPerS2,
+        minWindowMs: cfg.qteMinWindowMs,
+        budgetMs: cfg.qteSubLoopMs,
+      });
+    } catch (error) {
+      this.#host?.log.warn(`wvd: the chest QTE could not be timed: ${message(error)}`);
+      return;
+    }
+    // A stop can land inside the sub-loop. Nothing is acted on — or reported as this session's —
+    // after it, exactly as the tick itself re-checks after every await.
+    if (!this.#running || this.#session !== session) return;
+    if (!outcome.ok) {
+      this.#host?.log.warn(`wvd: the chest QTE was not pressed: ${outcome.reason}`);
+      return;
+    }
+    this.#host?.log.info(
+      `wvd: chest QTE pressed: v=${outcome.v} atMs=${outcome.atMs} target=${outcome.target} `
+        + `tapX=${outcome.tapX} restX=${outcome.restX === null ? 'unread' : outcome.restX}`,
+    );
   }
 
   async #execute(intent: Intent, fromScreen: ScreenId | null, context?: TickContext): Promise<void> {

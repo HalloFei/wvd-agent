@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SCAN } from '../src/actions/automove.ts';
+import { DISARM_SCAN } from '../src/actions/chest.ts';
 import type {
   ActionResult, Actuator, Frame, Observation, Perceiver, ScriptEnv, TaskDefinition, TaskScript,
 } from '../src/contracts.ts';
@@ -85,6 +86,10 @@ describe('runSteps', () => {
     expect(TASK_KEYS.l).toBe(SCAN.chest);
     expect(TASK_KEYS.f).toBe(SCAN.exit);
     expect(TASK_KEYS.q).toBe(SCAN.mark);
+  });
+
+  it('agrees with the chest module on the disarm key', () => {
+    expect(TASK_KEYS.space).toBe(DISARM_SCAN);
   });
 
   it('clamps a hold to the press ceiling', async () => {
