@@ -19,7 +19,7 @@ const mapObservation = (titleKey = 'k'.repeat(32)): Observation => ({
   screen: 'dungeonmap',
   atMs: 0,
   confidence: 0.9,
-  map: { floorTitle: '', titleKey, player: { x: 1, y: 1 }, icons: [] },
+  map: { floorTitle: '', titleKey, player: { x: 1, y: 1 }, origin: { x: 960, y: 540 }, icons: [] },
 });
 
 const screen = (id: Observation['screen']): Observation => ({ screen: id, atMs: 0, confidence: 0.9 } as Observation);

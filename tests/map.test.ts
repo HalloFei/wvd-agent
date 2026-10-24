@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
-import type { Frame, RgbaImage } from '../src/contracts.ts';
-import { MapPerceiver, readMap } from '../src/perception/map.ts';
+import type { Frame, MapState, RgbaImage } from '../src/contracts.ts';
+import { MapPerceiver, readMap, tileOnScreen } from '../src/perception/map.ts';
 import { floorKeyDistance } from '../src/tasks/steps.ts';
 
 /**
@@ -53,6 +53,12 @@ describe('readMap', () => {
 
     // `haken` is not identifiable in any fixture and must never be emitted (research §6).
     expect(map!.icons.some((icon) => icon.kind === 'haken')).toBe(false);
+
+    // contracts §3 `origin`: the chevron's own screen point, the anchor every tile click is placed
+    // from. The canvas scrolls, so this is the only absolute position a walk may use. It is a blob
+    // centroid, hence fractional: a half pixel is nothing against a 36 px cell.
+    expect(map!.origin.x).toBeCloseTo(1_212.7, 0);
+    expect(map!.origin.y).toBeCloseTo(569.3, 0);
   });
 
   it('reads the map behind the automove banner', async () => {
@@ -189,6 +195,9 @@ describe('readMap — the FFXI third floor', () => {
     expect(map!.player).toEqual({ x: 13, y: 23 });
     const chests = map!.icons.filter((icon) => icon.kind === 'chest').map((icon) => cell(icon.at)).sort();
     expect(chests).toEqual(['5,16', '6,17', '9,13']);
+    // The floor the route farms: its chevron is what a tile walk is aimed from.
+    expect(map!.origin.x).toBeCloseTo(959.5, 0);
+    expect(map!.origin.y).toBeCloseTo(264.7, 0);
   });
 
   it('keeps the floor key under the harken glow, within the gate tolerance', async () => {
@@ -199,5 +208,54 @@ describe('readMap — the FFXI third floor', () => {
     expect(glow!.player).toEqual({ x: 7, y: 24 });
     // R27b: the glow shifts a couple of bits; the task's gate compares with a small tolerance.
     expect(floorKeyDistance(clean!.titleKey, glow!.titleKey)).toBeLessThanOrEqual(8);
+  });
+});
+/**
+ * The grid→screen transform a tile walk is aimed with (contracts §3 `origin`): exactly the inverse
+ * of `findIcons`' own `toGrid`, so the cell the parser names and the cell a tap lands on are one
+ * cell.
+ */
+describe('tileOnScreen', () => {
+  /** The shape of one `map.jpg` readout: the party on (20,14), its chevron at (1213,569). */
+  const map: MapState = {
+    floorTitle: 'B1F',
+    titleKey: '0000',
+    player: { x: 20, y: 14 },
+    origin: { x: 1_213, y: 569 },
+    icons: [],
+  };
+
+  it("puts the party's own cell back on the chevron", () => {
+    expect(tileOnScreen(map, map.player)).toEqual({ x: 1_213, y: 569 });
+  });
+
+  it('steps one 36 px cell per grid step, with y inverted', () => {
+    // Grid y counts upward and the screen's downward: north of the party is a smaller screen y.
+    expect(tileOnScreen(map, { x: 21, y: 14 })).toEqual({ x: 1_249, y: 569 });
+    expect(tileOnScreen(map, { x: 20, y: 15 })).toEqual({ x: 1_213, y: 533 });
+    expect(tileOnScreen(map, { x: 18, y: 9 })).toEqual({ x: 1_141, y: 749 });
+  });
+
+  it('rounds to a pixel, because the chevron is a centroid and a tap has no fractions', () => {
+    expect(tileOnScreen({ ...map, origin: { x: 1_212.7, y: 569.3 } }, map.player)).toEqual({ x: 1_213, y: 569 });
+  });
+
+  it("aims the FFXI third floor's nearest chest inside the map panel", () => {
+    // player 13,23; chevron (959.5,264.7); the chests are (6,17), (5,16), (9,13) and the nearest by
+    // the route's Manhattan proxy is (6,17). The map panel's icon window is x 460-1710, y 140-920,
+    // so an aim that leaves it means the transform, not the route, is wrong.
+    const ffxi: MapState = {
+      floorTitle: '',
+      titleKey: '000000007f3ffe007f7efe00220ba600',
+      player: { x: 13, y: 23 },
+      origin: { x: 959.476, y: 264.726 },
+      icons: [],
+    };
+    const aim = tileOnScreen(ffxi, { x: 6, y: 17 });
+    expect(aim).toEqual({ x: 707, y: 481 });
+    expect(aim.x).toBeGreaterThan(460);
+    expect(aim.x).toBeLessThan(1_710);
+    expect(aim.y).toBeGreaterThan(140);
+    expect(aim.y).toBeLessThan(920);
   });
 });

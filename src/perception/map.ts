@@ -301,6 +301,22 @@ export async function readMap(frame: Frame): Promise<MapState | null> {
   return parsed?.map ?? null;
 }
 
+/**
+ * A grid target's screen point: the inverse of the transform `findIcons` places icons with, and the
+ * point a pointer-mode tap is sent to (contracts §3 `origin`).
+ *
+ * The map canvas scrolls (measured 21, 72 and 210 px on one floor), so there is no absolute origin to
+ * use instead — the chevron is the only anchor, it sits at the centre of the party's cell, and a cell
+ * is 36.0 px square on both axes with y counted **upward** in the grid and downward on the screen.
+ * The result is rounded because a tap is a pixel.
+ */
+export function tileOnScreen(map: MapState, tile: Point): Point {
+  return {
+    x: Math.round(map.origin.x + (tile.x - map.player.x) * TILE_PX),
+    y: Math.round(map.origin.y - (tile.y - map.player.y) * TILE_PX),
+  };
+}
+
 /** A `Perceiver` over the dungeon map. `unknown` (confidence 0) is its refusal. */
 export class MapPerceiver implements Perceiver {
   async observe(frame: Frame): Promise<Observation> {
@@ -364,6 +380,9 @@ function parseImage(image: RgbaImage): ParsedMap | null {
     floorTitle: title.text,
     titleKey: title.key,
     player: { x: readout.x, y: readout.y },
+    // The chevron *is* the anchor the icons were placed from (toGrid): publishing it is what lets
+    // a consumer invert that transform without re-measuring the canvas.
+    origin: { x: chevron.x, y: chevron.y },
     icons,
   };
 

@@ -20,20 +20,23 @@ import type {
   EngineEvent,
   Frame,
   FrameSource,
+  MapState,
   Observation,
   Perceiver,
   Point,
 } from '../src/contracts.ts';
-import { automoveToChest, automoveToExit, openMap } from '../src/actions/automove.ts';
+import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
+import { acceptChestPrompt, enableBattleAuto } from '../src/actions/chest.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { MAX_PRESS_HOLD_MS } from '../src/contracts.ts';
 import { routePolicy } from '../src/policy/route.ts';
+import { tileOnScreen } from '../src/perception/map.ts';
 import { classify } from '../src/policy/session.ts';
 import { WvdWorld, type WvdSession } from '../src/world.ts';
 
 const CTX = {} as ToolCallContext;
 /** The Windows set-1 codes the World's receipts report; the commands' own are in `actions/`. */
-const SCAN = { W: 0x11, F: 0x21, G: 0x22, L: 0x26 };
+const SCAN = { W: 0x11, R: 0x13, F: 0x21, G: 0x22 };
 
 // ---------------------------------------------------------------------------------------------
 // The fakes the brief asks for: a source, a perceiver and an actuator
@@ -183,6 +186,8 @@ const dungeonMap: Observation = {
     floorTitle: 'B1F',
     titleKey: '0001c00003e6c00003efe00003874000',
     player: { x: 19, y: 21 },
+    // The chevron. The fixtures put it at the screen's centre so a walk's tap point is arithmetic.
+    origin: { x: 960, y: 540 },
     icons: [
       { kind: 'chest', at: { x: 14, y: 18 } },
       { kind: 'hazard', at: { x: 10, y: 10 } },
@@ -202,9 +207,31 @@ const emptyMap: Observation = {
     floorTitle: 'B1F',
     titleKey: '0001c00003e6c00003efe00003874000',
     player: { x: 19, y: 21 },
+    origin: { x: 960, y: 540 },
     icons: [{ kind: 'hazard', at: { x: 10, y: 10 } }],
   },
 };
+
+/** The map a `dungeonmap` observation carries; the fixtures below that are one say so. */
+function mapOf(observation: Observation): MapState {
+  if (observation.screen !== 'dungeonmap') throw new Error('the fixture is not a map observation');
+  return observation.map;
+}
+
+/** The chest the route picks on the fixtures' map: the party on (19,21), a chest on (14,18). */
+const CHEST: Point = { x: 14, y: 18 };
+
+/** How far above the clicked tile the 自动移动 element is drawn (measured 79–84, §3c). */
+const POPUP_RISE = 81;
+
+/** The three calls a pointer-mode walk to `target` makes, as the fake actuator records them. */
+function walkCalls(map: MapState, target: Point = CHEST, holdMs = 60): string[] {
+  const at = tileOnScreen(map, target);
+  return [`key ${SCAN.R} ${holdMs}`, `tap ${at.x},${at.y}`, `tap ${at.x},${at.y - POPUP_RISE}`];
+}
+
+/** A walk aimed from the fixture map's own readout. */
+const walkOne = (holdMs = 60): string[] => walkCalls(mapOf(dungeonMap), CHEST, holdMs);
 
 const unknownButSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0.2 };
 const nothingSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0 };
@@ -298,8 +325,10 @@ function makeWorld(options: {
       // `main.ts` reads `pressHoldMs` per command; the harness does the same, so a configured hold
       // that the loop ignored would show up here (Important 2).
       openMap: () => openMap(actuator, cfg.pressHoldMs),
-      automoveToChest: () => automoveToChest(actuator, cfg.pressHoldMs),
+      automoveToTile: (at) => automoveToTile(actuator, at, cfg.pressHoldMs),
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
+      acceptChestPrompt: () => acceptChestPrompt(actuator),
+      enableBattleAuto: () => enableBattleAuto(actuator),
     },
     openSession: async () => {
       openSessionCalls += 1;
@@ -350,7 +379,7 @@ describe('the tick', () => {
     expect(source.captures).toBe(1);
     expect(perceiver.observes).toBe(1);
     // dungeonmap with a chest and a budget → move → 移动至宝箱 (L)
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+    expect(actuator.calls).toEqual(walkOne());
     expect(host.pushed).toEqual([]);
   });
 
@@ -359,27 +388,26 @@ describe('the tick', () => {
     await started(world, host);
 
     await world.tick();
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+    expect(actuator.calls).toEqual(walkOne());
 
     // The route re-derives 'move' on the next tick; the loop must not press L again while the map
     // is still on screen. This is the defect the review found: a stateless policy is not a memory.
     clock.advance(100);
     await world.tick();
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+    expect(actuator.calls).toEqual(walkOne());
 
     // automoveStillSeconds passes with the screen unchanged: the command gave up and is not re-sent.
     clock.advance(5000);
     await world.tick();
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+    expect(actuator.calls).toEqual(walkOne());
 
-    // The farm advanced — the party is somewhere else on the map — so a command may be sent again.
-    perceiver.observation = {
-      ...dungeonMap,
-      map: { ...dungeonMap.map, player: { x: 12, y: 18 } },
-    };
+    // The farm advanced — the party is somewhere else on the map — so a command may be sent again,
+    // aimed from the new readout: the chevron has scrolled with the party.
+    const moved = { ...dungeonMap, map: { ...mapOf(dungeonMap), player: { x: 12, y: 18 } } };
+    perceiver.observation = moved;
     clock.advance(100);
     await world.tick();
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`, `key ${SCAN.L} 60`]);
+    expect(actuator.calls).toEqual([...walkOne(), ...walkCalls(mapOf(moved))]);
   });
 
   it('does not open a second engine for a second concurrent startSession', async () => {
@@ -470,7 +498,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     // On the map the route walks to a chest: L. The map closing on the next tick is the key
     // working, not the walk finishing, so it must not release the command.
     await world.tick();
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+    expect(actuator.calls).toEqual(walkOne());
 
     perceiver.observation = dungeonView;
     source.moving = true;
@@ -479,7 +507,7 @@ describe('a walk stays in flight through the screens it produces', () => {
       await world.tick();
     }
     // Five seconds of walking and nothing is sent: no G, no second L.
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+    expect(actuator.calls).toEqual(walkOne());
     expect(world.isRunning()).toBe(true);
 
     // The party stops. The scene has been still for automoveStillSeconds: arrival, and the route's
@@ -490,7 +518,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     clock.advance(5_100);
     await world.tick();
     expect(actuator.calls).toEqual([
-      `key ${SCAN.L} 60`,
+      ...walkOne(),
       `key ${SCAN.G} 60`,
       `key ${SCAN.G} 60`,
     ]);
@@ -502,17 +530,19 @@ describe('a walk stays in flight through the screens it produces', () => {
     const { world, host, perceiver, actuator, clock } = makeWorld();
     await started(world, host);
     await world.tick();
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+    expect(actuator.calls).toEqual(walkOne());
 
-    perceiver.observation = { ...dungeonMap, map: { ...dungeonMap.map, player: { x: 11, y: 19 } } };
+    const walked = { ...dungeonMap, map: { ...mapOf(dungeonMap), player: { x: 11, y: 19 } } };
+    perceiver.observation = walked;
     clock.advance(100);
     await world.tick();
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`]);
+    expect(actuator.calls).toEqual(walkOne());
 
     clock.advance(5_100);
     await world.tick();
-    // Arrival releases the walk, and the map is still open at a chest, so the route walks again.
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 60`, `key ${SCAN.L} 60`]);
+    // Arrival releases the walk, and the map is still open at a chest, so the route walks again —
+    // aimed from where the readout now says the party is.
+    expect(actuator.calls).toEqual([...walkOne(), ...walkCalls(mapOf(walked))]);
   });
 });
 
@@ -899,7 +929,7 @@ describe('the tools', () => {
 
     // `worlds.wvd.pressHoldMs` is threaded into the command by the composition root; the map's
     // 移動至宝箱 is one press, and it carries the tuned duration (Important 2).
-    expect(actuator.calls).toEqual([`key ${SCAN.L} 90`]);
+    expect(actuator.calls).toEqual(walkOne(90));
   });
 
   it('clamps a hold to the contract ceiling: a longer one could outlive the engine teardown', async () => {
@@ -938,9 +968,9 @@ describe('the tools', () => {
     await tick;
   });
 
-  it('wvd_resume validates the intent it is given, and move needs no tile', async () => {
-    // The escalation is on a map the route will not act on (below its floor), because `move` is
-    // 移動至宝箱 only on the map: the loop refuses to press L anywhere else (navigation §3d).
+  it('wvd_resume validates the intent it is given, and aims move at the nearest chest', async () => {
+    // The escalation is on a map the route will not act on (below its floor), because `move` is the
+    // map's own gesture: the loop refuses to walk to a tile anywhere else (navigation §3d).
     const doubtedMap: Observation = { ...dungeonMap, confidence: 0.3 };
     const { world, host, actuator } = makeWorld({ observation: doubtedMap, cfg: { escalateTimeoutMs: 5000 } });
     await started(world, host);
@@ -956,12 +986,12 @@ describe('the tools', () => {
     expect(notObject.failed).toBe(true);
     expect(notObject.text).toBe('not resumed: intent must be an object');
 
-    // 移动至宝箱 cannot be aimed: the game chooses the chest, so there is no tile to name.
+    // The model names the verb, not the cell: the tile is the nearest chest of the last map read.
     const moved = outcome(await resume.handler({ intent: { kind: 'move' }, note: 'walk to the chest' }, CTX));
     expect(moved.failed).toBeUndefined();
     expect(moved.text).toBe('resumed: the loop takes move');
     await tick;
-    expect(actuator.calls).toContain(`key ${SCAN.L} 60`);
+    expect(actuator.calls).toEqual(walkOne());
   });
 });
 

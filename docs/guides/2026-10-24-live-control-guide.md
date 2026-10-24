@@ -153,10 +153,17 @@ picked".
 
 **Slow path — pointer mode.** Press **R** first, then click a **black tile**. Black is the road:
 the dark cells are walkable floor, the white lines are walls, and a click on anything that is not a
-road tile does nothing. The `自动移动` element then appears next to that tile — click it and the map
-closes and the party walks. Verified 2026-10-24 night: one click on a dark tile at `(878, 384)` in
+road tile does nothing. The `自动移动` element then appears — click it and the map closes and the
+party walks. Verified 2026-10-24 night: one click on a dark tile at `(878, 384)` in
 `B1F -巨坑-` started the move. Two interactions, and a detector for the element; that is the cost of
 choosing a *specific* tile rather than letting `L` choose.
+
+**On the FFXI floors the slow path is the only path (measured 2026-10-24, round 4).** `L` is inert
+on 第三区 and 第四区 even when the map reads three chests, so the World does not press it: its
+`move` is `R` → the tile → the element. The element sits **79–84 px above the clicked tile** (three
+instances) and is clicked blind at that offset; the World converts the route's grid cell to a
+screen point with the map's `origin` (`MapState.origin`, contracts §3). `docs/specs/
+2026-10-24-navigation-design.md` §3e is the record.
 
 Two facts that bound it:
 

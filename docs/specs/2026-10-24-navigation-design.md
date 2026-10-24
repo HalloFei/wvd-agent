@@ -153,10 +153,42 @@ Driven through the engine with the operator's authorisation, on `B1F -巨坑-`:
 - What is still unobserved: the reverse direction (back up), and whether a floor transition can be
   triggered from a tile the party is already standing on.
 
+## 3e. Walking to one tile — the command this World uses (2026-10-24, round 4)
+
+§3d records `L` working on the map floors and calls it the whole movement command. On the FFXI
+collab floors that is false: **`L` (移动至宝箱) is inert on both 第三区 and 第四区**, including the
+third floor whose map reads three chests. The route's own floor is 第四区, so a World whose only
+movement command is `L` cannot move there at all.
+
+The path that answers is **§3c's pointer mode**, now measured end to end:
+
+1. `R` (切换指针模式). Without it a tile click is ignored — §3c's first correction still holds.
+2. Click a **walkable black tile** (the dark cells are road; the white lines are walls, and a click
+   on anything else does nothing).
+3. The `自动移动` element appears **79–84 px above the clicked tile** (three instances, 2026-10-24;
+   the earlier top-left observation in §3c was a different frame). Click it.
+4. The map closes and the party walks. The game paths, fights what it meets and never leaves the
+   floor — the same guarantees §3d records for `L`.
+
+Two consequences for the build, and both are now in the code:
+
+- **The target is a tile, so the map must publish a screen anchor.** The canvas scrolls, so the
+  chevron is the only absolute point: contracts §3 gained `MapState.origin` (the chevron's own
+  screen point), and `tileOnScreen` inverts the icon transform from it. The route keeps speaking
+  grid cells; the loop converts once, at the seam, and hands `automoveToTile` a screen point.
+- **The element is assumed, not detected.** Its position is the measured rise, not a template
+  match. A tile that is not walkable raises nothing, so the confirming tap lands on the map and
+  pointer mode ignores it: the walk simply does not start, and the loop's in-flight rules record
+  that as "changed nothing" and do not retry until the farm advances. A detector is the upgrade if
+  that failure ever costs a session; it is deliberately not on the critical path.
+
+`L` is therefore no longer pressed by the World. It stays in the legend (contracts §4's `SCAN`)
+and a task file may press it, but no route intent depends on it.
 ## 4. What this means for the route policy
 
-- A chest run is: press `G` twice, press `L`, wait for the walk (and any battle it drags in), open
-  the chest, press `L` again until no chests remain. No tile coordinates are needed for movement.
+- A chest run is: press `G` twice, walk to a tile, wait for the walk (and any battle it drags in),
+  open the chest, walk again until no chests remain. Since §3e the walk is the pointer-mode chain,
+  aimed at a cell; on a floor where `L` works it is still the cheaper single press.
 - Chest moves are single-floor; the **exit move crosses down** (observed `B1F → B2F`). So a route can
   descend by pressing `F` once the floor's chests are done, and the next floor starts a fresh sweep.
   Going back up is not established.

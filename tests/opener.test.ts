@@ -14,13 +14,16 @@ import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import { WVD_DEFAULTS } from '../src/config.ts';
-import type { Frame, OpenerMember, OpenerPanel, RgbaImage } from '../src/contracts.ts';
+import type { Actuator, Frame, OpenerMember, OpenerPanel, Point, RgbaImage } from '../src/contracts.ts';
+import { tapOpenerCard } from '../src/actions/opener.ts';
+import { ChestPerceiver } from '../src/perception/chest.ts';
 import {
-  ChestPerceiver,
+  OPENER_SLOTS,
   openerCardCentre,
+  openerSlot,
   parseOpener,
   parseOpenerDetailed,
-} from '../src/perception/chest.ts';
+} from '../src/perception/opener.ts';
 import { chooseOpener, WILLPOWER_FLOOR } from '../src/policy/chest.ts';
 
 const FIXTURES = new URL('../testdata/chest/2026-10-24-opener/', import.meta.url);
@@ -196,27 +199,59 @@ describe('parseOpener — the 由谁打开? panel', () => {
     expect(await parseOpener(frameOf(blob, 1_000))).toBeNull();
   });
 
-  it('refuses a heart numeral whose digits are not where the heart numerals end', async () => {
+  it('records a heart numeral that stops short as unread, never as the shorter number', async () => {
     // The heart numeral is right-aligned: its last glyph ends 4–6 px from the card's border on every
     // card that has one. Erasing the trailing 0 of 艾莉賽's 100 would leave "10" — a number, but not
-    // the one on screen — so a numeral that stops 13 px short is refused.
+    // the one on screen — so the numeral is unread and that card is ineligible. The panel itself is
+    // not refused: the cards sit at fixed positions, so the other five are still measurable and the
+    // click only needs the slot of the card the policy chose.
     const image = copyOf(await jpegImage('panel-00.jpg'));
     paint(image, { x: 855, y: 731, w: 11, h: 15 }, [40, 40, 40]);
-    expect(await parseOpener(frameOf(image, 1_000))).toBeNull();
+    const panel = await parseOpener(frameOf(image, 1_000));
+
+    expect(panel).not.toBeNull();
+    expect(Number.isNaN(panel!.members[0]!.willpower)).toBe(true);
+    expect(panel!.members[1]!.willpower).toBe(100);
+    // No substitution: the unread card cannot win, and the choice is the measured one (index 5).
+    expect(chooseOpener(panel!)!.index).toBe(5);
   });
 
-  it('refuses a heart numeral whose digit is not in the heart atlas', async () => {
+  it('records a heart digit the atlas has never seen as unread, and names the other five', async () => {
     // The heart font's other digits were never captured (only 0, 1 and 9 on this panel). Take the
     // 陷阱 font's 4 — the nearest unseen shape the fixture has — erase 艾莉賽's 100 and put it where
     // the heart numeral goes, recoloured yellow so the heart's own segmentation sees it. The atlas
     // holds instances, not a mean, so a shape it has never seen is refused; a nearest-of-{0,1,9}
     // matcher would have read this as a 1 and accepted a willpower that was never on the screen.
+    // Not reading it costs 艾莉賽's card only: her willpower is unread and the other five stand.
     const image = copyOf(await jpegImage('panel-00.jpg'));
     paint(image, { x: 838, y: 731, w: 28, h: 15 }, [54, 54, 54]);
     blitYellowGlyph(image, { x: 957, y: 941, w: 7, h: 13 }, { x: 858, y: 732 });
 
-    expect(await parseOpenerDetailed(frameOf(image, 1_000))).toEqual({ ok: false, reason: 'unreadable' });
-    expect(await parseOpener(frameOf(image, 1_000))).toBeNull();
+    const parsed = await parseOpenerDetailed(frameOf(image, 1_000));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(Number.isNaN(parsed.panel.members[0]!.willpower)).toBe(true);
+    // #4 draws no heart at all, so it is unread too; #5 and #6 keep their measured numerals.
+    expect(parsed.panel.members.slice(1).map((member) => member.willpower)).toEqual([100, 100, NaN, 90, 100]);
+  });
+
+  it('parses a panel whose hearts are all unreadable, and the policy then chooses nobody', async () => {
+    // A field that only disqualifies its own card may degrade to unread; a field every card is ranked
+    // by may not. Paint out every heart the panel draws: it is still the panel (six cards, six 陷阱
+    // pairs) and every member is ineligible, so the World asks instead of clicking a card it cannot
+    // justify.
+    const image = copyOf(await jpegImage('panel-00.jpg'));
+    for (const slot of OPENER_SLOTS) {
+      if (slot.index === 3) continue; // DragonSlayer draws no heart, so there is nothing to erase.
+      paint(image, { x: slot.rect.x1 - 70, y: slot.rect.y0 + 1, w: 67, h: 16 }, [54, 54, 54]);
+    }
+    const panel = await parseOpener(frameOf(image, 1_000));
+
+    expect(panel).not.toBeNull();
+    expect(panel!.members.map((member) => Number.isFinite(member.willpower))).toEqual([
+      false, false, false, false, false, false,
+    ]);
+    expect(chooseOpener(panel!)).toBeNull();
   });
 
   it('refuses a number whose digits are not where the numerals start', async () => {
@@ -280,6 +315,60 @@ describe('openerCardCentre', () => {
     expect(openerCardCentre(-1)).toBeNull();
     expect(openerCardCentre(6)).toBeNull();
     expect(openerCardCentre(1.5)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The fixed card slots — how a click finds a card without reading the panel
+// ---------------------------------------------------------------------------------------------
+
+describe('the fixed card slots', () => {
+  it('names the six positions the legacy script clicked, in card order', () => {
+    expect(OPENER_SLOTS.map((slot) => slot.index)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(OPENER_SLOTS.map((slot) => slot.id)).toEqual([
+      'top-left', 'top-middle', 'top-right',
+      'bottom-left', 'bottom-middle', 'bottom-right',
+    ]);
+  });
+
+  it('carries the measured box and centre of a slot, so a click needs no detection', () => {
+    // The panel does not move: the same grid in panel-00/01/02 and in the live FFXI capture.
+    expect(openerSlot(4)).toEqual({
+      index: 4,
+      id: 'bottom-middle',
+      rect: { x0: 879, y0: 853, x1: 1046, y1: 963 },
+      centre: { x: 963, y: 908 },
+    });
+    expect(openerSlot(0)!.centre).toEqual({ x: 786, y: 784 });
+    expect(openerSlot(5)!.centre).toEqual({ x: 1139, y: 908 });
+    expect(openerSlot(-1)).toBeNull();
+    expect(openerSlot(6)).toBeNull();
+    expect(openerSlot(1.5)).toBeNull();
+  });
+});
+
+describe('tapOpenerCard', () => {
+  function actuatorWith(taps: Point[]): Actuator {
+    return {
+      tap: async (at) => {
+        taps.push(at);
+        return { ok: true };
+      },
+      doubleTap: async () => ({ ok: true }),
+      holdKey: async () => ({ ok: true }),
+    };
+  }
+
+  it('taps the fixed centre of the chosen slot', async () => {
+    const taps: Point[] = [];
+    expect(await tapOpenerCard(actuatorWith(taps), 4)).toEqual({ ok: true });
+    expect(taps).toEqual([{ x: 963, y: 908 }]);
+  });
+
+  it('refuses a slot no card sits at, without tapping', async () => {
+    const taps: Point[] = [];
+    expect((await tapOpenerCard(actuatorWith(taps), 6)).ok).toBe(false);
+    expect(taps).toEqual([]);
   });
 });
 
@@ -464,20 +553,42 @@ describe('the half-tick budget', () => {
 describe('parseOpener — through the native decoder', () => {
   const WINDOWS = process.platform === 'win32';
 
-  it.skipIf(!WINDOWS)('parses panel-00 after a GDI+ decode', async () => {
+  async function gdiFrame(name: string): Promise<Frame | null> {
     const { decodeJpeg, gdiplusProblem } = await import('../src/engine/gdiplus.mjs');
-    if (gdiplusProblem() !== null) return;
-    const bytes = await readFile(new URL('panel-00.jpg', FIXTURES));
+    if (gdiplusProblem() !== '') return null;
+    const bytes = await readFile(new URL(name, FIXTURES));
     const image = await decodeJpeg(bytes);
-    const frame: Frame = {
-      atMs: 0,
-      width: image.width,
-      height: image.height,
-      toRgba: async () => image,
-    };
+    return { atMs: 0, width: image.width, height: image.height, toRgba: async () => image };
+  }
+
+  it.skipIf(!WINDOWS)('parses panel-00 after a GDI+ decode', async () => {
+    const frame = await gdiFrame('panel-00.jpg');
+    if (frame === null) return;
     const panel = await parseOpener(frame);
     expect(panel).not.toBeNull();
     expect(panel!.members).toHaveLength(6);
     expect(panel!.members[0]!.willpower).toBe(100);
+  });
+
+  it.skipIf(!WINDOWS)('parses the live FFXI panel, leaving the one card the atlas cannot read unread', async () => {
+    // The panel the live chest showed: GDI+ renders 爱丽丝's 90 below the heart atlas's identity
+    // floor, so that card is unread. The fixed grid means the card still has a click point, and the
+    // panel is not refused — the live chest becomes openable with the best card that was read.
+    const frame = await gdiFrame('panel-ffxi.jpg');
+    if (frame === null) return;
+    const parsed = await parseOpenerDetailed(frame);
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.panel.members.map((member) => member.detect)).toEqual([38, 28, 34, 93, 62, 78]);
+    expect(parsed.panel.members.map((member) => member.disarm)).toEqual([49, 50, 38, 106, 43, 81]);
+    expect(parsed.panel.members.map((member) => member.willpower).map((value) => (Number.isNaN(value) ? 'unread' : value)))
+      .toEqual([100, 100, 100, 'unread', 'unread', 100]);
+
+    // DragonSlayer (no heart) and 爱丽丝 (unreadable heart) are ineligible; 薇薇安娜DEX6 at slot 6 wins.
+    const choice = chooseOpener(parsed.panel);
+    expect(choice?.index).toBe(5);
+    expect(openerSlot(choice!.index)!.id).toBe('bottom-right');
+    expect(openerCardCentre(choice!.index)).toEqual({ x: 1_139, y: 908 });
   });
 });

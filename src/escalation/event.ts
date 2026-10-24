@@ -31,7 +31,7 @@ export function stamp(timezone: string, at: Date): string {
 export function fallbackPhrase(intent: Intent): string {
   switch (intent.kind) {
     case 'open-map': return 'opens the map';
-    case 'move': return 'walks to the nearest chest';
+    case 'move': return 'walks to the tile the map names';
     case 'open-chest': return 'tries the chest it is standing on';
     case 'fight': return 'keeps resolving the battle';
     case 'exit': return 'leaves the dungeon and restarts the route';

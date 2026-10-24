@@ -87,7 +87,14 @@ export interface MapState {
   /** The Latin floor token, e.g. 'B1F'. The localized name beside it is not read: one sample is not
    *  a reader, and a wrong title is worse than a token that only proves the floor. */
   readonly floorTitle: string;
+  /** The floor's 32-hex title fingerprint (R27a): the identifier for a floor whose title is not
+   *  Latin, and the field a task's floor gate compares. */
+  readonly titleKey: string;
   readonly player: Point;               // grid coordinates, e.g. {x:19,y:21}
+  /** The party chevron's screen point, in the frame's own pixels: the origin of the map's grid.
+   *  The canvas scrolls, so this is measured per frame; a consumer converts a grid target with
+   *  `origin + ((x−player.x)·36, −(y−player.y)·36)` and nothing re-derives the canvas. */
+  readonly origin: Point;
   readonly icons: readonly MapIcon[];
 }
 
@@ -123,6 +130,12 @@ export interface Perceiver { observe(frame: Frame): Promise<Observation>; }
 Each screen type is its own recogniser behind this interface. A `CompositePerceiver` tries them in
 order and returns the first that exceeds its confidence floor; adding a screen means adding a
 recogniser, not editing the policy.
+
+**`origin` is what makes a tile clickable.** The map's canvas scrolls, so no absolute origin is a
+constant; the chevron sits at the centre of the party's cell and is measured per frame. The
+conversion is done once, by the consumer, with `tileOnScreen(map, tile)` (`src/perception/map.ts`),
+which is the exact inverse of the transform that placed `icons`. A walk intent carries a grid cell
+(`§6`), never a screen point: the policy must not know where the canvas happens to sit.
 
 ## 4. Actuation
 

@@ -37,7 +37,7 @@ export interface FrameSource {
  *  means something is drawn and no recogniser can name it, which escalates. */
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
-  | 'chest-open' | 'chest-qte' | 'loot' | 'loading' | 'unknown';
+  | 'chest-open' | 'chest-qte' | 'loot' | 'loading' | 'chest-prompt' | 'unknown';
 
 // §3 Perception
 
@@ -49,6 +49,10 @@ export interface MapState {
   readonly floorTitle: string;          // the Latin token (`B1F`), or '' when the title is not Latin
   readonly titleKey: string;            // §3 R27a: the floor's 32-hex title fingerprint
   readonly player: Point;               // grid coordinates, e.g. {x:19,y:21}
+  /** The party chevron's screen point, in the frame's own pixels: the origin of the map's grid.
+   *  The canvas scrolls, so this is measured per frame; a consumer converts a grid target with
+   *  `origin + ((x−player.x)·36, −(y−player.y)·36)` and nothing re-derives the canvas. */
+  readonly origin: Point;
   readonly icons: readonly MapIcon[];
 }
 

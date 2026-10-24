@@ -26,7 +26,8 @@ import type {
   Point,
 } from '../src/contracts.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
-import { automoveToChest, automoveToExit, openMap } from '../src/actions/automove.ts';
+import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
+import { acceptChestPrompt, enableBattleAuto } from '../src/actions/chest.ts';
 import { routePolicy } from '../src/policy/route.ts';
 import { classify } from '../src/policy/session.ts';
 import { WvdWorld, type WvdSession } from '../src/world.ts';
@@ -160,6 +161,7 @@ const dungeonMap: Observation = {
     floorTitle: 'B1F',
     titleKey: '0001c00003e6c00003efe00003874000',
     player: { x: 19, y: 21 },
+    origin: { x: 960, y: 540 },
     icons: [
       { kind: 'chest', at: { x: 14, y: 18 } },
       { kind: 'hazard', at: { x: 10, y: 10 } },
@@ -195,8 +197,10 @@ function makeConsole(options: {
     classify,
     commands: {
       openMap: () => openMap(actuator, cfg.pressHoldMs),
-      automoveToChest: () => automoveToChest(actuator, cfg.pressHoldMs),
+      automoveToTile: (at) => automoveToTile(actuator, at, cfg.pressHoldMs),
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
+      acceptChestPrompt: () => acceptChestPrompt(actuator),
+      enableBattleAuto: () => enableBattleAuto(actuator),
     },
     openSession: options.noEngine
       ? undefined

@@ -74,7 +74,9 @@ import {
 import { sceneIsStill, sceneSignature, type SceneSignature } from './frames/stillness.ts';
 import { snapshotBlob, takeSnapshot, type SnapshotSource } from './escalation/image.ts';
 import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
-import { openerCardCentre } from './perception/chest.ts';
+import { tapOpenerCard } from './actions/opener.ts';
+import { openerCardCentre, openerSlot } from './perception/opener.ts';
+import { tileOnScreen } from './perception/map.ts';
 import { chooseOpener } from './policy/chest.ts';
 import {
   CONSOLE_GET_METHODS,
@@ -97,11 +99,16 @@ export type SessionClassifier = (
   escalateMaxPerHour: number,
 ) => SessionVerdict;
 
-/** The three key commands of `actions/automove.ts`, bound to an `Actuator` by the composition root. */
+/** The commands of `actions/automove.ts`, bound to an `Actuator` by the composition root. */
 export interface RouteCommands {
   openMap(): Promise<ActionResult>;
-  automoveToChest(): Promise<ActionResult>;
+  /** Walk to one tile of the open map: its screen point, converted from the map's grid here. */
+  automoveToTile(at: Point): Promise<ActionResult>;
   automoveToExit(): Promise<ActionResult>;
+  /** Accept the `打开` prompt of the chest the party stands at. */
+  acceptChestPrompt(): Promise<ActionResult>;
+  /** Press 倍速 then 自动 once, for the battle on screen. */
+  enableBattleAuto(): Promise<ActionResult>;
 }
 
 /** One session's collaborators: everything the loop drives, for as long as it runs. */
@@ -247,8 +254,8 @@ export const WVD_TOOL_DECLS: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
     description:
       'Answer the waiting question and let the farming loop run again. Call it once, after wvd_act and '
       + 'wvd_look have done what you want. intent is the decision for the loop; leave it out and the loop '
-      + 'reads the screen again and lets the route policy decide. "move" walks to the next chest and the '
-      + 'game chooses which chest that is — there is no tile to name. "wait" lets the loop look again. '
+      + 'reads the screen again and lets the route policy decide. "move" walks to the nearest chest the '
+      + 'last map read showed. "wait" lets the loop look again. '
       + 'The loop stays paused until this call or its own timeout, and then it takes its own fallback.',
     tags: ['flow'],
     barrierAfter: true,
@@ -279,10 +286,11 @@ export type ParsedIntent = { readonly ok: true; readonly intent: Intent | null }
 /**
  * Map `wvd_resume`'s `intent` argument onto contracts §6's closed union.
  *
- * Only `kind` — and a stop's `reason` — is read. 移动至宝箱 cannot be aimed and `wait`'s duration is
- * the loop's cadence, so the schema carries no coordinate and no duration and none is invented here.
- * The two fields contracts §6 requires anyway are filled with a placeholder the caller replaces:
- * `move`'s target comes from the loop's last map read, `wait`'s duration from nothing at all.
+ * Only `kind` — and a stop's `reason` — is read. The model names no coordinate: a cell it picked out
+ * of an image is not a cell this loop can check, and `wait`'s duration is the loop's cadence. So the
+ * schema carries neither, and the two fields contracts §6 requires anyway are filled with a
+ * placeholder the caller replaces: `move`'s target from the loop's last map read, `wait`'s duration
+ * from nothing at all.
  */
 export function parseIntent(value: unknown): ParsedIntent {
   if (value === undefined || value === null) return { ok: true, intent: null };
@@ -294,7 +302,7 @@ export function parseIntent(value: unknown): ParsedIntent {
     case 'fight':
     case 'exit':
       return { ok: true, intent: { kind: record.kind } };
-    // The game chooses the chest; the placeholder target is replaced by `#moveTarget()`.
+    // The route chooses the cell; the placeholder target is replaced by `#moveTarget()`.
     case 'move':
       return { ok: true, intent: { kind: 'move', target: { x: 0, y: 0 } } };
     // The tick cadence is the wait; contracts §6 requires a duration and nothing reads it.
@@ -323,7 +331,7 @@ export function parseIntent(value: unknown): ParsedIntent {
  * releases `open-map` is the map itself.
  */
 interface InFlight {
-  readonly kind: 'open-map' | 'move' | 'exit' | 'open-chest';
+  readonly kind: 'open-map' | 'move' | 'exit' | 'open-chest' | 'fight';
   /** The screen the key was pressed on, for the "did this key belong here" evidence. */
   readonly fromScreen: ScreenId;
   readonly sinceMs: number;
@@ -372,6 +380,8 @@ export class WvdWorld implements World {
   #task: SessionTask | null = null;
   /** Completed exit scripts this session; the loop re-enters until `cfg.cycles` is reached. */
   #cyclesDone = 0;
+  /** 倍速 + 自动 pressed for the battle currently on screen; cleared by any other screen. */
+  #battleAutoOn = false;
   #unsubscribe: (() => void) | null = null;
   #running = false;
   #starting = false;
@@ -852,6 +862,7 @@ export class WvdWorld implements World {
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
   #track(observation: Observation): void {
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
+    if (observation.screen !== 'combat') this.#battleAutoOn = false;
     if (observation.screen === 'chest-open') {
       // An unread willpower (a card that draws no heart) is not a spendable number: it is left out
       // of the budget rather than counted as zero or as a substitute, so "every member is at zero"
@@ -1266,17 +1277,27 @@ export class WvdWorld implements World {
         }
         await this.#press('open-map', fromScreen, () => this.#commands.openMap());
         return;
-      case 'move':
+      case 'move': {
         if (fromScreen !== 'dungeonmap') {
-          // L is 移動至宝箱 only on the map; anywhere else it is not the chest command, and the map
-          // has to be open before the game has a chest to walk to.
+          // The tile walk is the map's own gesture: pointer mode and a cell mean nothing anywhere
+          // else, and the map has to be open before the game has a cell to walk to.
           this.#host?.log.warn(
-            `wvd: not walking to a chest from ${fromScreen ?? 'an unknown screen'}: L is the map's command`,
+            `wvd: not walking to a tile from ${fromScreen ?? 'an unknown screen'}: the map is the surface`,
           );
           return;
         }
-        await this.#press('move', fromScreen, () => this.#commands.automoveToChest());
+        // The route names a grid cell; the chevron is the map's only absolute screen point, so the
+        // conversion happens once, here, from the map this tick read (contracts §3 `origin`).
+        const read = context?.observation ?? this.#lastObservation;
+        const map = read?.screen === 'dungeonmap' ? read.map : null;
+        if (map === null) {
+          this.#host?.log.warn('wvd: not walking to a tile: no map read to aim it from');
+          return;
+        }
+        const at = tileOnScreen(map, intent.target);
+        await this.#press('move', fromScreen, () => this.#commands.automoveToTile(at));
         return;
+      }
       case 'exit':
         if (fromScreen !== 'dungeonmap') {
           // F on the 3D view is 調査: walking to the exit needs the map, so the recovery is to open
@@ -1288,6 +1309,12 @@ export class WvdWorld implements World {
         await this.#press('exit', fromScreen, () => this.#commands.automoveToExit());
         return;
       case 'open-chest': {
+        // The chest is two screens: the 打开 prompt, then the 由谁打开? panel. The prompt is a single
+        // tap at a fixed point; the panel is a choice among cards.
+        if (fromScreen === 'chest-prompt') {
+          await this.#press('open-chest', fromScreen, () => this.#commands.acceptChestPrompt());
+          return;
+        }
         const panel = this.#lastObservation?.screen === 'chest-open' ? this.#lastObservation.opener : null;
         if (panel === null || fromScreen !== 'chest-open') {
           this.#host?.log.warn(
@@ -1317,21 +1344,31 @@ export class WvdWorld implements World {
           if (context) await this.#escalate(context.session, context.frame, context.observation, context.now);
           return;
         }
+        const slot = openerSlot(choice.index);
         const centre = openerCardCentre(choice.index);
-        if (centre === null || session === null) {
+        if (slot === null || centre === null || session === null) {
           this.#host?.log.warn(`wvd: the chosen opener ${choice.member.name} has no card to click`);
           return;
         }
         this.#openerRefusal = null;
         this.#host?.log.info(
           `wvd: opening the chest with ${choice.member.name} (陷阱解除 ${choice.member.disarm}, `
-            + `陷阱发现 ${choice.member.detect}) at ${centre.x},${centre.y}`,
+            + `陷阱发现 ${choice.member.detect}) at the ${slot.id} card, ${centre.x},${centre.y}`,
         );
-        await this.#press('open-chest', fromScreen, () => session.actuator.tap(centre));
+        await this.#press('open-chest', fromScreen, () => tapOpenerCard(session.actuator, choice.index));
         return;
       }
       case 'fight':
-        this.#host?.log.info('wvd: a battle is on screen; auto-battle is a later module');
+        // One press per battle: 倍速 then 自动. The game ignores a tap on an already-active button,
+        // so a re-press after a wave would be harmless — but a fight that never leaves `combat`
+        // must not become a tap loop, so the flag is set once and cleared by the next non-combat
+        // screen (see `#track`).
+        if (this.#battleAutoOn) {
+          this.#host?.log.info('wvd: the battle is on screen; auto and 倍速 were already pressed');
+          return;
+        }
+        this.#battleAutoOn = true;
+        await this.#press('fight', fromScreen, () => this.#commands.enableBattleAuto());
         return;
       case 'wait':
         // The tick cadence is the wait; the next tick re-perceives.
@@ -1388,7 +1425,7 @@ export class WvdWorld implements World {
    * and never retried here.
    */
   async #press(
-    kind: 'open-map' | 'move' | 'exit' | 'open-chest',
+    kind: 'open-map' | 'move' | 'exit' | 'open-chest' | 'fight',
     fromScreen: ScreenId | null,
     command: () => Promise<ActionResult>,
   ): Promise<void> {
@@ -1681,15 +1718,15 @@ export class WvdWorld implements World {
     if (!parsed.ok) return { text: `not resumed: ${parsed.detail}`, failed: true };
     const intent = parsed.intent === null || parsed.intent.kind !== 'move'
       ? parsed.intent
-      // 移动至宝箱 cannot be aimed: the game chooses the chest. The target is the nearest chest the
-      // last map read showed, because contracts §6 requires one; no executor reads it.
+      // A model names the verb, not the cell: the target is the nearest chest the last map read
+      // showed, which is the tile the pointer-mode walk is aimed at.
       : { kind: 'move' as const, target: this.#moveTarget() };
     const note = typeof args.note === 'string' ? args.note : null;
     const receipt = this.#supervisor.answer(intent, note);
     return receipt.ok ? { text: receipt.text } : { text: receipt.text, failed: true };
   }
 
-  /** The nearest chest of the last map read, or the party's own tile: never aimed at by the game. */
+  /** The nearest chest of the last map read, or the party's own tile: the cell a walk is aimed at. */
   #moveTarget(): Point {
     const read = this.#lastMapRead;
     if (read === null || read.chests.length === 0) return read?.player ?? { x: 0, y: 0 };

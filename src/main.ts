@@ -22,12 +22,15 @@ import {
   type EngineEvent,
   type Point,
 } from './contracts.ts';
-import { automoveToChest, automoveToExit, openMap } from './actions/automove.ts';
+import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
+import { acceptChestPrompt, enableBattleAuto } from './actions/chest.ts';
 import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
 import { connectEngine, startEngine, type EngineClient } from './engine/child.ts';
 import { captureJpeg, sendInput, Win32Capture } from './engine/win32.ts';
 import { ChestPerceiver } from './perception/chest.ts';
+import { CombatPerceiver } from './perception/combat.ts';
+import { ChestPromptPerceiver } from './perception/prompt.ts';
 import { CompositePerceiver } from './perception/composite.ts';
 import { HudPerceiver } from './perception/hud.ts';
 import { MapPerceiver } from './perception/map.ts';
@@ -93,6 +96,8 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
   const perceiver = new CompositePerceiver([
     { perceiver: new ChestPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new MapPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    { perceiver: new ChestPromptPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    { perceiver: new CombatPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new HudPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
   ]);
 
@@ -162,8 +167,10 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     commands: {
       // `pressHoldMs` is read per command, like every other key this World owns (§0.3).
       openMap: () => openMap(actuator, pressHoldMs()),
-      automoveToChest: () => automoveToChest(actuator, pressHoldMs()),
+      automoveToTile: (at) => automoveToTile(actuator, at, pressHoldMs()),
       automoveToExit: () => automoveToExit(actuator, pressHoldMs()),
+      acceptChestPrompt: () => acceptChestPrompt(actuator),
+      enableBattleAuto: () => enableBattleAuto(actuator),
     },
     openSession,
   });

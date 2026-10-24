@@ -27,7 +27,7 @@ function dungeonMap(confidence = CONFIDENT): Observation {
     atMs: AT,
     confidence,
     map: { floorTitle: 'B1F',
-    titleKey: '0001c00003e6c00003efe00003874000', player: { x: 20, y: 14 }, icons: [] },
+    titleKey: '0001c00003e6c00003efe00003874000', player: { x: 20, y: 14 }, origin: { x: 960, y: 540 }, icons: [] },
   };
 }
 
@@ -38,6 +38,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   dungeon: screen('dungeon'),
   dungeonmap: dungeonMap(),
   combat: { screen: 'combat', atMs: AT, confidence: CONFIDENT },
+  'chest-prompt': { screen: 'chest-prompt', atMs: AT, confidence: CONFIDENT },
   'chest-open': {
     screen: 'chest-open',
     atMs: AT,

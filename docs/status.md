@@ -4,7 +4,7 @@ Where the plan stands. The plan file is the specification of the work, not the r
 is the record, updated at each milestone, and `docs/plans/2026-10-24-wvd-world-v1.md` stays the
 authority on *what* each task requires.
 
-Last updated 2026-10-24 12:22, on `main`.
+Last updated 2026-10-24 15:20, on `main`.
 
 ## Task table
 
@@ -104,6 +104,25 @@ So two of the five screens a farm cycle needs are unnamed on these floors: **com
 a session on this floor would escalate the moment a battle starts — which it did, twice, during
 this survey.
 
+## Round 4 — the walk to a tile (2026-10-24)
+
+- **`L` is inert on the FFXI floors**, including 第三区 whose map reads three chests. It is not the
+  focus problem §3d of the guide settled: the key reaches the game and the map stays put, so no
+  route that presses `L` can move the party on the floor this World farms.
+- **Pointer mode is the movement command**: `R` (切换指针模式), a click on a walkable black tile, and
+  a click on the `自动移动` element that click raises. Measured 2026-10-24: the element sits
+  **79–84 px above the tile** (three instances), and clicking it closes the map and walks the party.
+- **`MapState.origin`** (contracts §3) publishes the chevron's screen point, and `tileOnScreen`
+  (`src/perception/map.ts`) is the grid→screen transform the icon reader already used, inverted.
+  The route still speaks grid cells; the loop converts once, in `#execute`, and the canvas is never
+  re-derived.
+- **`automoveToTile`** replaces `automoveToChest` in `src/actions/automove.ts`: `R`, the tile, the
+  element. The element is *assumed* at the measured rise, not detected — a tile that is not walkable
+  raises nothing, the confirming tap lands on the map and is ignored, and the walk simply does not
+  start. The in-flight rules already treat that as "changed nothing" and do not retry until the farm
+  advances. A detector is the upgrade if that ever costs a session.
+- The route policy is unchanged: it already named the nearest chest's cell, which is now the tile a
+  walk is aimed at rather than an advisory value nothing read.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

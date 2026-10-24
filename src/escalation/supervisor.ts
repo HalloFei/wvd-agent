@@ -284,7 +284,7 @@ export class Supervisor {
 function fallbackWord(intent: Intent): string {
   switch (intent.kind) {
     case 'open-map': return 'opened the map';
-    case 'move': return 'walked to the nearest chest';
+    case 'move': return 'walked to the tile the map named';
     case 'open-chest': return 'tried the chest it was standing on';
     case 'fight': return 'stayed in the battle';
     case 'exit': return 'leaves the dungeon and restarts the route';

@@ -465,6 +465,7 @@ function emptyScreens(): Record<ScreenId, number> {
     combat: 0,
     'chest-open': 0,
     'chest-qte': 0,
+    'chest-prompt': 0,
     loot: 0,
     loading: 0,
     unknown: 0,

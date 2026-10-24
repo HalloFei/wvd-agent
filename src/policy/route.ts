@@ -70,6 +70,10 @@ export function nextIntent(state: RouteState): Intent {
     case 'worldmap':
       // the chest module owns loot; the loop owns the world map
       return { kind: 'wait', ms: HANDOFF_MS };
+    case 'chest-prompt':
+      // The party is standing at a chest and the game is asking. Accepting is the chest step's
+      // first half; the 由谁打开? panel is its second.
+      return { kind: 'open-chest' };
     case 'chest-open':
       // The chest module owns the opener panel, and the panel is readable now (Task 12): the World
       // reads the members, chooses one and clicks that card. Not a blind click — the choice comes from
