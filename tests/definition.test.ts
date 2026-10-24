@@ -8,6 +8,7 @@ import { EXTENSION_API_VERSIONS, parseExtensionManifest, type ExtensionPackageJs
 import { WVD_CONFIG_GROUP, WVD_DEFAULTS } from '../src/config.ts';
 import type { Actuator, Frame, FrameSource, ScreenId } from '../src/contracts.ts';
 import { WVD_DEFINITION } from '../src/definition.ts';
+import { MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH } from '../src/engine/protocol.ts';
 import WVD_DEFAULT from '../src/index.ts';
 import { WVD_TOOL_DECLS, WvdWorld } from '../src/world.ts';
 
@@ -113,6 +114,10 @@ describe('WVD World definition', () => {
     expect(properties['worlds.wvd.jpegQuality']).toMatchObject({ type: 'integer', minimum: 30, maximum: 95 });
     expect(properties['worlds.wvd.pressHoldMs']).toMatchObject({ type: 'integer', minimum: 40, maximum: 500 });
     expect(properties['worlds.wvd.rerollLeadRatio']).toMatchObject({ type: 'number', minimum: 0, maximum: 1 });
+    // the snapshot width is the one value the child refuses outside the wire bounds; the schema is
+    // where a bad setting is caught, not a 5 s engine timeout that never names the field
+    expect(properties['worlds.wvd.escalationImageWidth'])
+      .toMatchObject({ type: 'integer', minimum: MIN_CAPTURE_WIDTH, maximum: MAX_CAPTURE_WIDTH });
     expect(WVD_DEFAULTS).toMatchObject({
       enabled: false, dryRun: false, tickMs: 100, sessionMaxMinutes: 120, stallStopSeconds: 120,
       gameWindowTitle: 'WizardryVariantsDaphne', jpegQuality: 75, engineTimeoutMs: 5000, pressHoldMs: 60, escalationImageWidth: 1280,

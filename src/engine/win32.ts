@@ -18,6 +18,8 @@ import type {
 import { decodeJpeg } from './gdiplus.mjs';
 import {
   isStaleFrame,
+  MAX_CAPTURE_WIDTH,
+  MIN_CAPTURE_WIDTH,
   type EngineCapture,
   type EngineForeground,
   type EngineInputAck,
@@ -154,8 +156,17 @@ export interface CapturedJpeg {
  *
  * A failure is the same `EngineCaptureError` the plain capture throws: the caller decides whether a
  * question without an image is still worth asking (it is — the text carries the perception line).
+ * An out-of-range `maxWidth` is refused here, before the wire: the codec would drop the line as
+ * malformed (its convention for `tap`/`key`), the child would send no reply, and the World would
+ * wait out `engineTimeoutMs` without ever naming the field.
  */
 export async function captureJpeg(engine: EngineRequester, maxWidth?: number): Promise<CapturedJpeg> {
+  if (
+    maxWidth !== undefined
+    && (!Number.isInteger(maxWidth) || maxWidth < MIN_CAPTURE_WIDTH || maxWidth > MAX_CAPTURE_WIDTH)
+  ) {
+    throw new EngineCaptureError('rejected', 'maxWidth-out-of-range');
+  }
   const reply = await engine.request(maxWidth === undefined ? { op: 'capture' } : { op: 'capture', maxWidth });
   if (!reply.ok) throw new EngineCaptureError(reply.error, reply.detail);
   const { jpeg: base64, width, height, ageMs } = captureValue(reply.value);

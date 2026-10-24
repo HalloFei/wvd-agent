@@ -16,7 +16,7 @@ import {
 } from '../src/engine/protocol.ts';
 import { connectEngine, startEngine } from '../src/engine/child.ts';
 import { parseHotkey } from '../src/engine/hotkey.mjs';
-import { sendInput, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
+import { captureJpeg, sendInput, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
 
 /** An engine that records what it was asked and answers from a script. */
 class FakeEngine implements EngineRequester {
@@ -93,6 +93,39 @@ describe('engine protocol', () => {
     expect(decoder.push(wire.slice(cut)).map((line) => decodeLine(line))).toEqual([
       { request: { id: 1, request: { op: 'capture' } } },
       { request: { id: 2, request: { op: 'foreground' } } },
+    ]);
+  });
+});
+
+describe('escalation snapshot width', () => {
+  const CAPTURE = { jpeg: 'AA==', width: 2, height: 1, ageMs: 0 } as const;
+
+  it('rejects an out-of-range maxWidth before the wire, naming the field', async () => {
+    const engine = new FakeEngine({ id: 1, ok: true, value: CAPTURE });
+
+    for (const maxWidth of [MIN_CAPTURE_WIDTH - 1, MAX_CAPTURE_WIDTH + 1, 0, -640, 1280.5, Number.NaN]) {
+      await expect(captureJpeg(engine, maxWidth), String(maxWidth)).rejects.toMatchObject({
+        name: 'EngineCaptureError',
+        reason: 'rejected',
+        detail: 'maxWidth-out-of-range',
+      });
+    }
+    // a bad value never reaches the child, where the codec would drop the line and the reply would
+    // never come: the World would wait out engineTimeoutMs and never learn why
+    expect(engine.seen).toEqual([]);
+  });
+
+  it('sends the bounds and the absent/native request unchanged', async () => {
+    const engine = new FakeEngine({ id: 1, ok: true, value: CAPTURE });
+
+    await captureJpeg(engine, MIN_CAPTURE_WIDTH);
+    await captureJpeg(engine, MAX_CAPTURE_WIDTH);
+    await captureJpeg(engine);
+
+    expect(engine.seen).toEqual([
+      { op: 'capture', maxWidth: MIN_CAPTURE_WIDTH },
+      { op: 'capture', maxWidth: MAX_CAPTURE_WIDTH },
+      { op: 'capture' },
     ]);
   });
 });

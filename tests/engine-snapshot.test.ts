@@ -15,6 +15,45 @@ function quadrants(width: number, height: number): Uint8Array {
   return data;
 }
 
+/** The worker, plus a queue that keeps messages in order and a `frame` helper that waits for one. */
+function openWorker() {
+  const { port1, port2 } = new MessageChannel();
+  const worker = new Worker(new URL('../src/engine/jpeg-worker.mjs', import.meta.url), {
+    workerData: { quality: 80, forceJpegJs: true, port: port2 },
+    transferList: [port2],
+  });
+  const queue: Array<Record<string, unknown>> = [];
+  let wake: (() => void) | null = null;
+  worker.on('message', (message) => {
+    queue.push(message);
+    wake?.();
+    wake = null;
+  });
+  const take = async (): Promise<Record<string, unknown>> => {
+    while (queue.length === 0) await new Promise<void>((resolve) => { wake = resolve; });
+    return queue.shift()!;
+  };
+  const frame = async (seq: number): Promise<Record<string, unknown>> => {
+    const pixels = quadrants(192, 108);
+    port1.postMessage({ seq, pixels: pixels.buffer, width: 192, height: 108, capturedAt: seq }, [pixels.buffer as ArrayBuffer]);
+    for (;;) {
+      const message = await take();
+      if (message.kind === 'frame' && message.seq === seq) return message;
+    }
+  };
+  const ready = async () => {
+    for (;;) {
+      const message = await take();
+      if (message.kind === 'ready') return message;
+    }
+  };
+  const close = () => {
+    worker.terminate();
+    port1.close();
+  };
+  return { worker, queue, take, frame, ready, close };
+}
+
 /**
  * The encoder worker's snapshot path, without a window and without GDI+ (jpeg-js is forced, which the
  * worker already reports as a fallback): the loop's frames stay native, and only the frame a
@@ -22,40 +61,9 @@ function quadrants(width: number, height: number): Uint8Array {
  */
 describe('encoder worker snapshot path', () => {
   it('scales exactly the frame a snapshot asked for and reports the size it encoded', async () => {
-    const { port1, port2 } = new MessageChannel();
-    const worker = new Worker(new URL('../src/engine/jpeg-worker.mjs', import.meta.url), {
-      workerData: { quality: 80, forceJpegJs: true, port: port2 },
-      transferList: [port2],
-    });
-    const queue: Array<Record<string, unknown>> = [];
-    let wake: (() => void) | null = null;
-    worker.on('message', (message) => {
-      queue.push(message);
-      wake?.();
-      wake = null;
-    });
-    const take = async (): Promise<Record<string, unknown>> => {
-      while (queue.length === 0) await new Promise<void>((resolve) => { wake = resolve; });
-      return queue.shift()!;
-    };
-    const frame = async (seq: number): Promise<Record<string, unknown>> => {
-      const pixels = quadrants(192, 108);
-      port1.postMessage({ seq, pixels: pixels.buffer, width: 192, height: 108, capturedAt: seq }, [pixels.buffer as ArrayBuffer]);
-      for (;;) {
-        const message = await take();
-        if (message.kind === 'frame' && message.seq === seq) return message;
-      }
-    };
-
+    const { worker, queue, take, frame, ready, close } = openWorker();
     try {
-      const preamble: Array<Record<string, unknown>> = [];
-      for (;;) {
-        const message = await take();
-        preamble.push(message);
-        if (message.kind === 'ready') break;
-      }
-      expect(preamble).toContainEqual({ kind: 'problem', detail: 'native-encoder-unavailable' });
-      expect(preamble).toContainEqual({ kind: 'ready', role: 'encoder', gdiplus: false });
+      expect(await ready()).toMatchObject({ kind: 'ready', role: 'encoder', gdiplus: false });
 
       // the perception path: no snapshot pending, no scaling
       const nativeFirst = await frame(1);
@@ -69,7 +77,7 @@ describe('encoder worker snapshot path', () => {
       const nativeSecond = await frame(2);
       expect(nativeSecond.width).toBe(192);
       const snapshot = await take();
-      expect(snapshot).toMatchObject({ kind: 'snapshot', snapshotId: 7, width: 96, height: 54, capturedAt: 2 });
+      expect(snapshot).toMatchObject({ kind: 'snapshot', snapshotId: 7, seq: 2, width: 96, height: 54, capturedAt: 2 });
       const decoded = jpeg.decode(Buffer.from(snapshot.jpeg as Uint8Array), { useTArray: true, formatAsRGBA: true });
       expect(decoded.width).toBe(96);
       expect(decoded.height).toBe(54);
@@ -81,8 +89,25 @@ describe('encoder worker snapshot path', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(queue.filter((message) => message.kind === 'snapshot')).toHaveLength(0);
     } finally {
-      worker.terminate();
-      port1.close();
+      close();
+    }
+  }, 20000);
+
+  it('drops a snapshot directive when the request that wanted it timed out', async () => {
+    const { worker, queue, frame, ready, close } = openWorker();
+    try {
+      await ready();
+      worker.postMessage({ op: 'snapshot', snapshotId: 9, maxWidth: 64 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // the child's timeout cancels the directive before any frame arrives
+      worker.postMessage({ op: 'snapshot', snapshotId: null });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect((await frame(1)).width).toBe(192);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(queue.filter((message) => message.kind === 'snapshot')).toHaveLength(0);
+    } finally {
+      close();
     }
   }, 20000);
 });

@@ -4,7 +4,7 @@ Where the plan stands. The plan file is the specification of the work, not the r
 is the record, updated at each milestone, and `docs/plans/2026-10-24-wvd-world-v1.md` stays the
 authority on *what* each task requires.
 
-Last updated 2026-10-24 12:10, on `main`.
+Last updated 2026-10-24 12:22, on `main`.
 
 ## Task table
 
@@ -22,7 +22,7 @@ Last updated 2026-10-24 12:10, on `main`.
 | 10 | The loop and the composition root | done, final fix wave reviewed clean | `b7ad52b`, `2cff58c`, `61b341b` |
 | 11 | Recognise the 3D view | done, reviewed clean | `2be0357`, `6df13ff` |
 
-226 tests across 16 files, `pnpm typecheck` clean.
+236 tests across 18 files, `pnpm typecheck` clean.
 
 ## What runs
 

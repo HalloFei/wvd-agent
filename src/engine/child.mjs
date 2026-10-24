@@ -21,6 +21,7 @@
 import { MessageChannel, Worker } from 'node:worker_threads';
 import { inputAcknowledgement } from './gestures.mjs';
 import { decodeLine, encodeEvent, encodeReply, isStaleFrame, LineDecoder } from './protocol.mjs';
+import { createSnapshotRequests, SnapshotFailed } from './snapshot.mjs';
 import * as win32 from './win32-native.mjs';
 
 /** A failure the child can name; anything else becomes `unavailable` with its message. */
@@ -56,12 +57,11 @@ let stopping = false;
 let latest = null; // { jpeg: Buffer, width, height, capturedAt }
 
 /**
- * The one `capture { maxWidth }` waiting for a downscaled frame. Requests are serialized by the
- * queue, so one slot is enough. A render that never delivers one is a `timeout`, not a hung reply.
+ * How long one `capture { maxWidth }` may wait for the encoder's downscaled frame. The World's own
+ * request timeout (5 s) is longer, so a render that stops delivering is this child's named `timeout`
+ * rather than a reply that never comes.
  */
 const SNAPSHOT_WAIT_MS = 1000;
-let pendingSnapshot = null; // { snapshotId, resolve, reject, timer }
-let nextSnapshotId = 0;
 
 // The first capture request ever waits for the render threads to produce a frame (bounded), so
 // startup is not a spurious `timeout`. The timer is cleared when the frame wins, and later requests
@@ -90,6 +90,12 @@ const encoderWorker = new Worker(new URL('./jpeg-worker.mjs', import.meta.url), 
   transferList: [channel.port2],
 });
 
+/** The waiters for downscaled snapshots; the encoder's snapshot replies settle them by id. */
+const snapshots = createSnapshotRequests({
+  send: (message) => encoderWorker.postMessage(message),
+  timeoutMs: SNAPSHOT_WAIT_MS,
+});
+
 function onWorkerMessage(message) {
   if (!message) return;
   switch (message.kind) {
@@ -108,27 +114,13 @@ function onWorkerMessage(message) {
     case 'problem':
       write(encodeEvent({ kind: 'engineProblem', detail: message.detail }));
       return;
-    case 'snapshot': {
-      const pending = pendingSnapshot;
-      if (!pending || pending.snapshotId !== message.snapshotId) return; // a reply for a timed-out request
-      pendingSnapshot = null;
-      clearTimeout(pending.timer);
-      pending.resolve({
-        jpeg: Buffer.from(message.jpeg),
-        width: message.width,
-        height: message.height,
-        capturedAt: message.capturedAt,
-      });
+    case 'snapshot':
+      // the worker's Buffer arrives as a Uint8Array after the structured clone; the reply needs a Buffer
+      snapshots.settle({ ...message, jpeg: Buffer.from(message.jpeg) });
       return;
-    }
-    case 'snapshot-problem': {
-      const pending = pendingSnapshot;
-      if (!pending || pending.snapshotId !== message.snapshotId) return;
-      pendingSnapshot = null;
-      clearTimeout(pending.timer);
-      pending.reject(new EngineFailure('unavailable', 'snapshot-failed'));
+    case 'snapshot-problem':
+      snapshots.fail(message);
       return;
-    }
     case 'log':
       log(message.message);
       return;
@@ -187,24 +179,6 @@ function requireWindow() {
   return hwnd;
 }
 
-/**
- * Asks the encoder thread for one downscaled JPEG. The next frame is scaled before it is encoded,
- * and the reply describes that JPEG's size — never the window's. A render that stops delivering is a
- * named timeout; a late snapshot is dropped by its id.
- */
-function encodeSnapshot(maxWidth) {
-  return new Promise((resolve, reject) => {
-    const snapshotId = ++nextSnapshotId;
-    const timer = setTimeout(() => {
-      if (pendingSnapshot?.snapshotId !== snapshotId) return;
-      pendingSnapshot = null;
-      reject(new EngineFailure('timeout', 'snapshot-timeout'));
-    }, SNAPSHOT_WAIT_MS);
-    pendingSnapshot = { snapshotId, resolve, reject, timer };
-    encoderWorker.postMessage({ op: 'snapshot', snapshotId, maxWidth });
-  });
-}
-
 async function dispatch(request, receivedAt) {
   switch (request.op) {
     case 'foreground': {
@@ -220,11 +194,19 @@ async function dispatch(request, receivedAt) {
         await warmup;
       }
       if (!latest) throw new EngineFailure('timeout', 'no-frame');
+      let frame = latest;
       // a request at or above the native width is already satisfied by the newest frame; only a
       // genuinely smaller snapshot asks the encoder to scale (the perception path never does)
-      const frame = request.maxWidth !== undefined && request.maxWidth < latest.width
-        ? await encodeSnapshot(request.maxWidth)
-        : latest;
+      if (request.maxWidth !== undefined && request.maxWidth < latest.width) {
+        try {
+          frame = await snapshots.request(request.maxWidth);
+        } catch (error) {
+          // the encoder could not scale it: the native frame already held is still worth sending,
+          // and its size describes its own JPEG. A timeout still fails: the render is not delivering.
+          if (!(error instanceof SnapshotFailed)) throw new EngineFailure('timeout', 'snapshot-timeout');
+          frame = latest;
+        }
+      }
       const ageMs = performance.now() - frame.capturedAt;
       if (isStaleFrame(ageMs)) throw new EngineFailure('timeout', 'stale-frame');
       return { jpeg: frame.jpeg.toString('base64'), width: frame.width, height: frame.height, ageMs };
@@ -282,6 +264,8 @@ function shutdown(code) {
   if (stopping) return;
   stopping = true;
   clearInterval(pump);
+  // a capture waiting on a downscaled frame must not eat the teardown grace: settle it now
+  snapshots.cancelAll();
   try {
     // holdKey cancellation: a key or button still down is released before the process goes away
     win32.releaseHeld();

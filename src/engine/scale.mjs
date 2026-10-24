@@ -29,9 +29,10 @@ export function scaledSize(width, height, maxWidth) {
 }
 
 /**
- * A box filter: every target pixel averages the source pixels its box covers. Source columns and rows
- * are integer ranges that tile the frame, so a non-integer reduction ratio never samples half a pixel
- * twice and an odd source width is not smeared by one.
+ * A box filter: every target pixel averages the source pixels its box covers. The box edges are
+ * rounded, so adjacent boxes share an edge and the integer ranges tile the source exactly — a
+ * non-integer reduction ratio covers every column and row once, never twice, and the answer at a
+ * hard boundary is the true average of the two sides rather than a half-pixel smear.
  *
  * Returns `{ pixels, width, height }`; when the request does not shrink the frame (a too-large
  * `maxWidth`, or an exact match) the source buffer is returned as-is, so nothing is copied.
@@ -47,12 +48,14 @@ export function scaleBgra(bgra, width, height, maxWidth) {
   const y0 = new Uint32Array(targetHeight);
   const y1 = new Uint32Array(targetHeight);
   for (let x = 0; x < targetWidth; x++) {
-    x0[x] = Math.floor((x * width) / targetWidth);
-    x1[x] = Math.max(x0[x] + 1, Math.ceil(((x + 1) * width) / targetWidth));
+    x0[x] = Math.round((x * width) / targetWidth);
+    x1[x] = Math.round(((x + 1) * width) / targetWidth);
+    if (x1[x] <= x0[x]) x1[x] = Math.min(width, x0[x] + 1); // empty box: never happens while downscaling
   }
   for (let y = 0; y < targetHeight; y++) {
-    y0[y] = Math.floor((y * height) / targetHeight);
-    y1[y] = Math.max(y0[y] + 1, Math.ceil(((y + 1) * height) / targetHeight));
+    y0[y] = Math.round((y * height) / targetHeight);
+    y1[y] = Math.round(((y + 1) * height) / targetHeight);
+    if (y1[y] <= y0[y]) y1[y] = Math.min(height, y0[y] + 1);
   }
 
   for (let ty = 0; ty < targetHeight; ty++) {

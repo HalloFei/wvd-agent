@@ -84,7 +84,33 @@ describe('snapshot downscaler', () => {
     const boundary = pixelAt(scaled.pixels, 1280, 639, 0);
     expect(boundary[0]).toBeGreaterThan(0); // some blue
     expect(boundary[2]).toBeGreaterThan(0); // some red
-    expect(boundary[0] + boundary[2]).toBe(255); // and nothing invented
+    // the box splits 959/960 exactly, so the two channels differ by at most the odd rounding unit
+    expect(Math.abs(boundary[0] - boundary[2])).toBeLessThanOrEqual(1);
+    expect(boundary[0] + boundary[2]).toBeGreaterThanOrEqual(254);
+    expect(boundary[0] + boundary[2]).toBeLessThanOrEqual(256);
+  });
+
+  it('tiles a non-integer reduction exactly, with no column or row counted twice', () => {
+    // 11 -> 5: the box boundaries land on 0,2,4,7,9,11; a floor/ceil filter would double-count the
+    // shared columns and answer 10,30,50,70,90 instead of 5,25,50,75,95
+    const width = 11;
+    const source = new Uint8Array(width * width * 4);
+    for (let y = 0; y < width; y++) {
+      for (let x = 0; x < width; x++) {
+        source.set([x * 10, y * 10, 0, 255], (y * width + x) * 4);
+      }
+    }
+
+    const scaled = scaleBgra(source, width, width, 5);
+
+    expect(scaled.width).toBe(5);
+    expect(scaled.height).toBe(5);
+    const columnMeans = [5, 25, 50, 75, 95];
+    for (let y = 0; y < 5; y++) {
+      for (let x = 0; x < 5; x++) {
+        expect(pixelAt(scaled.pixels, 5, x, y), `pixel ${x},${y}`).toEqual([columnMeans[x], columnMeans[y], 0, 255]);
+      }
+    }
   });
 
   it('returns the source untouched when the request is too large to apply', () => {

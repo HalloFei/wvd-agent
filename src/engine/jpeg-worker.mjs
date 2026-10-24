@@ -25,8 +25,12 @@ const frames = workerData.port;
 
 let encoder = null;
 let reportedFallback = false;
-/** The one downscaled snapshot waiting for the next frame; the protocol thread serializes requests. */
-let pendingSnapshot = null;
+/**
+ * Downscaled snapshots waiting for a frame. One directive is consumed per frame; the protocol thread
+ * serializes capture requests, but a queue rather than a slot means a slow reply cannot overwrite a
+ * second request. A `snapshotId: null` directive clears the queue (a timed-out request cancelling).
+ */
+const pendingSnapshots = [];
 
 function reportFallback(detail) {
   if (reportedFallback) return;
@@ -73,11 +77,14 @@ function encodeFrame(bgra, width, height) {
   return jpegJs(bgra, width, height);
 }
 
-/** The protocol thread asked for one downscaled JPEG of the next frame. */
+/** The protocol thread asked for a downscaled JPEG of a following frame, or cancelled one. */
 parentPort.on('message', (message) => {
-  if (message && message.op === 'snapshot') {
-    pendingSnapshot = { snapshotId: message.snapshotId, maxWidth: message.maxWidth };
+  if (!message || message.op !== 'snapshot') return;
+  if (message.snapshotId === null || message.snapshotId === undefined) {
+    pendingSnapshots.length = 0; // the request timed out: do not scale a frame nobody will read
+    return;
   }
+  pendingSnapshots.push({ snapshotId: message.snapshotId, maxWidth: message.maxWidth });
 });
 
 frames.on('message', (message) => {
@@ -92,9 +99,8 @@ frames.on('message', (message) => {
 
   // The snapshot is scaled from the same BGRA the loop's frame just used, before the buffer goes
   // back to the capture worker. A snapshot is the only thing that ever pays this cost.
-  if (pendingSnapshot) {
-    const request = pendingSnapshot;
-    pendingSnapshot = null;
+  const request = pendingSnapshots.shift();
+  if (request) {
     try {
       const scaleStarted = performance.now();
       const scaled = scaleBgra(bgra, width, height, request.maxWidth);
@@ -105,6 +111,7 @@ frames.on('message', (message) => {
       parentPort.postMessage({
         kind: 'snapshot',
         snapshotId: request.snapshotId,
+        seq,
         jpeg: scaledBytes,
         width: scaled.width,
         height: scaled.height,

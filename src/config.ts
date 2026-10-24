@@ -1,6 +1,7 @@
 /** Config section `worlds.wvd`, its defaults and the console config group (contracts §8). */
 import type { ConfigGroup } from 'cortico/core/config-schema.ts';
 import type { WorldSection } from 'cortico/world.ts';
+import { MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH } from './engine/protocol.ts';
 
 export const WVD_ID = 'wvd';
 
@@ -107,6 +108,7 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.wvd.escalationImageWidth': {
         type: 'integer', title: '升级图像宽度', description: '发给模型前把帧缩到的宽度，像素。',
+        minimum: MIN_CAPTURE_WIDTH, maximum: MAX_CAPTURE_WIDTH,
       },
       'worlds.wvd.mapOpenTimeoutMs': {
         type: 'integer', title: '地图打开超时', description: '点击小地图后等待地图出现，毫秒。',
