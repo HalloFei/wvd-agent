@@ -16,6 +16,7 @@ import {
   type TaskDefinition,
   type TaskScript,
 } from '../contracts.ts';
+import { travelTo } from '../actions/worldmap.ts';
 import { runSteps, TASK_KEYS } from './steps.ts';
 
 export interface TaskRunnerDeps {
@@ -35,20 +36,26 @@ const MAP_CLOSE_SETTLE_MS = 400;
 export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
   const controller = new AbortController();
 
-  const env = (): ScriptEnv => ({
-    actuator: deps.actuator,
-    capture: () => deps.source.capture(),
-    observe: (frame) => deps.perceiver.observe(frame),
-    sleep: (ms: number) => new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      controller.signal.addEventListener('abort', () => {
-        clearTimeout(timer);
-        resolve();
-      }, { once: true });
-    }),
-    abort: controller.signal,
-    log: deps.log,
-  });
+  const env = (): ScriptEnv => {
+    const shared = {
+      actuator: deps.actuator,
+      capture: () => deps.source.capture(),
+      observe: (frame: Parameters<Perceiver['observe']>[0]) => deps.perceiver.observe(frame),
+      sleep: (ms: number) => new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        controller.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve();
+        }, { once: true });
+      }),
+      abort: controller.signal,
+      log: deps.log,
+    };
+    return {
+      ...shared,
+      travel: (to: string) => travelTo(to, { ...shared, now: () => Date.now() }),
+    };
+  };
 
   const screenScan = async (): Promise<string> => {
     const frame = await deps.source.capture();

@@ -1,16 +1,13 @@
 {
   "id": "ffxi-4f",
   "label": "[Chest] FFXI 4F",
-  "floor": { "titleKey": "000000007f3ffe007f7efe00220ba600" },
+  "floor": { "titleKey": "0c0280000d6ff0000d7ffc0008c37000" },
   "entry": {
-    "timeoutMs": 120000,
+    "timeoutMs": 180000,
     "steps": [
-      { "op": "tap", "at": [1200, 1030] },
-      { "op": "wait", "ms": 2500 },
-      { "op": "tap", "at": [1051, 388] },
-      { "op": "wait", "ms": 4000 },
+      { "op": "expect", "screen": "town", "timeoutMs": 20000 },
+      { "op": "travel", "to": "ffxi-gcn" },
       { "op": "tap", "at": [1082, 520] },
-      { "op": "wait", "ms": 15000 },
       { "op": "expect", "screen": "dungeon", "timeoutMs": 45000 },
       { "op": "tap", "at": [1849, 110] },
       { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },

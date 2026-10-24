@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SCAN } from '../src/actions/automove.ts';
 import { DISARM_SCAN } from '../src/actions/chest.ts';
 import type {
-  ActionResult, Actuator, Frame, Observation, Perceiver, ScriptEnv, TaskDefinition, TaskScript,
+  ActionResult, Actuator, Frame, Observation, Perceiver, ScriptEnv, TaskDefinition, TaskScript, TravelOutcome,
 } from '../src/contracts.ts';
 import { createTaskPolicy } from '../src/tasks/policy.ts';
 import { createTaskRunner } from '../src/tasks/runner.ts';
@@ -25,12 +25,13 @@ const mapObservation = (titleKey = 'k'.repeat(32)): Observation => ({
 
 const screen = (id: Observation['screen']): Observation => ({ screen: id, atMs: 0, confidence: 0.9 } as Observation);
 
-interface Recorder { calls: string[]; tapResult: ActionResult; keyResult: ActionResult }
+interface Recorder { calls: string[]; tapResult: ActionResult; keyResult: ActionResult; travelResult: TravelOutcome }
 
 function makeEnv(options: {
   observations?: Observation[];
   tapResult?: ActionResult;
   keyResult?: ActionResult;
+  travelResult?: TravelOutcome;
   capture?: () => Promise<Frame>;
   abort?: AbortSignal;
 } = {}): { env: ScriptEnv; recorder: Recorder } {
@@ -38,6 +39,7 @@ function makeEnv(options: {
     calls: [],
     tapResult: options.tapResult ?? { ok: true },
     keyResult: options.keyResult ?? { ok: true },
+    travelResult: options.travelResult ?? { ok: true },
   };
   const queue = options.observations !== undefined ? [...options.observations] : [screen('dungeon')];
   const observe = async (): Promise<Observation> => (queue.length > 1 ? queue.shift()! : queue[0]!);
@@ -66,6 +68,10 @@ function makeEnv(options: {
     sleep: async () => {},
     abort: options.abort ?? new AbortController().signal,
     log: () => {},
+    travel: async (to) => {
+      recorder.calls.push(`travel ${to}`);
+      return recorder.travelResult;
+    },
   };
   return { env, recorder };
 }
@@ -83,6 +89,22 @@ describe('runSteps', () => {
 
     expect(result.ok).toBe(true);
     expect(recorder.calls).toEqual(['tap 10,20', 'key 34 60', 'double 30,40']);
+  });
+
+  it('runs a travel step through the env and stops at its index on failure', async () => {
+    const { env, recorder } = makeEnv();
+    const passed = await runSteps(script([{ op: 'travel', to: 'vnh' }]), env, 'k'.repeat(32));
+    expect(passed.ok).toBe(true);
+    expect(recorder.calls).toEqual(['travel vnh']);
+
+    const failing = makeEnv({ travelResult: { ok: false, reason: 'location-not-found', detail: 'not in view' } });
+    const result = await runSteps(script([{ op: 'tap', at: [1, 2] }, { op: 'travel', to: 'vnh' }]), failing.env, 'k'.repeat(32));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.step).toBe(1);
+      expect(result.reason).toBe('location-not-found');
+      expect(result.detail).toBe('not in view');
+    }
   });
 
   it('agrees with the automove table on the keys it shares', () => {

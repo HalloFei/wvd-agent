@@ -42,9 +42,10 @@ const STEP_FIELDS: Record<TaskStep['op'], readonly string[]> = {
   wait: ['op', 'ms'],
   expect: ['op', 'screen', 'timeoutMs'],
   expectFloor: ['op', 'timeoutMs'],
+  travel: ['op', 'to'],
 };
 
-function parseStep(raw: unknown, index: number): TaskStep | Problem {
+function parseStep(raw: unknown, index: number, knownLocations?: ReadonlySet<string>): TaskStep | Problem {
   const where = `steps[${index}]`;
   if (!isObject(raw)) return problem('not-an-object', where);
   const op = raw.op;
@@ -90,6 +91,13 @@ function parseStep(raw: unknown, index: number): TaskStep | Problem {
       ? { op, screen: raw.screen as ScreenId }
       : { op, screen: raw.screen as ScreenId, timeoutMs: timeoutMs as number };
   }
+  if (op === 'travel') {
+    if (typeof raw.to !== 'string' || raw.to.length === 0) return problem('missing-field', `${where}: to`);
+    if (knownLocations !== undefined && !knownLocations.has(raw.to)) {
+      return problem('unknown-location', `${where}: ${raw.to}`);
+    }
+    return { op, to: raw.to };
+  }
   // expectFloor
   const timeoutMs = raw.timeoutMs;
   if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || (timeoutMs as number) < 1)) {
@@ -98,7 +106,7 @@ function parseStep(raw: unknown, index: number): TaskStep | Problem {
   return timeoutMs === undefined ? { op: 'expectFloor' } : { op: 'expectFloor', timeoutMs: timeoutMs as number };
 }
 
-function parseScript(raw: unknown, name: string): TaskScript | Problem {
+function parseScript(raw: unknown, name: string, knownLocations?: ReadonlySet<string>): TaskScript | Problem {
   if (!isObject(raw)) return problem('missing-field', name);
   for (const field of Object.keys(raw)) {
     if (field !== 'timeoutMs' && field !== 'steps') return problem('unknown-field', `${name}: ${field}`);
@@ -108,7 +116,7 @@ function parseScript(raw: unknown, name: string): TaskScript | Problem {
   if (!Array.isArray(raw.steps) || raw.steps.length === 0) return problem('missing-field', `${name}: steps`);
   const steps: TaskStep[] = [];
   for (let index = 0; index < raw.steps.length; index += 1) {
-    const step = parseStep(raw.steps[index], index);
+    const step = parseStep(raw.steps[index], index, knownLocations);
     if (!('op' in step)) {
       return step.detail === undefined
         ? problem(step.reason, name)
@@ -123,7 +131,7 @@ function parseScript(raw: unknown, name: string): TaskScript | Problem {
  * Parse and validate one task file. `text` is the file as written; JSON syntax is checked here so
  * a caller never has to catch.
  */
-export function parseTask(text: string): TaskLoad {
+export function parseTask(text: string, knownLocations?: ReadonlySet<string>): TaskLoad {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -142,9 +150,9 @@ export function parseTask(text: string): TaskLoad {
     return problem('bad-title-key', 'floor.titleKey');
   }
 
-  const entry = parseScript(raw.entry, 'entry');
+  const entry = parseScript(raw.entry, 'entry', knownLocations);
   if (!('steps' in entry)) return entry;
-  const exit = raw.exit === undefined ? undefined : parseScript(raw.exit, 'exit');
+  const exit = raw.exit === undefined ? undefined : parseScript(raw.exit, 'exit', knownLocations);
   if (exit !== undefined && !('steps' in exit)) return exit;
 
   const task: TaskDefinition = {

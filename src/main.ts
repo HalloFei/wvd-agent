@@ -34,6 +34,8 @@ import { CombatPerceiver } from './perception/combat.ts';
 import { ChestPromptPerceiver } from './perception/prompt.ts';
 import { CompositePerceiver } from './perception/composite.ts';
 import { HudPerceiver } from './perception/hud.ts';
+import { TownPerceiver, WorldMapPerceiver } from './perception/location.ts';
+import { TRAVEL_IDS } from './perception/locations.ts';
 import { MapPerceiver } from './perception/map.ts';
 import { routePolicy } from './policy/route.ts';
 import { createTaskPolicy } from './tasks/policy.ts';
@@ -102,6 +104,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     { perceiver: new ChestPromptPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new CombatPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new HudPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    // The HUD refuses both of these at 0.2; they run last so a dungeon frame never pays for them.
+    { perceiver: new WorldMapPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    { perceiver: new TownPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
   ]);
 
   const openSession = async (): Promise<SessionOpen> => {
@@ -117,7 +122,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       } catch {
         return { ok: false, reason: 'task-file-invalid', detail: `cannot read ${path}` };
       }
-      const parsed = parseTask(text);
+      const parsed = parseTask(text, TRAVEL_IDS);
       if (parsed.ok === false) {
         return { ok: false, reason: 'task-file-invalid', detail: `${path}: ${parsed.reason}${parsed.detail ? ` (${parsed.detail})` : ''}` };
       }

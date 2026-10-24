@@ -410,3 +410,85 @@ replaces the default with a note in the commit that changes it.
 | `QteState`, `planTap` | §3, §7 | Task 6 (`src/policy/qte.ts`) |
 | `FarmPolicy`, `Intent` | §6 | Task 7 (`src/policy/route.ts`) |
 | `SessionVerdict` | §6 | Task 8 (`src/policy/session.ts`) |
+
+## 10. Farm tasks
+
+The task file design (`2026-10-24-task-file-design.md`) owns the rationale; this section is the
+binding shape. A task file declares where to farm and what script gets the party there and back; the
+World knows only `enter`, `runScript` and `abort`.
+
+```ts
+export type ScriptId = 'enter' | 'exit';
+export type TaskKeyName = 'g' | 'l' | 'q' | 'f' | 'r' | 'tab' | 'esc' | 'space';
+
+export interface TaskStep {
+  readonly op: 'tap' | 'key' | 'wait' | 'expect' | 'expectFloor' | 'travel';
+  readonly at?: readonly [number, number];
+  readonly count?: 1 | 2;
+  readonly key?: TaskKeyName;
+  readonly holdMs?: number;
+  readonly ms?: number;
+  /** The destination id a `travel` step names; validated against the catalog at load. */
+  readonly to?: string;
+  readonly screen?: ScreenId;
+  readonly timeoutMs?: number;
+}
+
+export interface TaskScript { readonly timeoutMs: number; readonly steps: readonly TaskStep[] }
+
+export interface TaskDefinition {
+  readonly id: string;
+  readonly label: string;
+  readonly floor: { readonly titleKey: string };
+  readonly entry: TaskScript;
+  readonly exit?: TaskScript;
+}
+
+export type TaskFileProblem =
+  | 'not-json' | 'not-an-object' | 'missing-field' | 'unknown-field' | 'unknown-op'
+  | 'bad-coordinate' | 'bad-timeout' | 'bad-title-key' | 'unknown-location';
+
+export type TaskLoad =
+  | { readonly ok: true; readonly task: TaskDefinition }
+  | { readonly ok: false; readonly reason: TaskFileProblem; readonly detail?: string };
+
+export type TravelFailure =
+  | ActionFailure | 'cancelled' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found';
+
+export type TravelOutcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: TravelFailure; readonly detail?: string };
+
+export type ScriptFailure =
+  | ActionFailure | 'expect-timeout' | 'floor-mismatch' | 'script-timeout' | 'cancelled'
+  | 'capture-unavailable' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found';
+
+export type ScriptResult =
+  | { readonly ok: true; readonly steps: number; readonly ms: number }
+  | { readonly ok: false; readonly step: number; readonly reason: ScriptFailure; readonly detail?: string };
+
+/** Everything a script may touch. No step sees a session, a config or a task file. */
+export interface ScriptEnv {
+  readonly actuator: Actuator;
+  readonly capture: () => Promise<Frame>;
+  readonly observe: (frame: Frame) => Promise<Observation>;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly abort: AbortSignal;
+  readonly log: (line: string) => void;
+  /** Travel to a catalogued node: the world map's find-and-tap, one typed result. */
+  readonly travel: (to: string) => Promise<TravelOutcome>;
+}
+
+/** What the loop needs from a task, and nothing else. */
+export interface SessionTask {
+  enter(): Promise<ScriptResult>;
+  runScript(name: ScriptId): Promise<ScriptResult>;
+  abort(): void;
+}
+```
+
+`travel` is the one step that finds its target in the frame: the catalog's template is matched on
+the world map, the map is zoomed out and panned within its budget, and a score below 0.80 is not a
+node. The id is checked against the catalog when the file is loaded (`unknown-location`), so a typo
+refuses the session instead of failing mid-entry.
+

@@ -224,12 +224,14 @@ export type ScriptId = 'enter' | 'exit';
 export type TaskKeyName = 'g' | 'l' | 'q' | 'f' | 'r' | 'tab' | 'esc' | 'space';
 
 export interface TaskStep {
-  readonly op: 'tap' | 'key' | 'wait' | 'expect' | 'expectFloor';
+  readonly op: 'tap' | 'key' | 'wait' | 'expect' | 'expectFloor' | 'travel';
   readonly at?: readonly [number, number];
   readonly count?: 1 | 2;
   readonly key?: TaskKeyName;
   readonly holdMs?: number;
   readonly ms?: number;
+  /** The destination id a `travel` step names; validated against the catalog at load. */
+  readonly to?: string;
   readonly screen?: ScreenId;
   readonly timeoutMs?: number;
 }
@@ -246,15 +248,22 @@ export interface TaskDefinition {
 
 export type TaskFileProblem =
   | 'not-json' | 'not-an-object' | 'missing-field' | 'unknown-field' | 'unknown-op'
-  | 'bad-coordinate' | 'bad-timeout' | 'bad-title-key';
+  | 'bad-coordinate' | 'bad-timeout' | 'bad-title-key' | 'unknown-location';
 
 export type TaskLoad =
   | { readonly ok: true; readonly task: TaskDefinition }
   | { readonly ok: false; readonly reason: TaskFileProblem; readonly detail?: string };
 
+export type TravelFailure =
+  | ActionFailure | 'cancelled' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found';
+
+export type TravelOutcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: TravelFailure; readonly detail?: string };
+
 export type ScriptFailure =
   | ActionFailure | 'expect-timeout' | 'floor-mismatch' | 'script-timeout' | 'cancelled'
-  | 'capture-unavailable';
+  | 'capture-unavailable' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found';
 
 export type ScriptResult =
   | { readonly ok: true; readonly steps: number; readonly ms: number }
@@ -268,6 +277,8 @@ export interface ScriptEnv {
   readonly sleep: (ms: number) => Promise<void>;
   readonly abort: AbortSignal;
   readonly log: (line: string) => void;
+  /** Travel to a catalogued node: the world map's find-and-tap, one typed result. */
+  readonly travel: (to: string) => Promise<TravelOutcome>;
 }
 
 /** What the loop needs from a task, and nothing else. */

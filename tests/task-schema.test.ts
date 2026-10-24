@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
+import { TRAVEL_IDS } from '../src/perception/locations.ts';
 import { parseTask } from '../src/tasks/schema.ts';
 
 const valid = {
@@ -15,7 +16,7 @@ const text = (value: unknown) => JSON.stringify(value);
 describe('parseTask', () => {
   it('parses the committed FFXI 4F task', async () => {
     const raw = await readFile(new URL('../tasks/ffxi-4f.json', import.meta.url), 'utf8');
-    const loaded = parseTask(raw);
+    const loaded = parseTask(raw, TRAVEL_IDS);
 
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
@@ -71,6 +72,21 @@ describe('parseTask', () => {
       .toMatchObject({ ok: false, reason: 'missing-field' });
     expect(parseTask(text({ ...valid, entry: { timeoutMs: 0, steps: [{ op: 'wait', ms: 5 }] } })))
       .toMatchObject({ ok: false, reason: 'bad-timeout' });
+  });
+
+  it('parses a travel step and refuses a destination the catalog does not know', () => {
+    const travel = { ...valid, entry: { steps: [{ op: 'travel', to: 'vnh' }] } };
+    const loaded = parseTask(text(travel), new Set(['vnh']));
+    expect(loaded.ok).toBe(true);
+    if (loaded.ok) expect(loaded.task.entry.steps[0]).toEqual({ op: 'travel', to: 'vnh' });
+
+    expect(parseTask(text(travel), new Set(['ffxi-gcn']))).toMatchObject({ ok: false, reason: 'unknown-location' });
+    expect(parseTask(text({ ...valid, entry: { steps: [{ op: 'travel' }] } }), new Set(['vnh'])))
+      .toMatchObject({ ok: false, reason: 'missing-field' });
+    expect(parseTask(text({ ...valid, entry: { steps: [{ op: 'travel', to: 'vnh', at: [1, 1] }] } }), new Set(['vnh'])))
+      .toMatchObject({ ok: false, reason: 'unknown-field' });
+    expect(parseTask(text({ ...valid, entry: { steps: [{ op: 'travel', to: '' }] } }), new Set(['vnh'])))
+      .toMatchObject({ ok: false, reason: 'missing-field' });
   });
 
   it('refuses a key name it does not know', () => {

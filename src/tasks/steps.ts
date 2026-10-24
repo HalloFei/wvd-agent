@@ -164,6 +164,11 @@ async function runStep(step: TaskStep, index: number, env: ScriptEnv, floorKey: 
       return await pollScreen(step, index, env);
     case 'expectFloor':
       return await pollFloor(step, index, env, floorKey);
+    case 'travel': {
+      const result = await env.travel(step.to!);
+      if (result.ok) return null;
+      return stopped(index, result.reason, result.detail);
+    }
     default:
       // The parser rejects an unknown op; a hand-built script with one is not runnable either.
       return stopped(index, 'expect-timeout', 'unknown-op');
