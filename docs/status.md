@@ -139,11 +139,23 @@ this survey.
   **150 ms** until #18 has measured the planned-instant → `SendInput` distribution.
 - **The planning model is checked against the recording** — design acceptance 5, delivered by
   `planCheck` in `scripts/replay.ts`: each of the recording's `chest-qte` observations, at its own
-  timestamp, feeds the last three readings through `qteVelocity` and `planTap`, and every plan is
-  judged against `measurements.json` — target inside a recorded zone, finite delay inside the
-  horizon, no reversal crossed. The recording yields **51 plans, 0 violations**; triples that
-  straddle a bounce refuse legitimately, so `tests/replay.test.ts` pins ≥ 25 plans rather than the
-  count.
+  timestamp, feeds the last three readings through `qteVelocity` and `planTap`, and every returned
+  plan is judged against what the recording actually shows. Plans are therefore produced from
+  recorded marker motion; each target must lie inside a zone `measurements.json` recorded; none may
+  cross the planner's own reversal points (656.5 / 1261.5, not the 694 / 1224 zone edges); and the
+  marker position a plan predicts at its press instant, `x0 + v·d`, must agree with the recording's
+  reading nearest that instant within **20 px** — one frame of travel at the recorded 610 px/s,
+  with the worst measured residual at **15.8 px**. The recording yields **51 plans, 0 violations**,
+  and **44** of those have their predicted press position compared: the other seven name instants
+  after the recording's own press (~3.3 s), when the operator has braked the marker to rest, so
+  there is no straight line the recording can compare them with (they are counted as unchecked, not
+  as passing). Triples that straddle a bounce refuse legitimately, so `tests/replay.test.ts` pins
+  ≥ 25 plans, 44 press positions and 0 violations rather than the plan count alone. **The
+  press-position check is what catches a wrong sign or a wrong speed**: a sign error moves the
+  prediction by `2·v·d`, hundreds of px on the long plans, and a 10 % speed error by ~27 px on a
+  450 ms plan, both outside the 20 px tolerance. The zone and reversal branches cannot fire on this
+  recording — `planTap` already refuses those targets — so `tests/replay-plan.test.ts` proves they
+  fire with synthetic inputs instead of implying coverage from the recording.
 
 ## Open work — the task board is the authority
 
