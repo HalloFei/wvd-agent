@@ -207,10 +207,12 @@ Implemented on `feat/worldmap-entry` (`8be41cb`, `713568e`, `87def23`, `b8b1a91`
 - **`travel`** is a task step; `tasks/ffxi-4f.json` now starts `expect town` → `travel ffxi-gcn`
   and gates on the measured 第三区 key.
 
-Read-only live check 2026-10-24 21:39: the capture path returns 1920×1080 and the composite names
-the live loot screen `unknown` at 0.2 in 102 ms (the town perceiver alone is 16 ms). Still owed:
-the drag probe and the entry run — both send input and need the operator. The rest town is
-诺森霍洛村 (`vnh`), chosen by the operator.
+Live checks 2026-10-24: the capture path returns 1920×1080. The composite named a loot screen
+`unknown` at 0.2 in 102 ms, and then the town at **0.86** with the party panel up — the first live
+evidence for `TownPerceiver`; the town perceiver alone takes 16 ms. The entry did not run: the game
+was not the foreground window, and the engine refuses input by design. Still owed: the entry run and
+the drag probe, both on the operator's focus. The rest town is 诺森霍洛村 (`vnh`), chosen by the
+operator.
 
 ## Open work — the task board is the authority
 
