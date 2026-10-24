@@ -154,8 +154,8 @@ this survey.
   450 ms plan. The recording yields **51 plans, 38 press positions, 0 violations**: 44 plans have a
   reading within one frame of their press instant, but six of them (frames 15, 30, 45, 60, 75 and 90;
   press delays 8–16 ms) name an instant after their own reading, so the nearest reading *is* that
-  reading — predicting its position from itself is a tautology (residual 0), and at that delay a
-  10 % speed error moves the marker under 1 px, so they cannot discriminate it and are counted as
+  reading — predicting its position from itself is a tautology (residual 0), and at those delays a
+  10 % speed error moves the marker 0.5–1 px, so they cannot discriminate it and are counted as
   unchecked, not as passing. The other seven name instants after the recording's own press (~3.3 s),
   when the operator has braked the marker to rest, so there is no straight line the recording can
   compare them with. Triples that straddle a bounce refuse legitimately, so `tests/replay.test.ts`
