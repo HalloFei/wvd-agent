@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import { bandSampler, timeQte, type QteSampler } from '../src/actions/qte.ts';
-import type { Frame, FrameSource, PixelRect, QteZone } from '../src/contracts.ts';
+import type { Frame, FrameSource, PixelRect, QteZone, RgbaImage } from '../src/contracts.ts';
 import { cropBgra } from '../src/engine/crop.mjs';
 import { qteWindow } from '../src/perception/chest.ts';
 
@@ -150,6 +150,37 @@ function bandOnlySource(full: Frame, { rejects = false }: { readonly rejects?: b
       };
     },
   };
+}
+
+/** Paint one RGB rectangle, the way the live narrow bar's zones and marker differ from the still. */
+function paint(image: RgbaImage, x0: number, y0: number, w: number, h: number, rgb: readonly [number, number, number]): void {
+  for (let y = y0; y < y0 + h; y += 1) {
+    for (let x = x0; x < x0 + w; x += 1) {
+      const offset = (y * image.width + x) * 4;
+      image.data[offset] = rgb[0];
+      image.data[offset + 1] = rgb[1];
+      image.data[offset + 2] = rgb[2];
+      image.data[offset + 3] = 255;
+    }
+  }
+}
+
+/** The marker's white core at `centreX`: 9 px wide and 31 rows tall, the measured 6–9 px range. */
+const paintMarker = (image: RgbaImage, centreX: number): void =>
+  paint(image, Math.round(centreX) - 4, 40, 9, 31, [255, 255, 255]);
+
+/**
+ * The recorded still with the bar re-drawn the way the live 2026-10-25 chest drew it: 39 px zones
+ * around the same centres (808 and 1111) and a 264 px hazard gap, instead of 194 px zones and a
+ * 78 px gap. The 解除 control is untouched; the marker is painted per sample so it can move.
+ */
+function narrowBarBase(image: RgbaImage): RgbaImage {
+  const copy = { data: Uint8Array.from(image.data), width: image.width, height: image.height };
+  paint(copy, 696, 36, 93, 47, [0, 0, 0]);    // 696–788
+  paint(copy, 828, 36, 93, 47, [0, 0, 0]);    // 828–920
+  paint(copy, 999, 36, 93, 47, [0, 0, 0]);    // 999–1091, the recorded marker included
+  paint(copy, 1131, 36, 93, 47, [0, 0, 0]);   // 1131–1223
+  return copy;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -694,5 +725,59 @@ describe('bandSampler', () => {
       }),
     };
     expect(await bandSampler(noBar).sample()).toEqual({ ok: false, reason: 'bar-gone' });
+  });
+
+  it('detects, plans and presses the live narrow zone pair', async () => {
+    // The bar the live 2026-10-25 chest drew after 爱丽丝 (陷阱解除 43): 39 px zones, a 264 px gap,
+    // the same centres and 解除 control. Its width is a stat, so the loop reads the measured zones
+    // and times the marker's speed against their centres — it never refuses a bar for being
+    // narrower than the recorded fixture.
+    const base = narrowBarBase(await (await jpegFrame('frame-0.jpg', 0)).toRgba());
+    const clock = virtualClock(0);
+    const readings: ReadonlyArray<{ atMs: number; markerX: number }> = [
+      { atMs: 0, markerX: 700 },
+      { atMs: 33, markerX: 720 },
+      { atMs: 66, markerX: 740 },
+    ];
+    let index = 0;
+    const source: FrameSource = {
+      capture: async () => {
+        throw new Error('bandSampler fell back to capture()');
+      },
+      captureBand: async (rect) => {
+        // The first three samples move; every sample after the press is the marker parked at 900.
+        const reading = index < readings.length
+          ? readings[index]!
+          : { atMs: clock.now(), markerX: 900 };
+        index += 1;
+        const image = { data: Uint8Array.from(base.data), width: base.width, height: base.height };
+        paintMarker(image, reading.markerX);
+        const cropped = cropBgra(image.data, image.width, image.height, rect);
+        clock.advanceTo(reading.atMs + 10);
+        return {
+          atMs: reading.atMs,
+          width: cropped.width,
+          height: cropped.height,
+          toRgba: async () => ({ data: cropped.pixels, width: cropped.width, height: cropped.height }),
+        };
+      },
+    };
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler: bandSampler(source), now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.v).toBeCloseTo(606, 0);
+    // 1111 is the measured right zone's centre — (1092 + 1130) / 2 — the same x the wide fixture has.
+    expect(out.target).toBe(1111);
+    expect(out.tapX).toBe(740);
+    expect(out.atMs).toBeCloseTo(451.1, 0);
+    expect(presses).toHaveLength(1);
+    expect(out.restX).toBe(900);
+    expect(out.restSettled).toBe(true);
   });
 });

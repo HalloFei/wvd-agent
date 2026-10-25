@@ -252,6 +252,28 @@ describe('parseQte', () => {
     expect(refusal(await parseQte(frameOf(image, 1_000)))).toBe('bad-gap');
   });
 
+  it('reads a narrow zone pair — the live chest with 陷阱解除 43 — without a width assumption', async () => {
+    // Live 2026-10-25: choosing 爱丽丝 (陷阱解除 43) drew 39 px zones at 1920 with a 264 px hazard
+    // gap. The zone width is set by the stat (chest spec §5), so it is a variable of the bar, not a
+    // constant. Keep the measured 39 px at each zone's own centre and paint the rest as the gap;
+    // the marker at 1072.5 is preserved between 1069 and 1076.
+    const image = copyOf(await jpegImage('frame-0.jpg'));
+    paint(image, { x: 696, y: 36, w: 93, h: 47 }, [0, 0, 0]);    // 696–788: left zone's outer fill
+    paint(image, { x: 828, y: 36, w: 93, h: 47 }, [0, 0, 0]);    // 828–920: left zone's inner fill
+    paint(image, { x: 999, y: 36, w: 70, h: 47 }, [0, 0, 0]);    // 999–1068: right zone, before the marker
+    paint(image, { x: 1077, y: 36, w: 15, h: 47 }, [0, 0, 0]);   // 1077–1091: right zone, after it
+    paint(image, { x: 1131, y: 36, w: 93, h: 47 }, [0, 0, 0]);   // 1131–1223: right zone's outer fill
+
+    const parsed = read(await parseQte(frameOf(image, 1_000)));
+
+    expect(parsed.qte.zones).toEqual([{ from: 789, to: 827 }, { from: 1092, to: 1130 }]);
+    expect(parsed.qte.zones.map((zone) => zone.to - zone.from + 1)).toEqual([39, 39]);
+    expect(parsed.qte.zones[1].from - parsed.qte.zones[0].to - 1).toBe(264);
+    expect(parsed.qte.markerX).toBe(1072.5);
+    expect(parsed.qte.button).toEqual(BUTTON);
+    expect(parsed.confidence).toBe(1);
+  });
+
   it('refuses a gap that is not dark', async () => {
     const image = copyOf(await jpegImage('frame-0.jpg'));
     paint(image, { x: 921, y: 36, w: 78, h: 47 }, [200, 200, 200]);

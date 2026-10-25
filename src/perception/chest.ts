@@ -7,6 +7,11 @@
  * research-qte-parser.md`, cited as "research §n". The values are not re-derived here; numbers the
  * research calls one-sample are named with that word in their comment.
  *
+ * One later live chest (2026-10-25, opened with 陷阱解除 43) added a 39 px zone pair. The zone width
+ * is set by the opener's 陷阱解除 (chest spec §5), so it is a **variable of the bar**, not a constant:
+ * the gates below check the bar's structure (two warm runs, a dark hazard gap, the marker, the 解除
+ * control) and never assume a width.
+ *
  * **The opener panel lives in `opener.ts`**, which owns the fixed card grid, the per-slot read and
  * the click point; `ChestPerceiver` only orders the two screens, the panel before the bar.
  *
@@ -77,10 +82,12 @@ const PALE_RB_MAX = 60;
 const PALE_RG_MAX = 45;
 
 /**
- * The bar is present when one band row has this many warm pixels inside the zone window. With the
- * bar: 448–492. Without: 0–10 (research §3 step 4, §4 last paragraph).
+ * The bar is present when one band row has this many warm pixels inside the zone window. The wide
+ * recorded bar reads 448–492; the live 2026-10-25 chest with 陷阱解除 43 reads 78 (two 39 px zones).
+ * A bar without zones reads 0–10 (research §3 step 4, §4 last paragraph) — the structure below, not
+ * this number, is what refuses it. 8 is a noise floor for two 4 px runs, never a zone-width claim.
  */
-const BAR_PEAK_MIN = 250;
+const BAR_PEAK_MIN = 8;
 
 /**
  * Marker gate (research §5). The core is 6–9 px wide and 30–34 rows tall; 18 white rows per column
@@ -101,20 +108,20 @@ const MARKER_STATIC_DROP_PX = 6;
 
 /**
  * Zone gate (research §4). A zone column is warm in 44–47 of 47 band rows and a gap column in 0, so
- * the 55 % threshold sits in a wide margin. The width range is deliberately permissive (120, not
- * the spec's 150): both measured chests are 224–225 px, the ends of the range were never observed,
- * and the x window — not this range — is what keeps the wall out. The gap's bounds are the spec's
- * measured 40–140 px reading of a 78–80 px hazard gap.
+ * the 55 % threshold sits in a wide margin. **The width is a stat, not a constant**: the opener's
+ * 陷阱解除 sets it (chest spec §5) — the recorded bars drew 194–229 px zones, and the live
+ * 2026-10-25 chest with 陷阱解除 43 drew 39 px. There is therefore no width range to gate on; 4 px
+ * is only a JPEG-noise floor. The x window, the two-run + dark-gap structure and the marker and
+ * button checks are what keep scenery out. The gap stays bounded below: under 40 px it is the bar's
+ * own fill, not a hazard gap, and the 448 px gap a narrow pair draws is legitimate.
  */
 const ZONE_ROW_FRACTION = 0.55;
-const ZONE_MIN_WIDTH = 120;
-const ZONE_MAX_WIDTH = 340;
+const ZONE_MIN_WIDTH = 4;
 const GAP_MIN_WIDTH = 40;
-const GAP_MAX_WIDTH = 140;
 /**
- * The marker is white, so it punches a 13–17 px hole in the warm fill; a real hazard gap is
- * 78–80 px, so a hole this narrow cannot be one. Bridging is load bearing: without it, refusals on
- * the recording rise from 51 to 81 (research §4).
+ * The marker is white, so it punches a 13–17 px hole in the warm fill; the narrowest accepted hazard
+ * gap is 40 px, so a hole this narrow cannot be one at any 陷阱解除. Bridging is load bearing: without
+ * it, refusals on the recording rise from 51 to 81 (research §4).
  */
 const MARKER_HOLE_MAX_WIDTH = 20;
 const MARKER_HOLE_SLACK_PX = 6;
@@ -123,8 +130,10 @@ const GAP_LUMA_RATIO_MAX = 0.75;
 
 /**
  * The 解除 control is anchored, not searched (research §6). Its x is the bar's centre between the
- * two zones; its y is the fixed HUD slot. A colour search for it lands on the chest's gold
- * highlight at y ≈ 553 — a measured 109 px error — or on the pale HUD icon row 125 px below.
+ * two zones; its y is the fixed HUD slot. The zones shrink about their own centres as the stat
+ * changes (808 and 1111 measured for both 39 px and 194 px zones), so that midpoint stays put. A
+ * colour search for the button lands on the chest's gold highlight at y ≈ 553 — a measured 109 px
+ * error — or on the pale HUD icon row 125 px below.
  */
 const BUTTON_Y_FRACTION = 0.613; // 662 at 1080
 const BUTTON_BOX_HALF_WIDTH = 31;
@@ -237,6 +246,9 @@ interface BandScan {
   readonly columnLuma: Uint32Array;
   /** Warm pixels per band row inside the zone window: the bar-presence test. */
   readonly rowWarm: Uint16Array;
+  /** The zone window's first and last column in full-frame pixels; runs are read there only. */
+  readonly zoneX0: number;
+  readonly zoneX1: number;
   /** First and last white band row per column (−1 when the column has none). */
   readonly whiteTop: Int16Array;
   readonly whiteBottom: Int16Array;
@@ -334,19 +346,21 @@ function parseImage(image: RgbaImage, previousMarkerX?: number, origin?: Point):
   const marker = findMarker(band, previousMarkerX);
   if (!marker.ok) return marker;
 
-  // 4. The zones, bridging the hole the marker punched *before* the width filter: the hole splits
+  // 4. The zones, bridging the hole the marker punched *before* the noise floor: the hole splits
   //    a zone into a wide piece and a narrow one, and filtering first would drop the narrow piece
-  //    and turn the bridge into a fake 148 px gap (research §4).
+  //    and turn the bridge into a fake 148 px gap (research §4). The width itself is the opener's
+  //    陷阱解除 talking, so only the JPEG-noise floor applies.
   const runs = bridgeMarkerHole(warmRuns(band), marker.marker).filter((run) => {
     const width = run.to - run.from + 1;
-    return width >= ZONE_MIN_WIDTH && width <= ZONE_MAX_WIDTH;
+    return width >= ZONE_MIN_WIDTH;
   });
   if (runs.length !== 2) return { ok: false, reason: 'no-zones' };
   const [left, right] = runs;
 
-  // 5. The gap between them. ------------------------------------------------------------------
+  // 5. The gap between them. The 448 px a narrow pair draws is legitimate; a gap under 40 px is
+  //    the bar's own fill, not a hazard gap.
   const gap = right.from - left.to - 1;
-  if (gap < GAP_MIN_WIDTH || gap > GAP_MAX_WIDTH) return { ok: false, reason: 'bad-gap' };
+  if (gap < GAP_MIN_WIDTH) return { ok: false, reason: 'bad-gap' };
   if (gapLumaRatio(band, left, right) > GAP_LUMA_RATIO_MAX) return { ok: false, reason: 'gap-not-dark' };
 
   // 6. The 解除 control: anchored from the zones, then verified. -------------------------------
@@ -473,7 +487,9 @@ function scanBand(image: RgbaImage, geometry: FrameGeometry): BandScan {
     }
   }
 
-  return { x0, columns, columnWarm, columnWhite, columnLuma, rowWarm, whiteTop, whiteBottom };
+  return {
+    x0, columns, columnWarm, columnWhite, columnLuma, rowWarm, zoneX0, zoneX1, whiteTop, whiteBottom,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -539,15 +555,20 @@ interface ZoneRun {
 }
 
 /**
- * Maximal runs of columns warm in at least 55 % of the band rows (research §4). Unfiltered: the
- * marker still splits a zone in two, so the width gate belongs *after* the bridge.
+ * Maximal runs of columns warm in at least 55 % of the band rows, **inside the zone window only**
+ * (research §4). The window is what keeps the lit wall and the bar's end caps out: the recorded
+ * frames carry 2–16 px warm specks at 645–663 and 1260–1275, and with no width gate they would
+ * become third and fourth runs. Unfiltered by width: the marker still splits a zone in two, so the
+ * noise floor belongs *after* the bridge.
  */
 function warmRuns(band: BandScan): ZoneRun[] {
   const threshold = ZONE_ROW_FRACTION * BAND_ROWS;
+  const first = Math.max(0, band.zoneX0 - band.x0);
+  const last = Math.min(band.columns - 1, band.zoneX1 - 1 - band.x0);
   const runs: ZoneRun[] = [];
   let start = -1;
-  for (let column = 0; column <= band.columns; column += 1) {
-    const lit = column < band.columns && band.columnWarm[column] >= threshold;
+  for (let column = first; column <= last + 1; column += 1) {
+    const lit = column <= last && band.columnWarm[column] >= threshold;
     if (lit && start < 0) start = column;
     else if (!lit && start >= 0) {
       runs.push({ from: start + band.x0, to: column - 1 + band.x0 });
@@ -559,8 +580,9 @@ function warmRuns(band: BandScan): ZoneRun[] {
 
 /**
  * Merge two warm runs when the hole between them is narrow and sits under the marker: that hole is
- * the marker itself, not the hazard gap (research §4). A real gap is 78–80 px, so a ≤ 20 px bridge
- * can never swallow one.
+ * the marker itself, not the hazard gap (research §4). The narrowest accepted gap is 40 px, and the
+ * recorded ones are 78–109 (a narrow zone pair draws 264–448), so a ≤ 20 px bridge cannot swallow
+ * one at any 陷阱解除.
  */
 function bridgeMarkerHole(runs: readonly ZoneRun[], marker: MarkerCandidate): ZoneRun[] {
   const merged: Array<{ from: number; to: number }> = [];

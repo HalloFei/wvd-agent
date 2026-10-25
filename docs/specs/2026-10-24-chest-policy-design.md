@@ -179,8 +179,11 @@ Each of these cost a live attempt to discover, so they are recorded rather than 
   not the width rule.
 - Several **static** white runs sit on the bar (borders, segment edges). Eliminate runs present in
   both frames before matching; the survivor is the marker.
-- Each zone is **150–300 px wide** and the hazard gap **50–120 px**; a pair outside those bounds is
-  scenery, not the bar.
+- The zone width is **set by the opener's 陷阱解除** (§5): 194–229 px on the 2026-10-24 chests, and
+  39 px on the live 2026-10-25 chest opened at 陷阱解除 43. The parser therefore gates on *structure*
+  — two warm runs inside x 680–1240, a dark hazard gap of at least 40 px, the marker and the 解除
+  control — and never on a width range. The 264 px gap a narrow pair draws is legitimate, not
+  scenery; the recorded gap bounds were a wide-zone assumption.
 - The **解除 button** sits at the bar's centre x — the midpoint between the two zones — at
   **y = round(0.613·H)**, which is 662 at 1080. Not 553: the chest's own gold highlight is 109 px
   above it, and a colour search there is the measured failure. Its white hand glyph is the anchor.
