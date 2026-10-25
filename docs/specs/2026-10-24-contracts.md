@@ -405,6 +405,7 @@ object (§0 rule 3).
 
 | Key | Type | Default | Owner | Meaning |
 |---|---|---|---|---|
+| `openerPanelTimeoutMs` | integer | `10000` | chest | wait for the 由谁打开? panel after the 打开 click; measured 4.6–8 s |
 | `willpowerFloor` | integer | `60` | chest | never choose an opener below this |
 | `maxRerolls` | integer | `3` | chest | QTE rerolls per chest, floor chests only |
 | `rerollLeadRatio` | number 0–1 | `0.5` | chest | reroll when lead exceeds this fraction of the zone |

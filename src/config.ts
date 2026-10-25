@@ -20,6 +20,8 @@ export interface WvdConfigSection extends WorldSection {
   pressHoldMs: number;
   escalationImageWidth: number;
   mapOpenTimeoutMs: number;
+  /** How long the 由谁打开? panel may take to answer the 打开 click, milliseconds. */
+  openerPanelTimeoutMs: number;
   automoveArrivalTimeoutMs: number;
   automoveStillSeconds: number;
   hazardEscapeSteps: number;
@@ -57,6 +59,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   pressHoldMs: 60,
   escalationImageWidth: 1280,
   mapOpenTimeoutMs: 3000,
+  openerPanelTimeoutMs: 10000,
   automoveArrivalTimeoutMs: 120000,
   automoveStillSeconds: 5,
   hazardEscapeSteps: 3,
@@ -129,6 +132,9 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.wvd.mapOpenTimeoutMs': {
         type: 'integer', title: '地图打开超时', description: '点击小地图后等待地图出现，毫秒。',
+      },
+      'worlds.wvd.openerPanelTimeoutMs': {
+        type: 'integer', title: '开箱面板超时', description: '点击「打开」后等待「由谁打开?」面板，毫秒；实测 5–8 秒。',
       },
       'worlds.wvd.automoveArrivalTimeoutMs': {
         type: 'integer', title: '自动移动超时', description: '一直没到达就放弃，毫秒。',

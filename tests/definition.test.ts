@@ -98,11 +98,11 @@ describe('WVD World definition', () => {
     expect(host.events).toEqual([]);
   });
 
-  it('declares all thirty-three contracts §8 keys with defaults the console can render', () => {
+  it('declares all thirty-four contracts §8 keys with defaults the console can render', () => {
     const properties = WVD_CONFIG_GROUP.schema.properties;
     const keyOf = (path: string) => path.slice('worlds.wvd.'.length);
-    expect(Object.keys(properties)).toHaveLength(33);
-    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(33);
+    expect(Object.keys(properties)).toHaveLength(34);
+    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(34);
     for (const path of Object.keys(properties)) {
       expect(path.startsWith('worlds.wvd.')).toBe(true);
       expect(WVD_DEFAULTS).toHaveProperty(keyOf(path));
@@ -132,6 +132,7 @@ describe('WVD World definition', () => {
     expect(WVD_DEFAULTS).toMatchObject({
       enabled: false, dryRun: false, tickMs: 100, sessionMaxMinutes: 120, stallStopSeconds: 120,
       gameWindowTitle: 'WizardryVariantsDaphne', jpegQuality: 75, engineTimeoutMs: 5000, pressHoldMs: 60, escalationImageWidth: 1280,
+      mapOpenTimeoutMs: 3000, openerPanelTimeoutMs: 10000,
       willpowerFloor: 60, maxRerolls: 3, rerollLeadRatio: 0.5, qteLatencyMs: 75, qteDecelPxPerS2: 3000, qteMinWindowMs: 150,
       qteAttemptsFallback: 2, qteSubLoopMs: 4000,
       autoBattleEnableAttempts: 3, fightTimeoutMs: 180000, escalateMaxPerHour: 20, escalateTimeoutMs: 90000, stopHotkey: 'Ctrl+Alt+W',

@@ -272,6 +272,9 @@ const openerPanel: Observation = {
   opener: { members: [openerMember(10, 40), openerMember(10, 90)] },
 };
 
+/** The chest prompt: the 打开 button is its only command. */
+const chestPrompt: Observation = { screen: 'chest-prompt', atMs: 100, confidence: 1 };
+
 /** A parsed panel where nobody may open the chest: both are under the 60 willpower floor. */
 const openerNobody: Observation = {
   screen: 'chest-open',
@@ -732,7 +735,7 @@ describe('the chest QTE', () => {
   it('clears the opener click when the bar takes the screen, so a returning panel is clickable', async () => {
     // The panel dismisses into the bar: that is the click's answer, whether the bar is read now or
     // after it goes. If the record survived the bar, a panel that comes back would be "still in
-    // flight" and the loop would wait out `mapOpenTimeoutMs` instead of choosing a card again.
+    // flight" and the loop would wait out `openerPanelTimeoutMs` instead of choosing a card again.
     const timing: QteTimer = async () => ({ ok: false, reason: 'resolved' });
     const { world, host, perceiver, actuator, clock } = makeWorld({ observation: openerPanel, timing });
     await started(world, host);
@@ -1356,20 +1359,112 @@ describe('the opener click', () => {
     expect(world.isRunning()).toBe(true);
   });
 
+  it('does not take the prompt still on screen as the answer to the 打开 click', async () => {
+    const { world, host, actuator, clock } = makeWorld({ observation: chestPrompt });
+    await started(world, host);
+
+    // The prompt's 打开 is tapped once. The screen has not changed: the click has not landed yet,
+    // so it is one command in flight, not an answer — the live run re-tapped 11 times in a second.
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858']);
+
+    clock.advance(100);
+    await world.tick();
+    clock.advance(300);
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['tap 955,858']);
+    expect(world.isRunning()).toBe(true);
+  });
+
+  it('takes the panel arriving as the answer to the 打开 click and clicks a card', async () => {
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: chestPrompt });
+    await started(world, host);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858']);
+
+    // 4.6 s after the click — the live panel arrived in 4.6–8 s — the panel is the screen. It is the
+    // answer to the prompt click, and the same tick may choose a card from it.
+    perceiver.observation = openerPanel;
+    clock.advance(4_600);
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['tap 955,858', 'tap 963,784']);
+    expect(
+      host.logRecords.some((record) => record.message.includes('open-chest took effect: the screen is now chest-open')),
+    ).toBe(true);
+  });
+
+  it('waits through the chest-opening animation instead of escalating the unnamed frame', async () => {
+    const { world, host, perceiver, actuator, clock } = makeWorld({
+      observation: chestPrompt,
+      // A regression asks the model; the test then fails on the pushed event instead of waiting.
+      cfg: { escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858']);
+
+    // The click starts the opening animation, which no perceiver names for 4.1 s; the panel comes
+    // after. The opener press is in flight, so the unnamed frame is a transition, not a question.
+    perceiver.observation = unknownButSeen;
+    for (const advance of [100, 1_000, 1_000, 1_000, 1_000]) {
+      clock.advance(advance);
+      await world.tick();
+      expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(0);
+    }
+
+    perceiver.observation = openerPanel;
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858', 'tap 963,784']);
+  });
+
   it('gives up a click the panel never answered, and does not click again until the farm advances', async () => {
-    const { world, host, actuator, clock } = makeWorld({ observation: openerPanel, cfg: { mapOpenTimeoutMs: 50 } });
+    const { world, host, actuator, clock } = makeWorld({
+      observation: openerPanel,
+      cfg: { openerPanelTimeoutMs: 50 },
+    });
     await started(world, host);
 
     await world.tick();
     expect(actuator.calls).toEqual(['tap 963,784']);
 
-    // The panel never changed: the click is recorded failed and not re-sent. The stall clock owns
-    // what happens next, exactly as it does for a key command.
+    // The panel never changed: the click is recorded failed and not re-sent. The wait is the
+    // opener's own key, not the map's: the live panel arrived 4.6–8 s after the click, long after
+    // `mapOpenTimeoutMs`. The stall clock owns what happens next, as for any other command.
     clock.advance(100);
     await world.tick();
+    expect(
+      host.logRecords.some((record) => record.level === 'warn' && record.message.includes('the opener panel never answered the click')),
+    ).toBe(true);
+
     clock.advance(100);
     await world.tick();
     expect(actuator.calls).toEqual(['tap 963,784']);
+  });
+
+  it('clicks a panel that arrives after the give-up, because the screen change is progress', async () => {
+    const { world, host, perceiver, actuator, clock } = makeWorld({
+      observation: chestPrompt,
+      cfg: { openerPanelTimeoutMs: 50 },
+    });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858']);
+
+    // The prompt never answers: the click is given up and recorded failed.
+    clock.advance(100);
+    await world.tick();
+    expect(host.logRecords.some((record) => record.message.includes('never answered the click'))).toBe(true);
+
+    // The panel arrives later. A screen the loop did not produce is the farm advancing, so the
+    // failed latch must not survive it — the live bug held `intent: open-chest` for 25 s instead.
+    perceiver.observation = openerPanel;
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858', 'tap 963,784']);
   });
 
   it('escalates instead of clicking when nobody is at or above the willpower floor', async () => {

@@ -847,6 +847,18 @@ export class WvdWorld implements World {
     };
     const spent = this.#spentThisHour(now);
     let verdict = this.#classify(state, spent, this.#cfg.escalateMaxPerHour);
+    // An opener click owns its transition. The opening animation and the panel's fade are frames
+    // nothing names (`unknown`), and asking the model about them would spend the wait the panel is
+    // about to answer. Only *this* press may suppress that verdict — the stall clock below still
+    // escalates a transition that never ends, and its own timeout bounds the suppression.
+    if (
+      verdict === 'escalate'
+      && waiting
+      && this.#inFlight?.kind === 'open-chest'
+      && observation.screen === 'unknown'
+    ) {
+      verdict = 'ok';
+    }
     if (verdict === 'ok' && stalledMs >= this.#stallEscalateMs()) verdict = 'escalate';
 
     switch (verdict) {
@@ -970,9 +982,10 @@ export class WvdWorld implements World {
   }
 
   /**
-   * The opener click was answered: the panel dismissed into the screen that followed it — the bar
-   * for a trapped chest, loot, a battle. The command is released and the change is progress, so a
-   * command that failed before may be worth sending again.
+   * The opener click was answered: the screen moved off the one the click was made on — the panel
+   * for a prompt press, the bar for a trapped chest, loot, or a battle for a card press. The command
+   * is released and the change is progress, so a command that failed before may be worth sending
+   * again.
    */
   #openerClickAnswered(screen: ScreenId, now: number): void {
     this.#inFlight = null;
@@ -996,10 +1009,13 @@ export class WvdWorld implements World {
    *   While the walk is outstanding, no other command is sent — that is the whole point. A walk that
    *   never starts (the map stays put, nothing moves) has changed nothing and is recorded failed; one
    *   that never arrives is given up at `automoveArrivalTimeoutMs`, also failed.
-   * - `open-chest` is answered by **the panel dismissing**, into whatever screen follows: the QTE for
-   *   a trapped chest, loot for an untrapped one (chest §3a), or a battle for a mimic. Those are all
-   *   the answer; the loop must not wait for a bar that may never come. A panel that stays up for
-   *   `mapOpenTimeoutMs` has changed nothing and is recorded failed, like any other command.
+   * - `open-chest` is answered by **the screen moving off the one the press was made on**: for a
+   *   prompt press the panel is the answer, for a card press the QTE, loot or battle that follows it
+   *   (chest §3a). The screen the press was made on is *not* an answer — a prompt that stays up has
+   *   not taken the click yet — and neither is `unknown`, which is the opening animation or a fade.
+   *   The loop must not wait for a bar that may never come. A press still unanswered after
+   *   `openerPanelTimeoutMs` (the live panel arrived 4.6–8 s after the click, so this is its own
+   *   key, not the map's) has changed nothing and is recorded failed, like any other command.
    *
    * Arrival is not a failure: the farm advanced, so the command is not held against the next tick.
    */
@@ -1007,16 +1023,19 @@ export class WvdWorld implements World {
     const inFlight = this.#inFlight;
     if (!inFlight) return false;
 
-    // The opener click is answered by the panel going away — into whatever screen follows, the QTE
-    // for a trapped chest included (chest §3a). `unknown` is not an answer: it is a frame nothing
-    // named, and the panel may still be under it.
+    // The opener click is answered by the screen moving off the one it was made on: the panel for
+    // the prompt's 打开, what follows the panel for a card (the QTE for a trapped chest included,
+    // chest §3a). The screen the press was made on and `unknown` are not answers: the prompt may
+    // not have taken the click yet, and the opening animation or a fade is a frame nothing named.
     if (inFlight.kind === 'open-chest') {
-      if (observation.screen !== 'chest-open' && observation.screen !== 'unknown') {
+      // The answer is a *change*: the panel for a prompt press, the QTE/loot/battle for a card
+      // press. The screen the press was made on and `unknown` are both not answers.
+      if (observation.screen !== 'unknown' && observation.screen !== inFlight.fromScreen) {
         this.#openerClickAnswered(observation.screen, now);
         return false;
       }
       const waitedMs = now - inFlight.sinceMs;
-      const timeoutMs = Math.max(1, this.#cfg.mapOpenTimeoutMs);
+      const timeoutMs = Math.max(1, this.#cfg.openerPanelTimeoutMs);
       if (waitedMs >= timeoutMs) {
         this.#inFlight = null;
         this.#failed.add('open-chest');
