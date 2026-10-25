@@ -66,6 +66,13 @@ let latest = null; // { jpeg: Buffer, width, height, capturedAt }
  */
 const SNAPSHOT_WAIT_MS = 1000;
 
+/**
+ * How long the child looks again after `SetForegroundWindow` did not take on the first check. The
+ * activation can land a frame or two later; one immediate check would report a refusal the World
+ * would believe. The World retries with its own buffer after a refused attempt.
+ */
+const FOCUS_RECHECK_MS = 120;
+
 // The first capture request ever waits for the render threads to produce a frame (bounded), so
 // startup is not a spurious `timeout`. The timer is cleared when the frame wins, and later requests
 // never wait: a render-hung child must not charge 500 ms to every serialized request.
@@ -190,7 +197,9 @@ async function dispatch(request, receivedAt) {
     }
     case 'focus': {
       const hwnd = requireWindow();
-      return { foreground: win32.focusWindow(hwnd) };
+      if (win32.focusWindow(hwnd)) return { foreground: true };
+      await new Promise((resolve) => setTimeout(resolve, FOCUS_RECHECK_MS));
+      return { foreground: win32.isForeground(hwnd) };
     }
     case 'capture': {
       // demand wakes the render threads; the reply still comes from the newest frame

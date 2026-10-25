@@ -274,6 +274,25 @@ no accepted frame moved — `third-floor.jpg` still reads 13,23 at chevron (959.
 composite names it `dungeonmap` 0.8, reading the party at 7,24 with the harken at 6,24 and the two
 holes at 1,17 / 20,8 — the clean capture's own cells. 482 tests, typecheck clean.
 
+## Focus is a retry, not one check (2026-10-25)
+
+The 2026-10-24 run put the cause of the chest QTE's failed Space presses outside the QTE. The World
+that pressed them started at 20:31, the game was launched at 20:37, and the one focus attempt at
+20:31 could not find a window. The log then names the cost: the 20:40 `open-map` was refused
+`not-foreground`, and keys only worked after the World restart at 21:51 (`open-map` at 22:03 / 22:05
+/ 22:28, and the 22:04:55 Space press that answered the bar). The sixteen 21:30 presses were the
+pre-restart engine instance, not the QTE and not the key.
+
+`focusGame` now gives the focus a buffer instead of believing one immediate check: four attempts
+200 ms apart, and 200 ms after the window takes the foreground before the first input ([win32.ts](../src/engine/win32.ts)).
+The child also looks again 120 ms after a refused `SetForegroundWindow` before reporting it
+([child.mjs](../src/engine/child.mjs)). An input whose foreground check fails now asks for the focus
+and only then refuses — so the first command after the operator launches the game can heal a session
+the World started before it.
+
+`tests/engine.test.ts` pins the retry, the settle and the no-input-on-refusal. 484 tests, typecheck
+clean. The live half is the operator's: one Space press on an unpressed bar in a fresh session.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

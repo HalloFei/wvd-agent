@@ -135,7 +135,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     const focused = await focusGame(client);
     world?.note(focused
       ? 'wvd: the game is foreground'
-      : 'wvd: the game did not come to the foreground; presses will be refused');
+      : 'wvd: the game did not come to the foreground; each press will ask again before giving up');
     const session: WvdSession = {
       source: new Win32Capture(client, {
         // A degraded decode is the child's report reaching the loop, not a silent slowdown (R23).

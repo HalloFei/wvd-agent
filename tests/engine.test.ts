@@ -40,28 +40,56 @@ describe('focusGame', () => {
     expect(engine.seen.map((request) => request.op)).toEqual(['foreground']);
   });
 
-  it('asks the child to focus when it does not, and believes the reply', async () => {
+  it('asks the child to focus when it does not, settles, and believes the reply', async () => {
     const replies: Record<string, unknown> = {
       foreground: { id: 1, ok: true, value: { foreground: false } },
       focus: { id: 2, ok: true, value: { foreground: true } },
     };
     const engine = new FakeEngine((request) => replies[request.op] as never);
-    expect(await focusGame(engine)).toBe(true);
+    const waits: number[] = [];
+    expect(await focusGame(engine, { wait: async (ms) => { waits.push(ms); } })).toBe(true);
     expect(engine.seen.map((request) => request.op)).toEqual(['foreground', 'focus']);
+    // the window is foreground, but the game gets a beat to arm its input before the press
+    expect(waits).toEqual([200]);
   });
 
-  it('reports a refused focus rather than assuming it took', async () => {
-    const replies: Record<string, unknown> = {
-      foreground: { id: 1, ok: true, value: { foreground: false } },
-      focus: { id: 2, ok: true, value: { foreground: false } },
-    };
-    const engine = new FakeEngine((request) => replies[request.op] as never);
-    expect(await focusGame(engine)).toBe(false);
+  it('takes the focus on a later attempt', async () => {
+    let focusCalls = 0;
+    const engine = new FakeEngine((request) => {
+      if (request.op === 'foreground') return { id: 1, ok: true, value: { foreground: false } } as never;
+      focusCalls += 1;
+      return { id: 2, ok: true, value: { foreground: focusCalls >= 2 } } as never;
+    });
+    const waits: number[] = [];
+    expect(await focusGame(engine, { attempts: 3, settleMs: 0, wait: async (ms) => { waits.push(ms); } })).toBe(true);
+    expect(focusCalls).toBe(2);
+    expect(waits).toEqual([200]);
   });
 
-  it('reports a failed focus request as false', async () => {
-    const engine = new FakeEngine({ id: 1, ok: false, error: 'unavailable' });
-    expect(await focusGame(engine)).toBe(false);
+  it('retries a refused focus with the buffer, then reports it', async () => {
+    const engine = new FakeEngine((request) => request.op === 'foreground'
+      ? { id: 1, ok: true, value: { foreground: false } }
+      : { id: 2, ok: true, value: { foreground: false } });
+    const waits: number[] = [];
+    expect(await focusGame(engine, { attempts: 3, wait: async (ms) => { waits.push(ms); } })).toBe(false);
+    expect(engine.seen.map((request) => request.op))
+      .toEqual(['foreground', 'focus', 'foreground', 'focus', 'foreground', 'focus']);
+    expect(waits).toEqual([200, 200]);
+  });
+
+  it('retries a focus request whose window is not up yet', async () => {
+    let foregroundQueries = 0;
+    const engine = new FakeEngine((request) => {
+      if (request.op === 'foreground') {
+        foregroundQueries += 1;
+        return { id: 1, ok: true, value: { foreground: false } } as never;
+      }
+      return { id: 2, ok: false, error: 'unavailable', detail: 'window-not-found' } as never;
+    });
+    const waits: number[] = [];
+    expect(await focusGame(engine, { attempts: 2, retryMs: 50, wait: async (ms) => { waits.push(ms); } })).toBe(false);
+    expect(foregroundQueries).toBe(2);
+    expect(waits).toEqual([50]);
   });
 });
 
@@ -216,14 +244,39 @@ describe('escalation snapshot width', () => {
 });
 
 describe('engine input guard', () => {
-  it('refuses with rejected/not-foreground when the engine reports the window is not foreground', async () => {
+  it('asks for the foreground and refuses only after the focus buffer fails', async () => {
     const engine = new FakeEngine({ id: 1, ok: true, value: { foreground: false } });
 
-    const result = await sendInput(engine, { op: 'tap', x: 10, y: 20, count: 1 });
+    const result = await sendInput(engine, { op: 'tap', x: 10, y: 20, count: 1 }, {
+      attempts: 2,
+      retryMs: 100,
+      settleMs: 0,
+      wait: async () => {},
+    });
 
     expect(result).toEqual({ ok: false, reason: 'rejected', detail: 'not-foreground' });
-    // the precondition is asserted before anything is sent: only the foreground query went out
-    expect(engine.seen).toEqual([{ op: 'foreground' }]);
+    // the focus was asked for before the refusal, and no input request was sent
+    expect(engine.seen.map((request) => request.op))
+      .toEqual(['foreground', 'foreground', 'focus', 'foreground', 'focus']);
+    expect(engine.seen.some((request) => request.op === 'tap')).toBe(false);
+  });
+
+  it('takes the foreground, settles, then sends the input', async () => {
+    const engine = new FakeEngine((request) => {
+      if (request.op === 'foreground') return { id: 1, ok: true, value: { foreground: false } } as never;
+      if (request.op === 'focus') return { id: 2, ok: true, value: { foreground: true } } as never;
+      return { id: 3, ok: true, value: { inputMs: 61 } } as never;
+    });
+    const waits: number[] = [];
+
+    const result = await sendInput(engine, { op: 'key', scan: 0x39, holdMs: 60 }, {
+      settleMs: 200,
+      wait: async (ms) => { waits.push(ms); },
+    });
+
+    expect(result).toEqual({ ok: true, inputMs: 61 });
+    expect(waits).toEqual([200]);
+    expect(engine.seen.map((request) => request.op)).toEqual(['foreground', 'foreground', 'focus', 'key']);
   });
 
   it('sends the input once the window is foreground and reports success', async () => {

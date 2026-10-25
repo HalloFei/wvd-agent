@@ -35,14 +35,51 @@ export interface EngineRequester {
 export type InputRequest = Extract<EngineRequest, { op: 'tap' } | { op: 'key' } | { op: 'drag' }>;
 
 /**
- * Bring the game window to the foreground, or report that Windows refused. It does nothing when the
- * window already holds the foreground, so a session start does not tap Alt into a focused game.
+ * The focus buffer. The operator launches the game after the World is already running, and Windows
+ * can land `SetForegroundWindow` a frame or two after the call returns, so one immediate check is
+ * not evidence that focus was refused. Four attempts, 200 ms apart, and a 200 ms settle after the
+ * window takes the foreground: ~1 s of buffer before an input is refused.
  */
-export async function focusGame(engine: EngineRequester): Promise<boolean> {
-  const current = await engine.request({ op: 'foreground' });
-  if (current.ok && (current.value as Partial<EngineForeground> | null)?.foreground === true) return true;
-  const focused = await engine.request({ op: 'focus' });
-  return focused.ok && (focused.value as { foreground?: boolean } | null)?.foreground === true;
+const FOCUS_ATTEMPTS = 4;
+const FOCUS_RETRY_MS = 200;
+const FOCUS_SETTLE_MS = 200;
+
+/** The test seam for the retry loop; production uses `setTimeout`. */
+export interface FocusOptions {
+  readonly attempts?: number;
+  readonly retryMs?: number;
+  readonly settleMs?: number;
+  readonly wait?: (ms: number) => Promise<void>;
+}
+
+const waitFor = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Bring the game window to the foreground and hold it there for a beat, or report that Windows
+ * refused. It does nothing when the window already holds the foreground, so a session start does
+ * not tap Alt into a focused game. A missing window is retried too: the World starts before the
+ * operator launches the game, and the first command after that launch is the one that heals.
+ */
+export async function focusGame(
+  engine: EngineRequester,
+  options: FocusOptions = {},
+): Promise<boolean> {
+  const attempts = Math.max(1, options.attempts ?? FOCUS_ATTEMPTS);
+  const retryMs = Math.max(0, options.retryMs ?? FOCUS_RETRY_MS);
+  const settleMs = Math.max(0, options.settleMs ?? FOCUS_SETTLE_MS);
+  const wait = options.wait ?? waitFor;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const current = await engine.request({ op: 'foreground' });
+    if (current.ok && (current.value as Partial<EngineForeground> | null)?.foreground === true) return true;
+    const focused = await engine.request({ op: 'focus' });
+    if (focused.ok && (focused.value as { foreground?: boolean } | null)?.foreground === true) {
+      // The window holds the foreground; let the game arm its input before the press that follows.
+      if (settleMs > 0) await wait(settleMs);
+      return true;
+    }
+    if (attempt < attempts - 1) await wait(retryMs);
+  }
+  return false;
 }
 
 /** `ActionResult` plus the measured input leg when the child reported one (contracts §5). */
@@ -60,16 +97,22 @@ const failure = (reply: Extract<EngineReply, { ok: false }>): ActionResult =>
     : { ok: false, reason: reply.error, detail: reply.detail };
 
 /**
- * Sends one input to the game after asserting its precondition. When the window is not foreground
- * nothing but the query is sent. The child asserts again immediately before `SendInput`, so a focus
- * change between the query and the input is still refused; and when it did send, it reports how long
- * the input leg took, which the planner uses instead of assuming one.
+ * Sends one input to the game after taking the foreground. The foreground is asserted first, but a
+ * miss is not final: the World asks for the focus, waits out the buffer, and only then reports
+ * `not-foreground` — the old one-shot check is what left a session pressing into a window that had
+ * never taken focus. The child asserts again immediately before `SendInput`, so a focus change
+ * between the query and the input is still refused; and when it did send, it reports how long the
+ * input leg took, which the planner uses instead of assuming one.
  */
-export async function sendInput(engine: EngineRequester, request: InputRequest): Promise<InputOutcome> {
+export async function sendInput(
+  engine: EngineRequester,
+  request: InputRequest,
+  focus?: FocusOptions,
+): Promise<InputOutcome> {
   const foreground = await engine.request({ op: 'foreground' });
   if (!foreground.ok) return failure(foreground);
   const value = foreground.value as Partial<EngineForeground> | null;
-  if (value?.foreground !== true) return { ...NOT_FOREGROUND };
+  if (value?.foreground !== true && !(await focusGame(engine, focus))) return { ...NOT_FOREGROUND };
   const sent = await engine.request(request);
   if (!sent.ok) return failure(sent);
   const ack = sent.value as Partial<EngineInputAck> | null;
