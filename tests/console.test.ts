@@ -209,6 +209,7 @@ function makeConsole(options: {
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       enableBattleAuto: () => enableBattleAuto(actuator),
       cancelQte: async () => ({ ok: true }),
+      stepBack: async () => ({ ok: true }),
     },
     openSession: options.noEngine
       ? undefined

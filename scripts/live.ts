@@ -43,6 +43,9 @@ const DEFAULT_TASK = new URL('../tasks/ffxi-4f.json', import.meta.url);
 
 const KEYS: Readonly<Record<string, number>> = {
   g: 0x22, l: 0x26, q: 0x10, f: 0x21, r: 0x13, e: 0x12, tab: 0x0f, esc: 0x01, space: 0x39,
+  // WASD: the walk keys (contracts §4's "WASD escape"). A tap is one step's worth of hold only if
+  // it is held — `key w 250` exists for that; the default 60 ms barely nudges the party.
+  w: 0x11, a: 0x1e, s: 0x1f, d: 0x20,
 };
 
 const out = (value: unknown): void => { console.log(JSON.stringify(value)); };
@@ -200,7 +203,9 @@ try {
       const scan = KEYS[name];
       if (scan === undefined) throw new Error(`key must be one of ${Object.keys(KEYS).join(', ')}`);
       if (!(await take())) break;
-      out({ ...(await actuator.holdKey(scan, HOLD_MS)), command, key: name });
+      const hold = args[1] === undefined ? HOLD_MS : Number(args[1]);
+      if (!Number.isFinite(hold) || hold < 1) throw new Error('key hold must be a positive number of ms');
+      out({ ...(await actuator.holdKey(scan, hold)), command, key: name, holdMs: hold });
       break;
     }
     case 'drag': {

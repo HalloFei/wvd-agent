@@ -118,6 +118,12 @@ export interface RouteCommands {
    * opener; cancelling a floor chest's QTE is free.
    */
   cancelQte(): Promise<ActionResult>;
+  /**
+   * Step one tile off the chest after a cancel: the party stands *on* the chest's tile then, so no
+   * prompt is offered; the step makes the chest adjacent again and the game draws 打开 (operator,
+   * 2026-10-31). The hold is `hazardEscapeHoldMs`.
+   */
+  stepBack(): Promise<ActionResult>;
 }
 
 /** One session's collaborators: everything the loop drives, for as long as it runs. */
@@ -988,7 +994,9 @@ export class WvdWorld implements World {
     }
     // The reroll budget is per chest: the prompt starts one, and loot or a battle closes it. The
     // panel (`chest-open`) deliberately does not reset it — a reroll goes QTE → panel → QTE.
-    if (observation.screen === 'chest-prompt' || observation.screen === 'loot' || observation.screen === 'combat') {
+    // Not at `chest-prompt`: a reroll's own re-engagement passes through it, and the budget belongs
+    // to the chest, not to the approach.
+    if (observation.screen === 'loot' || observation.screen === 'combat') {
       this.#qteRerolls = 0;
       this.#lastQtePass = null;
       this.#qteGivenUp = false;
@@ -1438,7 +1446,15 @@ export class WvdWorld implements World {
       // a cancellation costs no attempt (chest §4), and the panel returns for the next card click.
       const pass = this.#lastQtePass;
       const cancelled = await this.#commands.cancelQte();
-      if (cancelled.ok) this.#qteRerolls += 1;
+      if (cancelled.ok) {
+        this.#qteRerolls += 1;
+        // The party is standing on the chest's tile: step off it so the 打开 prompt comes back and
+        // the next tick can open the panel again (operator rule, 2026-10-31).
+        const stepped = await this.#commands.stepBack();
+        if (!stepped.ok) {
+          this.#host?.log.warn(`wvd: the chest could not be re-engaged: step back was refused (${stepped.reason})`);
+        }
+      }
       this.#host?.log.info(
         `wvd: chest QTE reroll ${this.#qteRerolls}/${cfg.maxRerolls}: `
           + (cancelled.ok ? 'the bar was left' : `the bar could not be left (${cancelled.reason})`)

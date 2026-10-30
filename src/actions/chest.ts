@@ -42,9 +42,30 @@ export const DISARM_SCAN = 0x39;
  */
 export const QTE_CANCEL_AT: Point = { x: 738, y: 758 };
 
-/** Leave the QTE without spending an attempt (chest §4): the opener panel comes back. */
+/** Leave the QTE without spending an attempt (chest §4). */
 export async function cancelQte(actuator: Actuator): Promise<ActionResult> {
   return actuator.tap(QTE_CANCEL_AT);
+}
+
+/**
+ * The step that re-engages a chest after a cancel: **S (Windows set-1 `0x1f`), held long enough to
+ * leave the tile** — the operator's rule (2026-10-31): after a cancel the party stands *on* the
+ * chest's tile, so the chest cannot be seen and no prompt is offered; one step back makes it
+ * adjacent again, and the game draws 打开. Measured live: a 300 ms hold moved the party one tile
+ * back and the chest prompt appeared on the next frame. WASD is camera-relative, and the cancel
+ * leaves the party facing the chest it just opened, so S is the step away from it.
+ *
+ * The hold is the navigation key `hazardEscapeHoldMs` (250 ms), the same "one WASD step" the
+ * contracts already own; the caller passes the configured value.
+ */
+export const CHEST_STEP_BACK_SCAN = 0x1f;
+
+/** The WASD step hold when a caller has no configured one (contracts §8 navigation floor). */
+const STEP_HOLD_MS = 250;
+
+/** Step one tile away from the chest so the 打开 prompt returns (the reroll's second half). */
+export async function stepBackFromChest(actuator: Actuator, holdMs: number = STEP_HOLD_MS): Promise<ActionResult> {
+  return actuator.holdKey(CHEST_STEP_BACK_SCAN, Math.max(1, holdMs));
 }
 
 /** The pause between two UI taps: the game draws the first button's state before the second lands. */
