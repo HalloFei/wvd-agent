@@ -5,7 +5,7 @@ import type { Frame, Observation, Perceiver, PixelRect, QteZone, RgbaImage } fro
 import { cropBgra } from '../src/engine/crop.mjs';
 import { ChestPerceiver, parseQte, qteWindow } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
-import { chooseQtePass, planTap, qteVelocity, type QtePass } from '../src/policy/qte.ts';
+import { brakeAccelerationPxPerS2, brakeDistancePx, brakeTimeS, chooseQtePass, planTap, qteVelocity, type QtePass } from '../src/policy/qte.ts';
 
 /**
  * The six stills are one chest, recorded 2026-10-24 01:41 (`testdata/chest/2026-10-24-qte-0141/`).
@@ -740,5 +740,35 @@ describe('the native narrow-zone QTE (2026-10-31)', () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.qte.zones.map((zone) => zone.to - zone.from)).toEqual([30, 43]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The brake model (2026-10-31)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Measured from the one recording that contains a stop (`2026-10-24-qte-recorded/qte.mp4`, 30 fps,
+ * extracted to `.tmp/qtefull/`): the marker ran at 600–630 px/s, then the speed collapsed — 240,
+ * 240, 225, 180, 165, 135, 120, 120, 60, 60, 60, 30, 30, 0 px/s over 15 frames — and parked 68 px
+ * past the press. Not a constant deceleration: the head is ~12 000 px/s² and the tail ~450 px/s².
+ * The shape is exponential, so the acceleration is proportional to the speed (exponent 1), which
+ * makes the brake time a constant τ and the carry proportional to speed.
+ */
+describe('the brake model', () => {
+  it('keeps the recorded carry at the recorded speed', () => {
+    expect(brakeDistancePx(610, 6000)).toBeCloseTo(62, 0);
+    expect(brakeTimeS(610, 6000)).toBeCloseTo(0.1017, 3);
+  });
+
+  it('scales the carry with speed, not with its square (the exponential stop)', () => {
+    expect(brakeDistancePx(305, 6000)).toBeCloseTo(brakeDistancePx(610, 6000) / 2, 1);
+    expect(brakeTimeS(305, 6000)).toBeCloseTo(brakeTimeS(610, 6000), 6);
+  });
+
+  it('refuses a model it cannot evaluate instead of inventing a carry', () => {
+    expect(brakeDistancePx(0, 6000)).toBe(0);
+    expect(brakeDistancePx(610, 0)).toBe(0);
+    expect(Number.isNaN(brakeAccelerationPxPerS2(610, Number.NaN))).toBe(true);
   });
 });

@@ -64,6 +64,61 @@ const VELOCITY_MIN_BASELINE_MS = 66;
 export const VELOCITY_EASED_FLOOR_PX_PER_S = 300;
 
 // ---------------------------------------------------------------------------------------------
+// The brake model (2026-10-31)
+// ---------------------------------------------------------------------------------------------
+
+/** The speed the brake acceleration is quoted at: the recorded bar's steady speed (research §8). */
+export const BRAKE_REFERENCE_PX_PER_S = 610;
+
+/**
+ * How the brake acceleration scales with speed: `a(v) = aRef · (|v| / vRef)^exponent`.
+ *
+ * **1, from the recording.** The 2026-10-24 `qte.mp4` is the one recording that contains a stop
+ * (the operator's press). Frame by frame (30 fps, 1920x1080, extracted to `.tmp/qtefull/`), the
+ * marker runs at 600-630 px/s, then at the press frame — 841.5 px — the speed collapses and glides:
+ * 240, 240, 225, 180, 165, 135, 120, 120, 60, 60, 60, 30, 30, 0 px/s over 15 frames, parking at
+ * 909.5 px. The brake is **not a constant deceleration**: the first frame loses ~370 px/s
+ * (~12 000 px/s²) and the tail decays with a ≈ 450 px/s². The shape is exponential — the speed
+ * proportional to itself — i.e. `a(v) ∝ v`, which is this exponent. The carry is 68 px at
+ * 610 px/s, i.e. a brake time tau = 68 / 610 = 0.112 s.
+ *
+ * The exponent is a measurement, not a preference: the corpus has one stop, so it is one speed's
+ * worth of evidence. A stop recorded at a second speed (the live bars run at 470-500 px/s) decides
+ * whether 1 holds; the fitting procedure is in `brakeDistancePx`.
+ */
+export const BRAKE_SPEED_EXPONENT = 1;
+
+/** `a(v)` in px/s²: the reference acceleration scaled by the speed. */
+export function brakeAccelerationPxPerS2(v: number, aRefPxPerS2: number): number {
+  const speed = Math.abs(v);
+  if (!Number.isFinite(speed) || !Number.isFinite(aRefPxPerS2)) return Number.NaN;
+  return aRefPxPerS2 * Math.pow(speed / BRAKE_REFERENCE_PX_PER_S, BRAKE_SPEED_EXPONENT);
+}
+
+/** The brake time, seconds: `t = |v| / a(v)`. With the exponent 1 this is a constant tau. */
+export function brakeTimeS(v: number, aRefPxPerS2: number): number {
+  const speed = Math.abs(v);
+  const acceleration = brakeAccelerationPxPerS2(speed, aRefPxPerS2);
+  if (!(speed > 0) || !(acceleration > 0) || !Number.isFinite(acceleration)) return 0;
+  return speed / acceleration;
+}
+
+/**
+ * How far the marker carries after the press — the operator's rule, *brake distance = speed x brake
+ * time*: `d = |v| · t` with `t = |v| / a(v)`. At the exponent 1 that is `d = |v| · tau`: a carry
+ * proportional to speed, which is what the recorded stop shows (68 px at 610 px/s).
+ *
+ * **Fitting one stop:** the carry is `rest_x - tap_x - v · (delay + latency)`; then
+ * `tau = carry / |v|` and `aRef = vRef / tau`. The 2026-10-24 stop gives tau = 0.112 s, so
+ * aRef ≈ 5 450; the plan uses 6 000 — the same carry as the old constant-deceleration term at
+ * 610 px/s (`v² / (2 · 3000)` = 62 px) — so every plan at the recorded speed is unchanged and the
+ * speed dependence is the new part.
+ */
+export function brakeDistancePx(v: number, aRefPxPerS2: number): number {
+  return Math.abs(v) * brakeTimeS(v, aRefPxPerS2);
+}
+
+// ---------------------------------------------------------------------------------------------
 // planTap (contracts §7)
 // ---------------------------------------------------------------------------------------------
 
@@ -92,7 +147,10 @@ export function planTap(input: PlanTapInput): TapPlan | null {
   if (!Number.isFinite(latencyMs) || !Number.isFinite(decelPxPerS2) || decelPxPerS2 <= 0) return null;
   if (!Number.isFinite(horizonMs) || horizonMs < 0) return null;
 
-  const lead = v * (latencyMs / 1_000) + Math.sign(v) * ((v * v) / (2 * decelPxPerS2));
+  // The carry is the brake model's, not an inline constant deceleration: `decelPxPerS2` keeps its
+  // measured meaning (the uniform-deceleration fit), and the model's reference acceleration is twice
+  // it, which is the same carry at the recorded speed under `d = v · t` (see `brakeDistancePx`).
+  const lead = v * (latencyMs / 1_000) + Math.sign(v) * brakeDistancePx(v, 2 * decelPxPerS2);
   const reversal = v > 0 ? BOUNCE_RIGHT_X : BOUNCE_LEFT_X;
   const horizonS = horizonMs / 1_000;
 

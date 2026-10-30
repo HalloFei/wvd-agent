@@ -60,10 +60,27 @@ tap when  x_now + lead == zone_centre    # i.e. x_now == zone_centre - lead
 5.8 % worst-case velocity error, and duplicate frames in a recording turn a naive pair into 0 then
 1215 px/s.
 
-`qteDecelPxPerS2` ships as **3000 px/s²**, which the recorded stop now supports to within 10 % (the
-fitted range is 2740–3100). The 44 px reading would have implied 4228, so the constant was right for
-the wrong reason. Every tap the agent stamps refines it; until then, `planTap` must keep its refusal
-threshold (`qteMinWindowMs`) ahead of the error this constant can introduce.
+**Measured 2026-10-31, and the constant model is wrong.** The recording is the only one with a stop
+in it (`testdata/chest/2026-10-24-qte-recorded/qte.mp4`, 30 fps, extracted frame by frame): the
+marker runs at 600–630 px/s, then at the press frame (x 841.5) the speed collapses — 240, 240, 225,
+180, 165, 135, 120, 120, 60, 60, 60, 30, 30, 0 px/s over 15 frames — and it parks at 909.5 px. The
+carry is **68 px in ~0.5 s**, and the deceleration is **not constant**: the first frame loses
+~370 px/s (~12 000 px/s²) and the tail decays at ~450 px/s². The profile is exponential, i.e. the
+acceleration is proportional to the speed — a drag, not a constant brake.
+
+So the model is the operator's (2026-10-31): brake time `t = v / a(v)`, brake distance
+`d = v · t`, with `a(v) = aRef · (v / 610)^exponent` and **exponent 1** from this stop (speed
+proportional to itself). At the exponent 1 the brake time is a constant `τ = d / v = 0.112 s` and
+the carry is proportional to speed — `brakeTimeS`/`brakeDistancePx` in `src/policy/qte.ts`.
+`qteDecelPxPerS2` keeps its measured meaning (the uniform-deceleration fit, 2740–3100 px/s²); the
+model's reference acceleration is twice it, which reproduces the old 62 px carry at 610 px/s and
+scales the carry with speed away from it.
+
+The corpus has **one** stop. A second speed is owed (the live bars run at 470–500 px/s; their two
+2026-10-31 presses parked ~4 px past the press, which is not a believable brake and is suspected of
+never engaging), and only then can the exponent be checked rather than fitted once. Every tap the
+agent stamps refines it; until then, `planTap` must keep its refusal threshold (`qteMinWindowMs`)
+ahead of the error this constant can introduce.
 
 At 500 px/s the lead is ~80 px; at 1200 px/s it is ~330 px, wider than a zone. Fast chests are
 tapped **before the marker reaches the zone**, which is why the decision must be made within the
@@ -112,8 +129,14 @@ This turns the hardest case — a fast bar with a long lead — into a retry ins
 
 ## 5. Choosing the opener
 
-- 陷阱解除 sets the zone width: higher is better, and the widest zone is worth more than a square
-  metre of precision.
+- **陷阱解除 does not set the zone width — it is the stat the width is compared against.** The
+  width is the chest's difficulty (operator, 2026-10-31): the dungeon tier decides it (an easy
+  dungeon asks for a low stat), the chest's type or rarity moves it, and there is an RNG roll inside
+  a rarity. Measured live in one session: 30/43 px on one chest with 拉纳维尔 (38) opening, 92 px on
+  the next with the same card, 39 px on 2026-10-25 with 爱丽丝 (43), and 194–225 px on the
+  2026-10-24 chests. So a higher 陷阱解除 is better because it clears more chests, not because it
+  draws wider zones — and **no code may derive a width from a member, or gate on one**.
+- The widest zone is worth more than a square metre of precision: rank by disarm first.
 - 陷阱发现 decides whether the QTE happens at all; failing it costs willpower but keeps the loot.
 - The class sets the attempts.
 - A character with 陷阱恐惧 cannot be chosen; one close to 60 willpower should not be, unless

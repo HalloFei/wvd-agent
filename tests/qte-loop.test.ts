@@ -214,9 +214,9 @@ describe('timeQte', () => {
     expect(out.target).toBe(1111);
     expect(out.tapX).toBe(740);
     // §7: the plan is a delay from the reading's clock, never a timestamp.
-    expect(out.atMs).toBeCloseTo(451.1, 0);
-    // The one pre-press sleep is the plan's: due at 66 + 451.14, asked at 76 (the sample cost).
-    expect(clock.waits[0]).toBeCloseTo(441.1, 0);
+    expect(out.atMs).toBeCloseTo(450.5, 0);
+    // The one pre-press sleep is the plan's: due at 66 + 450.54, asked at 76 (the sample cost).
+    expect(clock.waits[0]).toBeCloseTo(440.5, 0);
     expect(presses).toHaveLength(1);
     expect(presses[0]).toBeCloseTo(66 + out.atMs, 0);   // the reading's clock plus the plan's delay
     expect(out.restX).toBe(900);
@@ -300,7 +300,7 @@ describe('timeQte', () => {
     // The press is the fresh 566 ms pass's: marker 800, its plan's instant 566 + ~352 ms. The stale
     // frame at 66 ms came first and named an instant only ~51 ms away; it must not have pressed.
     expect(out.tapX).toBe(800);
-    expect(out.atMs).toBeCloseTo(352.1, 0);
+    expect(out.atMs).toBeCloseTo(351.5, 0);
     expect(presses).toHaveLength(1);
     expect(presses[0]).toBeCloseTo(566 + out.atMs, 0);
   });
@@ -775,7 +775,7 @@ describe('bandSampler', () => {
     // 1111 is the measured right zone's centre — (1092 + 1130) / 2 — the same x the wide fixture has.
     expect(out.target).toBe(1111);
     expect(out.tapX).toBe(740);
-    expect(out.atMs).toBeCloseTo(451.1, 0);
+    expect(out.atMs).toBeCloseTo(450.5, 0);
     expect(presses).toHaveLength(1);
     expect(out.restX).toBe(900);
     expect(out.restSettled).toBe(true);

@@ -102,12 +102,13 @@ describe('replay harness', () => {
       // their predicted press positions agree with the recording.
       expect(report.planViolations).toEqual([]);
       expect(report.planned).toBeGreaterThanOrEqual(25);
-      // 38 of the 51 plans have a press position the recording can check. Seven name instants
-      // after the operator's own press (~3.3 s), when the marker is braking to rest, so there is no
-      // straight-line motion to compare them with; six more name an instant within half a frame of
-      // their own reading, which resolves back to that reading — predicting its position from
-      // itself is a tautology, so they are skipped rather than counted as compared.
-      expect(report.planPositions).toBe(38);
+      // 39 of the 51 plans have a press position the recording can check (the brake model of
+      // 2026-10-31 moved the instants by ~0.6 ms, which flips one plan into the checkable set). The
+      // rest name instants after the operator's own press (~3.3 s), when the marker is braking to
+      // rest and there is no straight-line motion to compare them with, or an instant within half a
+      // frame of their own reading — predicting that position from itself is a tautology — and are
+      // skipped rather than counted as compared.
+      expect(report.planPositions).toBe(39);
     },
     60_000,
   );
