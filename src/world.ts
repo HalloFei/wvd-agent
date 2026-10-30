@@ -65,6 +65,7 @@ import type {
 } from './contracts.ts';
 import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
+import { chooseQtePass, type QtePass } from './policy/qte.ts';
 import {
   fallbackPhrase,
   observationLine,
@@ -111,6 +112,12 @@ export interface RouteCommands {
   acceptChestPrompt(): Promise<ActionResult>;
   /** Press 倍速 then 自动 once, for the battle on screen. */
   enableBattleAuto(): Promise<ActionResult>;
+  /**
+   * Leave the chest QTE without spending an attempt (chest §4): the round ✕ at the left of the
+   * hotbar. Used by the attempt-vs-reroll policy, which changes the bar's speed by re-selecting the
+   * opener; cancelling a floor chest's QTE is free.
+   */
+  cancelQte(): Promise<ActionResult>;
 }
 
 /** One session's collaborators: everything the loop drives, for as long as it runs. */
@@ -418,6 +425,12 @@ export class WvdWorld implements World {
   #captureFailures = 0;
   #willpower: readonly number[] = [];
   #chestsRemaining = INITIAL_CHEST_BUDGET;
+  /** Rerolls spent on the chest's QTE; reset when a chest starts or ends (operator rule). */
+  #qteRerolls = 0;
+  /** The pass the policy saw on the last decision, recorded only while the baseline is filling. */
+  #lastQtePass: QtePass | null = null;
+  /** The reroll budget is spent with nothing better: the bar is left alone until the screen moves. */
+  #qteGivenUp = false;
   /** Commands sent and waiting for their screen to answer (one at a time). */
   #inFlight: InFlight | null = null;
   /** Commands that changed nothing on this screen epoch: never re-sent until the farm advances. */
@@ -732,6 +745,9 @@ export class WvdWorld implements World {
       this.#lastMapRead = null;
       this.#lastIntent = null;
       this.#lastObservation = null;
+      this.#qteRerolls = 0;
+      this.#lastQtePass = null;
+      this.#qteGivenUp = false;
       this.#ticks = 0;
       this.#captureFailures = 0;
       this.#willpower = [];
@@ -969,6 +985,13 @@ export class WvdWorld implements World {
       default:
         // `dungeon`, `loading`, `town`, `worldmap`, `unknown`: the map readout is the measure.
         break;
+    }
+    // The reroll budget is per chest: the prompt starts one, and loot or a battle closes it. The
+    // panel (`chest-open`) deliberately does not reset it — a reroll goes QTE → panel → QTE.
+    if (observation.screen === 'chest-prompt' || observation.screen === 'loot' || observation.screen === 'combat') {
+      this.#qteRerolls = 0;
+      this.#lastQtePass = null;
+      this.#qteGivenUp = false;
     }
     this.#lastScreen = observation.screen;
     if (active) this.#lastProgressAtMs = now;
@@ -1351,6 +1374,9 @@ export class WvdWorld implements World {
    * settled. An unsettled `restX` is a moving marker, not a rest, and the fit must be able to tell.
    */
   async #timeQte(session: WvdSession, frame: Frame): Promise<void> {
+    // The reroll budget is spent and nothing beat the baseline: leave the bar alone until the screen
+    // moves. Trying again would only re-decide the same pass every tick.
+    if (this.#qteGivenUp) return;
     // The dry run reports the intent whatever the window size: it sends nothing either way, and an
     // operator reading it must see what the live loop would do, not a live-sounding refusal.
     if (this.#cfg.dryRun) {
@@ -1389,6 +1415,16 @@ export class WvdWorld implements World {
         decelPxPerS2: cfg.qteDecelPxPerS2,
         minWindowMs: cfg.qteMinWindowMs,
         budgetMs: cfg.qteSubLoopMs,
+        // The attempt-vs-reroll rule (operator, 2026-10-31): five rerolls per chest, the first two
+        // rerolled passes recorded as the baseline, and only a later pass that beats both baselines
+        // is taken. The callback also stashes the pass for the recording below; the policy is pure.
+        choosePass: (pass) => {
+          this.#lastQtePass = pass;
+          return chooseQtePass(pass, {
+            rerolls: this.#qteRerolls,
+            budget: Math.max(0, cfg.maxRerolls),
+          }, cfg.qteMinWindowMs);
+        },
       });
     } catch (error) {
       this.#host?.log.warn(`wvd: the chest QTE could not be timed: ${message(error)}`);
@@ -1397,6 +1433,28 @@ export class WvdWorld implements World {
     // A stop can land inside the sub-loop. Nothing is acted on — or reported as this session's —
     // after it, exactly as the tick itself re-checks after every await.
     if (!this.#running || this.#session !== session) return;
+    if (!outcome.ok && outcome.reason === 'reroll') {
+      // Record the pass while the baseline is filling (the first two *rerolls*), then cancel the QTE:
+      // a cancellation costs no attempt (chest §4), and the panel returns for the next card click.
+      const pass = this.#lastQtePass;
+      const cancelled = await this.#commands.cancelQte();
+      if (cancelled.ok) this.#qteRerolls += 1;
+      this.#host?.log.info(
+        `wvd: chest QTE reroll ${this.#qteRerolls}/${cfg.maxRerolls}: `
+          + (cancelled.ok ? 'the bar was left' : `the bar could not be left (${cancelled.reason})`)
+          + `, window ${Math.round(pass?.windowMs ?? 0)} ms`,
+      );
+      return;
+    }
+    if (!outcome.ok && outcome.reason === 'no-better-pass') {
+      // The budget is gone and no reroll beat the first two: the operator accepted the failure.
+      this.#qteGivenUp = true;
+      this.#host?.log.warn(
+        `wvd: chest QTE given up after ${this.#qteRerolls} rerolls: no pass cleared `
+          + `the ${this.#cfg.qteMinWindowMs} ms floor`,
+      );
+      return;
+    }
     if (!outcome.ok) {
       // The normal end of a pass is not a failure: a dimmed 解除 (including right after our own
       // press) or a bar that left is `info`; the rest are states where the loop wanted to act.

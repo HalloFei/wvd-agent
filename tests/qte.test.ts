@@ -5,7 +5,7 @@ import type { Frame, Observation, Perceiver, PixelRect, QteZone, RgbaImage } fro
 import { cropBgra } from '../src/engine/crop.mjs';
 import { ChestPerceiver, parseQte, qteWindow } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
-import { planTap, qteVelocity } from '../src/policy/qte.ts';
+import { chooseQtePass, planTap, qteVelocity, type QtePass } from '../src/policy/qte.ts';
 
 /**
  * The six stills are one chest, recorded 2026-10-24 01:41 (`testdata/chest/2026-10-24-qte-0141/`).
@@ -665,5 +665,80 @@ describe('the half-tick budget', () => {
     samples.sort((a, b) => a - b);
     const p50 = samples[Math.floor(samples.length / 2)];
     expect(p50).toBeLessThan(50);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The attempt-vs-reroll policy (operator rule, 2026-10-31)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The rule as the operator stated it: **each open or reroll is judged on its own pass — press if
+ * the pass can succeed, reroll if it cannot — and the budget is a ceiling, not a quota.** A pass can
+ * succeed when the marker's time inside the aimed zone clears `qteMinWindowMs` (150 ms at default
+ * settings), the same floor `timeQte` applies to the plan's lead time.
+ *
+ * The reroll is what makes this decidable at all: cancelling a floor chest's QTE costs no attempt
+ * (chest §4), so an unacceptable bar is cancelled rather than gambled on, and the next card click
+ * changes the marker's speed.
+ */
+describe('chooseQtePass', () => {
+  const budget = 5;
+  const floor = 150;
+  const pass = (windowMs: number): QtePass => ({ windowMs, speedPxPerS: 600 });
+
+  it('presses the first pass that clears the floor, without spending a reroll', () => {
+    expect(chooseQtePass(pass(300), { rerolls: 0, budget }, floor)).toBe('press');
+    expect(chooseQtePass(pass(150), { rerolls: 0, budget }, floor)).toBe('press');
+  });
+
+  it('rerolls a pass that cannot be pressed while budget remains', () => {
+    expect(chooseQtePass(pass(149), { rerolls: 0, budget }, floor)).toBe('reroll');
+    expect(chooseQtePass(pass(40), { rerolls: 4, budget }, floor)).toBe('reroll');
+  });
+
+  it('presses a good pass after rerolls, so the budget is never spent just because it exists', () => {
+    expect(chooseQtePass(pass(220), { rerolls: 3, budget }, floor)).toBe('press');
+  });
+
+  it('gives up when the budget is spent and the bar still cannot be pressed', () => {
+    expect(chooseQtePass(pass(60), { rerolls: budget, budget }, floor)).toBe('give-up');
+    expect(chooseQtePass(pass(Number.NaN), { rerolls: budget, budget }, floor)).toBe('give-up');
+  });
+
+  it('treats a zero budget as "no rerolls", not as an unbounded one', () => {
+    expect(chooseQtePass(pass(60), { rerolls: 0, budget: 0 }, floor)).toBe('give-up');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The native 1920 narrow-zone QTE (captured live 2026-10-31)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The fixture the card owed: a **native 1920×1080** capture of a narrow-zone QTE, taken live on
+ * 2026-10-31 02:50 from B1F-巨坑- with 拉纳维尔 (陷阱解除 38) as the opener. The zones measure 30 px
+ * and 43 px — narrower than the 39 px the 1280 escalation frame implied — and the full frame plus the
+ * engine's own 631×699 bar window are both committed. The width gate is gone (`ZONE_MIN_WIDTH` 4 px,
+ * structure-gated), so both must read.
+ */
+describe('the native narrow-zone QTE (2026-10-31)', () => {
+  const NARROW = new URL('../testdata/chest/2026-10-31-narrow-qte/', import.meta.url);
+
+  it('reads the narrow zones from the full 1920 frame', async () => {
+    const parsed = await parseQte(await jpegFrame('frame.jpg', 1_000, NARROW));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.qte.zones.map((zone) => zone.to - zone.from)).toEqual([30, 43]);
+    expect(parsed.qte.button).toEqual({ x: 966, y: 662 });
+    expect(parsed.confidence).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('reads the same zones from the 631x699 bar window at its origin', async () => {
+    const origin = qteWindow({ width: 1920, height: 1080 });
+    const parsed = await parseQte(await jpegFrame('bar.jpg', 1_000, NARROW), undefined, origin);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.qte.zones.map((zone) => zone.to - zone.from)).toEqual([30, 43]);
   });
 });

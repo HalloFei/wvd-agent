@@ -133,7 +133,7 @@ describe('WVD World definition', () => {
       enabled: false, dryRun: false, tickMs: 100, sessionMaxMinutes: 120, stallStopSeconds: 120,
       gameWindowTitle: 'WizardryVariantsDaphne', jpegQuality: 75, engineTimeoutMs: 5000, pressHoldMs: 60, escalationImageWidth: 1280,
       mapOpenTimeoutMs: 3000, openerPanelTimeoutMs: 10000,
-      willpowerFloor: 60, maxRerolls: 3, rerollLeadRatio: 0.5, qteLatencyMs: 75, qteDecelPxPerS2: 3000, qteMinWindowMs: 150,
+      willpowerFloor: 60, maxRerolls: 5, rerollLeadRatio: 0.5, qteLatencyMs: 75, qteDecelPxPerS2: 3000, qteMinWindowMs: 150,
       qteAttemptsFallback: 2, qteSubLoopMs: 4000,
       autoBattleEnableAttempts: 3, fightTimeoutMs: 180000, escalateMaxPerHour: 20, escalateTimeoutMs: 90000, stopHotkey: 'Ctrl+Alt+W',
     });

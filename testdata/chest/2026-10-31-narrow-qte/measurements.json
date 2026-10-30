@@ -1,0 +1,35 @@
+{
+  "capturedAt": "2026-10-31T02:50+08:00",
+  "game": "Wizardry Variants Daphne (Steam), 1920x1080, B1F -巨坑-, walked to the chest at map (2,21) from (15,23)",
+  "note": "The native 1920 narrow-zone QTE the card owed. One chest, opened with the WEAKEST opener on purpose (拉纳维尔, 陷阱解除 38) to force narrow zones; the 2026-10-25 evidence was a 1280 escalation frame scaled x1.5.",
+  "opener": {
+    "name": "拉纳维尔",
+    "detect": 34,
+    "disarm": 38,
+    "cardCentre": [
+      1139,
+      784
+    ]
+  },
+  "bar": {
+    "zonesPx": [
+      30,
+      43
+    ],
+    "markerX": 791.5,
+    "button": [
+      966,
+      662
+    ],
+    "confidence": 0.9,
+    "enabled": true,
+    "attempts": null
+  },
+  "files": {
+    "frame.jpg": "the full 1920x1080 capture (frame 1)",
+    "frameb.jpg": "the full 1920x1080 capture (frame 2, marker moved)",
+    "bar.jpg": "the engine QTE window, 631x699 at origin (645,36) — the specific window the bar lives in",
+    "barb.jpg": "the same window from frame 2"
+  },
+  "policyNote": "This pass is the reroll case: a 30 px zone at the measured ~600 px/s is a ~50 ms window, under qteMinWindowMs 150, so chooseQtePass answers \"reroll\" and the World cancels the QTE (maxRerolls 5)."
+}

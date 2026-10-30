@@ -89,7 +89,8 @@ function describe(observation: Observation): Record<string, unknown> {
       floorTitle: observation.map.floorTitle,
       titleKey: observation.map.titleKey,
       player: observation.map.player,
-      icons: observation.map.icons.length,
+      origin: observation.map.origin,
+      icons: observation.map.icons.map((icon) => ({ kind: icon.kind, at: icon.at })),
     };
   }
   return base;

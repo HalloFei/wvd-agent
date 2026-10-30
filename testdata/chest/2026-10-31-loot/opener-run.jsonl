@@ -1,0 +1,9 @@
+{"t":"0.62","level":"info","message":"wvd: the game is foreground"}
+{"t":"0.71","level":"warn","message":"wvd: capture failed (1/3); the engine may still be warming up","data":"capture timeout: no-frame"}
+{"t":"0.71","level":"debug","message":"probe: ticking","data":{"ticks":1,"screenTimeMs":715}}
+{"t":"0.73","level":"warn","message":"wvd: capture failed (2/3); the engine may still be warming up","data":"capture timeout: no-frame"}
+{"t":"1.73","level":"debug","message":"probe: ticking","data":{"ticks":9,"screenTimeMs":1729}}
+{"t":"1.94","level":"info","message":"wvd: open-chest took effect: the screen is now chest-open"}
+{"t":"1.94","level":"info","message":"wvd: opening the chest with #6 (陷阱解除 87, 陷阱发现 82) at the bottom-right card, 1139,908"}
+{"t":"2.02","level":"info","message":"host: event pushed","data":{"type":"wvd.stopped","cursor":1}}
+{"verdict":{"ticks":11,"clickedAtS":2.01,"stillRunningWhenStopped":true,"gaveUp":false,"latched":false,"refused":false,"answered":true,"clicked":true,"warnings":["wvd: capture failed (1/3); the engine may still be warming up","wvd: capture failed (2/3); the engine may still be warming up"]}}

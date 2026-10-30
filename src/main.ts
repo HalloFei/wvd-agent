@@ -23,7 +23,7 @@ import {
   type Point,
 } from './contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
-import { acceptChestPrompt, enableBattleAuto } from './actions/chest.ts';
+import { acceptChestPrompt, cancelQte, enableBattleAuto } from './actions/chest.ts';
 import { timeQte } from './actions/qte.ts';
 import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
@@ -186,6 +186,8 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       automoveToExit: () => automoveToExit(actuator, pressHoldMs()),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       enableBattleAuto: () => enableBattleAuto(actuator),
+      // The attempt-vs-reroll policy's action: leave the QTE (free, chest §4) and re-click a card.
+      cancelQte: () => cancelQte(actuator),
     },
     openSession,
   });

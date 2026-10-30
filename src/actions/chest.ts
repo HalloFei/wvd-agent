@@ -31,6 +31,22 @@ export const BATTLE_AUTO_AT: Point = { x: 1231, y: 708 };
  */
 export const DISARM_SCAN = 0x39;
 
+/**
+ * The QTE's cancel control: the round ✕ left of the hotbar, at (738, 758) on the 1920×1080 client.
+ *
+ * **Scaled, not natively measured.** The live 2026-10-31 QTE frame was saved at 1280 wide
+ * (`.tmp/qte-now.jpg`: the ✕ centre is (492, 505) there), so this point is that reading × 1.5. The
+ * chest spec §4 makes the cancellation free (no attempt is spent on a floor chest), which is what
+ * makes the attempt-vs-reroll policy possible at all; a native 1920 capture of the QTE replaces this
+ * number with a measured one (the same capture the narrow-bar fixture is owed).
+ */
+export const QTE_CANCEL_AT: Point = { x: 738, y: 758 };
+
+/** Leave the QTE without spending an attempt (chest §4): the opener panel comes back. */
+export async function cancelQte(actuator: Actuator): Promise<ActionResult> {
+  return actuator.tap(QTE_CANCEL_AT);
+}
+
 /** The pause between two UI taps: the game draws the first button's state before the second lands. */
 const TAP_SETTLE_MS = 300;
 

@@ -153,3 +153,50 @@ export function qteVelocity(previous: QteSample, last: QteSample, now: QteSample
 
   return (now.markerX - previous.markerX) / (firstS + secondS);
 }
+// ---------------------------------------------------------------------------------------------
+// The attempt-vs-reroll policy (the operator's rule, 2026-10-31)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One pass of the bar, as the policy judges it: how long the marker spends crossing the zone the
+ * plan aims at. A slower marker or a wider zone is a longer pass, and a longer pass is the better
+ * bar to take.
+ */
+export interface QtePass {
+  readonly windowMs: number;
+  readonly speedPxPerS: number;
+}
+
+/** What to do with the bar in front of us. */
+export type QtePassChoice = 'press' | 'reroll' | 'give-up';
+
+/** What this chest's QTE has seen: the recorded baseline passes, and the rerolls spent. */
+export interface QteRerollState {
+  /** Rerolls spent on this chest (a cancelled QTE, not an attempt — chest §4). */
+  readonly rerolls: number;
+  /** `worlds.wvd.maxRerolls`: 5. A ceiling, never a quota — the first good pass ends it. */
+  readonly budget: number;
+}
+
+/**
+ * The operator's rule (2026-10-31, refined the same day): **judge each open or reroll on its own
+ * pass — press if this pass can succeed, reroll if it cannot — and spend the budget only while that
+ * keeps being false.**
+ *
+ * "Can succeed" is the physics the planner already uses: the marker spends `windowMs` inside the
+ * zone the plan aims at, and a press is only schedulable when that window clears `minWindowMs` —
+ * the same floor `actions/qte.ts` applies to the lead time. A pass that does not clear it is not
+ * gambled on: the QTE is cancelled and an opener re-selected, which changes the marker's speed
+ * (chest §4 — a floor chest's cancellation costs no attempt, so the reroll is free).
+ *
+ * `budget` is `maxRerolls` (five): at most five cancelled bars after the first. An acceptable pass
+ * is pressed the moment it appears, so the budget is never spent just because it exists.
+ */
+export function chooseQtePass(
+  pass: QtePass,
+  state: QteRerollState,
+  minWindowMs: number,
+): QtePassChoice {
+  if (Number.isFinite(pass.windowMs) && pass.windowMs >= minWindowMs) return 'press';
+  return state.rerolls < state.budget ? 'reroll' : 'give-up';
+}

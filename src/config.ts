@@ -66,7 +66,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   hazardEscapeHoldMs: 250,
   resumeMaxAttempts: 2,
   willpowerFloor: 60,
-  maxRerolls: 3,
+  maxRerolls: 5,
   rerollLeadRatio: 0.5,
   qteLatencyMs: 75,
   qteDecelPxPerS2: 3000,

@@ -1,0 +1,12 @@
+{"t":"0.22","level":"info","message":"wvd: the game is foreground"}
+{"t":"1.50","level":"info","message":"wvd: chest QTE pressed: v=-768.4938275330121 delayMs=246.4984046136187 target=807.5 tapX=1153 restX=922.5 settled=true"}
+{"t":"1.50","level":"debug","message":"probe: ticking","data":{"ticks":1,"screenTimeMs":1502}}
+{"t":"1.61","level":"info","message":"wvd: the chest QTE was not pressed: resolved"}
+{"t":"1.73","level":"info","message":"wvd: the chest QTE was not pressed: resolved"}
+{"t":"1.81","level":"info","message":"wvd: the chest QTE was not pressed: resolved"}
+{"t":"2.04","level":"info","message":"host: event pushed","data":{"type":"wvd.stuck","cursor":1}}
+{"t":"2.04","level":"info","message":"wvd: the escalation was delivered","data":{"id":"esc-1","cursor":1}}
+{"t":"92.04","level":"warn","message":"wvd: the escalation timed out","data":{"id":"esc-1","waitedMs":90107.9454,"actions":0}}
+{"t":"92.29","level":"debug","message":"probe: ticking","data":{"ticks":5,"screenTimeMs":92288}}
+{"t":"92.30","level":"info","message":"host: event pushed","data":{"type":"wvd.stopped","cursor":2}}
+{"verdict":{"ticks":5,"clickedAtS":null,"stillRunningWhenStopped":true,"gaveUp":false,"latched":false,"refused":false,"answered":false,"clicked":false,"warnings":["wvd: the escalation timed out"]}}

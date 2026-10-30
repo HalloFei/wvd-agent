@@ -61,7 +61,7 @@
  */
 import type { ActionResult, Frame, FrameSource, Point, QteZone } from '../contracts.ts';
 import { parseQte, qteWindow, type QteRefusalReason } from '../perception/chest.ts';
-import { planTap, qteVelocity, type QteSample } from '../policy/qte.ts';
+import { planTap, qteVelocity, type QtePass, type QtePassChoice, type QteSample } from '../policy/qte.ts';
 
 // ---------------------------------------------------------------------------------------------
 // Measured constants
@@ -128,6 +128,8 @@ export type QteRefusal =
   | 'no-velocity'       // fewer than three readings arrived before the budget ran out
   | 'no-reachable-zone' // speeds came, but no zone centre was reachable inside the horizon
   | 'budget-spent'      // three readings or more, no press, and nothing more specific to report
+  | 'reroll'            // the caller's attempt-vs-reroll policy took the bar as not worth pressing
+  | 'no-better-pass'     // the reroll budget is spent and no pass beat the recorded baseline
   | 'press-refused'     // the actuator declined the press (not foreground, engine gone)
   | 'misconfigured';    // bad budget, minWindowMs or clock: refused before sampling
 
@@ -165,6 +167,12 @@ export interface QteTimingOptions {
   readonly decelPxPerS2: number;
   readonly minWindowMs: number;
   readonly budgetMs: number;
+  /**
+   * The attempt-vs-reroll decision (operator rule 2026-10-31). Absent means "press whenever a pass
+   * clears the floor", the v1 behaviour. `reroll` returns before any press so the caller can cancel
+   * the QTE and change the speed; `give-up` ends the budget without pressing.
+   */
+  readonly choosePass?: ((pass: QtePass) => QtePassChoice) | undefined;
 }
 
 /**
@@ -187,7 +195,7 @@ export type QteTimer = (options: QteTimingOptions) => Promise<QteOutcome>;
  * budget plus the rest read's settle window.
  */
 export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
-  const { sampler, press, now, wait, latencyMs, decelPxPerS2, minWindowMs, budgetMs } = options;
+  const { sampler, press, now, wait, latencyMs, decelPxPerS2, minWindowMs, budgetMs, choosePass } = options;
 
   // A mis-typed number must not become a press, and an unbounded loop is the one failure this
   // module could not report as a value: refuse both before the first sample. `minWindowMs` belongs
@@ -255,6 +263,21 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
     // No centre is reachable in this pass and horizon: keep sampling; a bounce is free.
     if (plan === null) continue;
     planFound = true;
+    // The attempt-vs-reroll decision (operator rule 2026-10-31). It is asked on the plan, before the
+    // floor: the policy judges the bar's own pass (zone width over speed), not the lead time left to
+    // an instant. A `reroll` returns now, before any wait and before the floor, so the caller can
+    // cancel the QTE and change the speed; the first two rerolled passes are its baseline.
+    if (choosePass !== undefined) {
+      const zone = reading.zones.find((z) => plan.target >= z.from && plan.target <= z.to) ?? null;
+      if (zone !== null) {
+        const choice = choosePass({
+          windowMs: ((zone.to - zone.from) / Math.abs(v)) * 1000,
+          speedPxPerS: Math.abs(v),
+        });
+        if (choice === 'reroll') return { ok: false, reason: 'reroll' };
+        if (choice === 'give-up') return { ok: false, reason: 'no-better-pass' };
+      }
+    }
     // The floor guards the lead time we can still act on. `plan.atMs` is a delay from the reading's
     // clock (§7), and that clock can already be hundreds of ms old when the plan is made — a frame
     // carries up to `FRAME_MAX_AGE_MS` (300 ms) of age — so a plan whose own delay looks generous

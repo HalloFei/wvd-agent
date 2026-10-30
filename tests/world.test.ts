@@ -373,6 +373,7 @@ function makeWorld(options: {
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       enableBattleAuto: () => enableBattleAuto(actuator),
+      cancelQte: async () => ({ ok: true }),
     },
     openSession: async () => {
       openSessionCalls += 1;
