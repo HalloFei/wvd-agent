@@ -69,10 +69,10 @@ while (world.isRunning() && performance.now() - t0 < MAX_MS) {
   const tickStart = performance.now();
   await world.tick();
   ticks += 1;
-  if (records.some((r) => r.message.includes('opening the chest with'))) {
-    clickedAt = performance.now() - t0;
-    break;
-  }
+  if (records.some((r) => r.message.includes('opening the chest with'))) clickedAt ??= performance.now() - t0;
+  // Stop on the QTE outcome (a press or a give-up), not on the panel click: a reroll run must
+  // survive the cancel → panel → second card → second bar, and those all happen after the click.
+  if (records.some((r) => r.message.includes('chest QTE pressed') || r.message.includes('chest QTE given up'))) break;
   const sinceHeartbeat = performance.now() - lastHeartbeat;
   if (sinceHeartbeat >= 1000) {
     lastHeartbeat = performance.now();
