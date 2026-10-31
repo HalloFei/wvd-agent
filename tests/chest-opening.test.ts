@@ -20,6 +20,8 @@ import { CompositePerceiver } from '../src/perception/composite.ts';
  */
 const CHEST = new URL('../testdata/chest/2026-10-24-live-qte/', import.meta.url);
 const NAV = new URL('../testdata/nav-2026-10-25-ffxi4f/', import.meta.url);
+/** The 3-D view right after a QTE cancel: the FFXI dungeon draws the HUD lower than the walk view. */
+const CANCEL_NAV = new URL('../testdata/nav-2026-10-31-cancel/', import.meta.url);
 const OPENER = new URL('../testdata/chest/2026-10-24-opener/', import.meta.url);
 const LOOT = new URL('../testdata/chest/2026-10-31-loot/', import.meta.url);
 
@@ -46,9 +48,13 @@ describe('ChestOpeningPerceiver', () => {
     }
   });
 
-  it('never takes the 3-D view, the bar, the panel, the loot or the prompt', async () => {
+  it('never takes a 3-D view, the bar, the panel, the loot or the prompt', async () => {
     const cases: Array<[string, URL]> = [
       ['third-floor-harken.jpg', NAV],
+      // The live frame this perceiver mis-named on 2026-10-31: the FFXI dungeon's HUD sits in the
+      // lower band (1 634 bright px) while the warm wall fills the centre (0.223), so one band alone
+      // read as an opening and the route's wait stopped the loop over an ordinary dungeon frame.
+      ['after-cancel.jpg', CANCEL_NAV],
       ['qte-bar-00.jpg', CHEST],
       ['panel-00.jpg', OPENER],
       ['loot-00.jpg', LOOT],

@@ -12,19 +12,26 @@
  * Two measurements name it, both from `testdata/chest/2026-10-24-live-qte/open-*.jpg` (eight frames
  * of one opening, 1920x1080) against every other screen the corpus has:
  *
- * | screen        | bright HUD text px | warm mass, centre box |
- * | ---           | ---                | --- |
- * | opening       | 0-12               | 0.09-0.31 |
- * | 3-D view      | 8 040              | 0.01 |
- * | chest QTE     | 153-1 020          | 0.39 |
- * | opener panel  | 506                | 0.29 |
- * | loot          | 8                  | 0.03 |
- * | 打开 prompt    | 0                  | 0.27 |
+ * | screen                  | bright HUD text px | warm mass, centre box |
+ * | ---                     | ---                | --- |
+ * | opening                 | 0-12               | 0.09-0.31 |
+ * | 3-D view, walk view     | 16 619             | 0.012 |
+ * | 3-D view, FFXI dungeon  | **1 634**          | **0.22** |
+ * | chest QTE               | 3 070              | 0.39 |
+ * | opener panel            | 2 199              | 0.29 |
+ * | loot                    | 8                  | 0.03 |
+ * | 打开 prompt              | 889                | 0.27 |
  *
  * So: **the HUD is gone** (its bright text count is under 40) **and the chest fills the middle**
- * (warm pixels are at least 6 % of the central half-frame). The 打开 prompt also has no HUD, which
- * is why `ChestPromptPerceiver` must run before this one (it does, in the composite); the loot
- * screen is excluded by the warm floor.
+ * (warm pixels are at least 6 % of the central half-frame). The loot screen is excluded by the warm
+ * floor, and the 打开 prompt by its own 889 bright pixels — still, `ChestPromptPerceiver` runs before
+ * this one in the composite, so the composition never depends on that margin.
+ *
+ * **The FFXI dungeon row is why the HUD is measured in two bands.** That screen draws the party HUD
+ * lower than the walk view does: 0 px in the upper band, 1 634 in the lower one, with a warm wall
+ * filling the centre (0.22). Measured from one band alone it looked exactly like an opening, and on
+ * 2026-10-31 this perceiver named a live 3-D view `chest-opening` after a QTE cancel — the route's
+ * answer is `wait`, so the loop stood still over a perfectly ordinary dungeon frame.
  *
  * The two numbers are one-sample-per-screen and named as such; a second opening recording refines
  * them. Geometry is the 1920x1080 client (contracts §0.5); another size is refused, never rescaled.
@@ -34,8 +41,15 @@ import type { Frame, Observation, Perceiver } from '../contracts.ts';
 const REFERENCE_WIDTH = 1920;
 const REFERENCE_HEIGHT = 1080;
 
-/** The party HUD's text: the HP/MP numerals and names, in the lower-left of the client. */
-const HUD_TEXT_BAND = { x0: 0.08, x1: 0.56, y0: 0.52, y1: 0.68 } as const;
+/**
+ * The party HUD's text: the HP/MP numerals and names. **Two bands**, because the corpus draws the HUD
+ * at two heights — the walk view puts it in the upper one, the FFXI dungeon's 3-D view in the lower
+ * one (see the table above).
+ */
+const HUD_TEXT_BANDS: ReadonlyArray<{ x0: number; x1: number; y0: number; y1: number }> = [
+  { x0: 0.08, x1: 0.56, y0: 0.52, y1: 0.68 },
+  { x0: 0.30, x1: 0.75, y0: 0.72, y1: 0.98 },
+];
 /** Bright enough to be the HUD's white text; measured 0-12 px on the eight opening frames. */
 const HUD_TEXT_BRIGHT = 205;
 /** Under this the HUD is not drawn (measured: opening 0-12, every other screen ≥ 153 except loot). */
@@ -95,20 +109,22 @@ function isFlat(image: { data: Uint8Array | Uint8ClampedArray; width: number; he
   return Math.sqrt(Math.max(0, sumSq / count - mean * mean)) < FLAT_STD_DEV;
 }
 
-/** Bright, near-white pixels in the party HUD's band: the HUD's text when it is drawn. */
+/** Bright, near-white pixels in the party HUD's bands: the HUD's text when it is drawn. */
 function hudTextCount(image: { data: Uint8Array | Uint8ClampedArray; width: number; height: number }): number {
-  const x0 = Math.round(image.width * HUD_TEXT_BAND.x0);
-  const x1 = Math.round(image.width * HUD_TEXT_BAND.x1);
-  const y0 = Math.round(image.height * HUD_TEXT_BAND.y0);
-  const y1 = Math.round(image.height * HUD_TEXT_BAND.y1);
   let count = 0;
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      const o = (y * image.width + x) * 4;
-      const r = image.data[o]!;
-      const g = image.data[o + 1]!;
-      const b = image.data[o + 2]!;
-      if (r > HUD_TEXT_BRIGHT && g > HUD_TEXT_BRIGHT && b > HUD_TEXT_BRIGHT) count += 1;
+  for (const band of HUD_TEXT_BANDS) {
+    const x0 = Math.round(image.width * band.x0);
+    const x1 = Math.round(image.width * band.x1);
+    const y0 = Math.round(image.height * band.y0);
+    const y1 = Math.round(image.height * band.y1);
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const o = (y * image.width + x) * 4;
+        const r = image.data[o]!;
+        const g = image.data[o + 1]!;
+        const b = image.data[o + 2]!;
+        if (r > HUD_TEXT_BRIGHT && g > HUD_TEXT_BRIGHT && b > HUD_TEXT_BRIGHT) count += 1;
+      }
     }
   }
   return count;
