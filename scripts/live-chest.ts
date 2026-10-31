@@ -45,12 +45,21 @@ const host = {
   modelFacts: { accepts: (mime: string) => mime === 'image/jpeg' },
   async pushEvent(event: Record<string, unknown>) {
     cursor += 1;
-    say('info', 'host: event pushed', { type: event.type, cursor });
+    // The text travels too: an escalation's reason is the evidence for why the loop stopped.
+    say('info', 'host: event pushed', {
+      type: event.type,
+      cursor,
+      ...(typeof event.text === 'string' ? { text: event.text } : {}),
+    });
     return { ...event, cursor, origin: 'external', contextDelivery: 'deliver', blobs: [] };
   },
 };
 
 const cfg = { ...structuredClone(WVD_DEFAULTS), enabled: false, taskFile: '' };
+// The one knob a measurement may set: a floor high enough that the attempt-vs-reroll policy must
+// reject every pass, which is how a live reroll cycle is produced deterministically. Production never
+// sets this env; the deployed value is `worlds.wvd.qteMinWindowMs`.
+if (process.env.QTE_FLOOR !== undefined) cfg.qteMinWindowMs = Number(process.env.QTE_FLOOR);
 const world = createWvdWorld({ cfg, timezone: 'Asia/Shanghai' });
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
