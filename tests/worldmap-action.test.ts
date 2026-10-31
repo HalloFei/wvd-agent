@@ -70,10 +70,11 @@ class Session implements WorldMapEnv {
 
   forced: Frame | null = null;
   screenOf = (frame: Frame): Observation => {
-    if (frame === this.fixtures.townUp || frame === this.fixtures.townDown) return { screen: 'town', atMs: 0, confidence: 0.9 };
-    if (frame === this.fixtures.dungeon) return { screen: 'dungeon', atMs: 0, confidence: 0.9 };
-    if (frame === this.fixtures.combat) return { screen: 'unknown', atMs: 0, confidence: 0.2 };
-    return { screen: 'worldmap', atMs: 0, confidence: 0.9 };
+    // The guard measures stability on the observation's own clock; a frozen atMs would never hold.
+    if (frame === this.fixtures.townUp || frame === this.fixtures.townDown) return { screen: 'town', atMs: this.clock, confidence: 0.9 };
+    if (frame === this.fixtures.dungeon) return { screen: 'dungeon', atMs: this.clock, confidence: 0.9 };
+    if (frame === this.fixtures.combat) return { screen: 'unknown', atMs: this.clock, confidence: 0.2 };
+    return { screen: 'worldmap', atMs: this.clock, confidence: 0.9 };
   };
   now = (): number => this.clock;
   sleep = async (ms: number): Promise<void> => { this.clock += ms; };

@@ -10,6 +10,7 @@
  * honoured between gestures; a capture error is the caller's, not retried here.
  */
 import type { ActionFailure, Actuator, Frame, Observation, Point, RgbaImage, ScreenId } from '../contracts.ts';
+import { waitStable } from '../frames/stable.ts';
 import { LOCATIONS, type LocationEntry } from '../perception/locations.ts';
 import { findTemplate, type Match } from '../perception/match.ts';
 
@@ -55,6 +56,9 @@ const TOWN_ICON_BAND = { x: 1_100, y: 900, width: 220, height: 180 } as const;
 const PANEL_BAND = { x: 480, y: 720, width: 400, height: 360 } as const;
 const CONTROL_SCALES = [0.66, 0.68] as const;
 const POLL_MS = 100;
+/** The stable-frame guard: a screen must hold this long before a control/node is tapped. */
+const STABLE_HOLD_MS = 500;
+const STABLE_TIMEOUT_MS = 2_500;
 const OPEN_TIMEOUT_MS = 5_000;
 const SETTLE_MS = 10_000;
 const LEAVE_TIMEOUT_MS = 6_000;
@@ -114,29 +118,40 @@ async function openFrom(
   initial: { frame: Frame; observation: Observation },
 ): Promise<TravelResult> {
   const now = env.now ?? (() => Date.now());
-  if (isPastTheEntry(initial.observation.screen)) return { ok: true };
+  // The caller's frame is a snapshot; wait until whatever screen it is has actually held still.
+  // A transition frame (town fading in, map fading in, a loading screen) must not be the frame a
+  // control is matched and tapped on.
+  const settledStart = await settleOn(env, now);
+  if (settledStart === null && env.abort?.aborted) return { ok: false, reason: 'cancelled' };
+  const start = settledStart ?? initial;
+  if (isPastTheEntry(start.observation.screen)) return { ok: true };
 
-  let frame = initial.frame;
-  let screen = initial.observation.screen;
+  let frame = start.frame;
+  let screen = start.observation.screen;
   // The Dungeon Select screen is not a ScreenId, but its 打开世界地图 row is the legacy
   // `openworldmap` control. Match it before the town/world-map settle poll, or this screen would
   // wait out the whole poll and refuse. Measured live 2026-10-31: 0.946 @ 0.68 at (1028,650).
   if (screen !== 'town' && screen !== 'worldmap') {
-    const image = await decode(frame);
-    if (image !== null) {
-      const control = findTemplate(image, OPEN_WORLD_MAP_AREA, LOCATIONS.get('open-world-map')!.template, {
-        scales: OPEN_WORLD_MAP_SCALES,
-        minScore: OPEN_WORLD_MAP_FLOOR,
-      });
+    // The Dungeon Select screen is unnamed and is reached through a loading screen, which is also
+    // unnamed. Trying the control once on the initial frame can therefore miss it: the control is
+    // not drawn yet, and the settle poll below only knows town/worldmap, so it would wait out the
+    // whole 10 s and never look again. Re-settle and retry the control until the screen becomes a
+    // place with a map, the deadline passes, or a control opens the map.
+    const deadline = now() + SETTLE_MS;
+    for (;;) {
+      const image = await decode(frame);
+      const control = image === null
+        ? null
+        : findTemplate(image, OPEN_WORLD_MAP_AREA, LOCATIONS.get('open-world-map')!.template, {
+          scales: OPEN_WORLD_MAP_SCALES,
+          minScore: OPEN_WORLD_MAP_FLOOR,
+        });
       if (control !== null) {
         env.log?.('wvd: opening the world map from the Dungeon Select control');
         const pressed = await env.actuator.tap(centre(control));
         if (!pressed.ok) return failure(pressed.reason, pressed.detail);
         let opened = await poll(env, (candidate) => candidate === 'worldmap' || candidate === 'town', OPEN_TIMEOUT_MS, now);
         if (!opened.ok) {
-          // The same swallowed-first-click class as the town icon: the control matched and was
-          // tapped, but the screen is still the Dungeon Select. Re-capture, re-match on the fresh
-          // frame, and tap once more before refusing.
           const again = await captureAndObserve(env);
           if (!again.ok) return again;
           if (again.observation.screen === 'worldmap') return { ok: true };
@@ -158,19 +173,74 @@ async function openFrom(
         if (opened.screen === 'worldmap') return { ok: true };
         frame = opened.frame;
         screen = opened.screen;
+        break;
       }
+      const currentScreen: string = screen;
+      if (currentScreen === 'town' || currentScreen === 'worldmap' || now() >= deadline) break;
+      await pause(env, POLL_MS);
+      const next = await settleOn(env, now);
+      if (next === null) {
+        if (env.abort?.aborted) return { ok: false, reason: 'cancelled' };
+        break;
+      }
+      frame = next.frame;
+      screen = next.observation.screen;
+      const settledScreen: string = screen;
+      if (settledScreen === 'town' || settledScreen === 'worldmap') break;
     }
   }
   if (screen !== 'town') {
     // A loading screen settles into town or world map; anything else is not a place with a map.
     const settled = await poll(env, (candidate) => candidate === 'town' || candidate === 'worldmap', SETTLE_MS, now);
-    if (!settled.ok) return settled;
-    if (settled.screen === 'worldmap') return { ok: true };
-    frame = settled.frame;
-    screen = settled.screen;
+    if (!settled.ok) {
+      // The Dungeon Select screen and a loading screen are both 'unknown': the control loop above
+      // can time out on the loading frame and the settle poll cannot see the select screen either.
+      // Try the control once on the frame the poll ended on before refusing; this is the live
+      // 2026-11-01 failure (the select appeared after the control loop's deadline).
+      const after = await captureAndObserve(env);
+      if (!after.ok) return settled;
+      if (after.observation.screen === 'worldmap') return { ok: true };
+      if (after.observation.screen === 'town') {
+        frame = after.frame;
+        screen = 'town';
+      } else {
+        const afterImage = await decode(after.frame);
+        const control = afterImage === null
+          ? null
+          : findTemplate(afterImage, OPEN_WORLD_MAP_AREA, LOCATIONS.get('open-world-map')!.template, {
+            scales: OPEN_WORLD_MAP_SCALES,
+            minScore: OPEN_WORLD_MAP_FLOOR,
+          });
+        if (control === null) return settled;
+        env.log?.('wvd: opening the world map from the Dungeon Select control after the settle poll');
+        const pressed = await env.actuator.tap(centre(control));
+        if (!pressed.ok) return failure(pressed.reason, pressed.detail);
+        const opened = await poll(env, (candidate) => candidate === 'worldmap' || candidate === 'town', OPEN_TIMEOUT_MS, now);
+        if (!opened.ok) return settled;
+        if (opened.screen === 'worldmap') return { ok: true };
+        frame = opened.frame;
+        screen = opened.screen;
+      }
+    } else {
+      if (settled.screen === 'worldmap') return { ok: true };
+      frame = settled.frame;
+      screen = settled.screen;
+    }
   }
   if (screen !== 'town') {
     return { ok: false, reason: 'world-map-control-not-found', detail: `screen settled at ${screen}` };
+  }
+  // The settle poll can return the first frame that names town, while the town is still fading in.
+  // Hold the town for the stable window before reading the icon; a transition frame must not be
+  // matched or tapped.
+  const stableTown = await settleOn(env, now);
+  if (stableTown !== null) {
+    if (stableTown.observation.screen === 'worldmap') return { ok: true };
+    if (stableTown.observation.screen !== 'town') {
+      return { ok: false, reason: 'world-map-control-not-found', detail: `screen settled at ${stableTown.observation.screen}` };
+    }
+    frame = stableTown.frame;
+    screen = stableTown.observation.screen;
   }
 
   const image = await decode(frame);
@@ -241,6 +311,11 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
     const opened = await openFrom(env, current);
     if (!opened.ok) return opened;
   }
+  // Do not read the node template on the first frame that names worldmap: the map is still fading
+  // and its pan/zoom is not interactive yet. Hold the map for the stable window first; the node
+  // tap retry is the backstop if a frame still slips through.
+  const stableMap = await settleOn(env, now);
+  if (stableMap === null && env.abort?.aborted) return { ok: false, reason: 'cancelled' };
 
   let zooms = 0;
   let drags = 0;
@@ -352,9 +427,21 @@ async function tapNodeAndWait(env: WorldMapEnv, entry: LocationEntry, at: Point,
  * is inside the row the 第三区 match centres on (1098,534).
  */
 async function selectDungeon(entry: LocationEntry, env: WorldMapEnv): Promise<TravelResult> {
-  const current = await captureAndObserve(env);
-  if (!current.ok) return current;
-  const image = await decode(current.frame);
+  const now = env.now ?? (() => Date.now());
+  // The Dungeon Select screen is not a ScreenId, but it does settle; do not match a row on a
+  // loading frame. The guard's key is the screen (unknown for this screen), so it only checks that
+  // the frame has stopped changing.
+  const settled = await settleOn(env, now);
+  if (settled === null && env.abort?.aborted) return { ok: false, reason: 'cancelled' };
+  let frame: Frame;
+  if (settled !== null) {
+    frame = settled.frame;
+  } else {
+    const current = await captureAndObserve(env);
+    if (!current.ok) return current;
+    frame = current.frame;
+  }
+  const image = await decode(frame);
   if (image === null) {
     return { ok: false, reason: 'capture-unavailable', detail: 'frame did not decode' };
   }
@@ -388,6 +475,35 @@ function centre(match: Match, anchor?: Point): Point {
 
 async function pause(env: WorldMapEnv, ms: number): Promise<void> {
   await env.sleep(ms);
+}
+
+/**
+ * Wait until the current screen has held still for STABLE_HOLD_MS. A timeout is not fatal: the last
+ * frame is returned so the existing tap retry can still try; a cancelled or sampler failure returns
+ * null. This is the generic guard's only game-side adapter.
+ */
+async function settleOn(env: WorldMapEnv, now: () => number): Promise<{ frame: Frame; observation: Observation } | null> {
+  const outcome = await waitStable({
+    sample: async () => {
+      const current = await captureAndObserve(env);
+      if (!current.ok) throw new Error(current.reason);
+      return { value: current, atMs: current.observation.atMs };
+    },
+    key: (sample) => sample.observation.screen,
+    holdMs: STABLE_HOLD_MS,
+    timeoutMs: STABLE_TIMEOUT_MS,
+    pollMs: POLL_MS,
+    wait: (ms) => env.sleep(ms),
+    now,
+    ...(env.abort === undefined ? {} : { abort: env.abort }),
+  });
+  if (outcome.stable) return outcome.value;
+  if (outcome.reason === 'cancelled') return null;
+  if (outcome.value !== null) {
+    env.log?.(`wvd: the screen did not settle (${outcome.reason}); continuing with the last frame`);
+    return outcome.value;
+  }
+  return null;
 }
 
 /** The loop's own capture policy (§5): three attempts, 200 ms apart, then a typed refusal. */
