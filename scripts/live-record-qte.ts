@@ -161,7 +161,28 @@ const perceiver = new CompositePerceiver([
   { perceiver: new TownPerceiver(), floor: 0.5 },
 ]);
 
-const observe = async (): Promise<Observation> => perceiver.observe(await source.capture());
+/**
+ * A capture that tolerates one transient engine refusal. The child refuses a frame whose age it
+ * cannot vouch for (`stale-frame`), which a transition can produce for a moment; a measurement run
+ * must report that and keep watching, not die on it.
+ */
+async function captureQuietly(): Promise<Frame | null> {
+  try {
+    return await source.capture();
+  } catch (error) {
+    append('events.jsonl', JSON.stringify({
+      kind: 'capture-refused',
+      detail: error instanceof Error ? error.message : String(error),
+      atMs: rel(now()),
+    }));
+    return null;
+  }
+}
+
+const observe = async (): Promise<Observation | null> => {
+  const frame = await captureQuietly();
+  return frame === null ? null : perceiver.observe(frame);
+};
 const seen = (observation: Observation): string =>
   `${observation.screen} (${observation.confidence.toFixed(2)})`;
 
@@ -170,6 +191,10 @@ async function waitForScreen(screen: string, timeoutMs: number, label: string): 
   let last = '';
   while (now() < until) {
     const observation = await observe();
+    if (observation === null) {
+      await sleep(60);
+      continue;
+    }
     last = seen(observation);
     if (observation.screen === screen) {
       append('events.jsonl', JSON.stringify({ kind: 'screen', label, screen: last, atMs: rel(now()) }));
@@ -213,7 +238,11 @@ async function waitForPanel(): Promise<PanelWait> {
   const until = now() + cfg.openerPanelTimeoutMs;
   let last = seen(opening);
   while (now() < until) {
-    const frame = await source.capture();
+    const frame = await captureQuietly();
+    if (frame === null) {
+      await sleep(60);
+      continue;
+    }
     const detailed = await parseOpenerDetailed(frame);
     if (detailed.ok) return { kind: 'panel', panel: detailed.panel };
     last = seen(await perceiver.observe(frame));
@@ -231,7 +260,12 @@ async function waitForPanel(): Promise<PanelWait> {
 async function openThroughPanel(): Promise<boolean> {
   // A panel that is already drawn (a reroll's re-engage, or a run that started on it) is used as it
   // is: tapping 打开 would land on the panel, not on the chest.
-  const pre = await parseOpenerDetailed(await source.capture());
+  const first = await captureQuietly();
+  if (first === null) {
+    say('the first capture was refused; nothing was tapped');
+    return false;
+  }
+  const pre = await parseOpenerDetailed(first);
   let found: PanelWait;
   if (pre.ok) {
     found = { kind: 'panel', panel: pre.panel };
@@ -317,7 +351,8 @@ while (now() - t0 < capMs) {
       + `target=${outcome.target} tapX=${outcome.tapX} restX=${outcome.restX ?? 'unread'} `
       + `settled=${outcome.restSettled}`;
     say(outcomeLine);
-    say(`screen after the rest read: ${seen(await observe())}`);
+    const after = await observe();
+    say(`screen after the rest read: ${after === null ? 'unreadable' : seen(after)}`);
     break;
   }
   if (outcome.reason === 'reroll' && args.reroll === true && rerolls < cfg.maxRerolls) {
