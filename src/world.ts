@@ -1473,7 +1473,6 @@ export class WvdWorld implements World {
         }),
         latencyMs: cfg.qteLatencyMs,
         decelPxPerS2: cfg.qteDecelPxPerS2,
-        minWindowMs: cfg.qteMinWindowMs,
         budgetMs: cfg.qteSubLoopMs,
         // The attempt-vs-reroll rule (operator, 2026-10-31): five rerolls per chest, the first two
         // rerolled passes recorded as the baseline, and only a later pass that beats both baselines

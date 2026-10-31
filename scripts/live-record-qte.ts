@@ -333,7 +333,6 @@ while (now() - t0 < capMs) {
     wait: sleep,
     latencyMs: cfg.qteLatencyMs,
     decelPxPerS2: cfg.qteDecelPxPerS2,
-    minWindowMs,
     budgetMs,
     choosePass: (pass: QtePass) => {
       lastPass = pass;

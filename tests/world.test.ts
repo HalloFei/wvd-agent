@@ -550,9 +550,12 @@ describe('the chest QTE', () => {
     await world.tick();
 
     expect(seen).toHaveLength(1);
-    // The sub-loop's own bounds come from config, not from the caller's guess.
-    expect(seen[0]!.minWindowMs).toBe(WVD_DEFAULTS.qteMinWindowMs);
+    // The sub-loop's own bound comes from config, not from the caller's guess. The pass window is
+    // the policy's judgement: the World hands the loop a `choosePass` carrying the configured floor,
+    // and the loop itself no longer has a lead floor to pass in.
     expect(seen[0]!.budgetMs).toBe(WVD_DEFAULTS.qteSubLoopMs);
+    expect(seen[0]!.choosePass?.({ windowMs: WVD_DEFAULTS.qteMinWindowMs, speedPxPerS: 900 })).toBe('press');
+    expect(seen[0]!.choosePass?.({ windowMs: WVD_DEFAULTS.qteMinWindowMs - 1, speedPxPerS: 900 })).toBe('reroll');
     // The disarm is Space (0x39), held for the configured duration — a key, not a tap, not a literal.
     expect(actuator.calls).toEqual([`key ${DISARM_SCAN} ${WVD_DEFAULTS.pressHoldMs}`]);
     // The success line is #18's fit input: the plan's delay is `delayMs` (every `atMs` is a clock

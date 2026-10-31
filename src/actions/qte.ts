@@ -24,11 +24,19 @@
  *
  * `reading.atMs` is the capturing frame's clock, and `plan.atMs` is a delay from *that* reading
  * (contracts §7, and `policy/qte.ts` says so at length). The instant to press is therefore
- * `reading.atMs + plan.atMs` in `now()`'s domain, and the sleep is what remains of it. There is no
- * clamp at zero: a plan whose instant has already passed is dropped by the `minWindowMs` floor
- * before the sleep, and the next reading re-plans. Stamping a reading with `now()` instead — or
- * comparing the plan's delay to `now()` — would be wrong by the whole capture latency (~50 ms)
- * against a 150 ms floor.
+ * `reading.atMs + plan.atMs` in `now()`'s domain, and the sleep is what remains of it. Stamping a
+ * reading with `now()` instead — or comparing the plan's delay to `now()` — would be wrong by the
+ * whole capture latency (~50 ms).
+ *
+ * ## Two ways to a press
+ *
+ * The planned instant, while it is still ahead, is the accurate path: sleep to it and the rest lands
+ * on the zone's centre. Once it has passed, the question stops being "when" and becomes "where": a
+ * press issued now still carries the marker (`predictRest`), and if the landing is inside a zone —
+ * with the model's margin, before the bounce — the press is taken late rather than not at all. That
+ * is what makes a 1 200 px/s bar pressable at all: its lead is ~177 ms of travel (latency 75 ms +
+ * the drag brake's 101.7 ms), so by the time a frame has been parsed the planned instant is often
+ * just behind us, and refusing it would refuse every pass.
  *
  * ## What bounds the call
  *
@@ -36,13 +44,13 @@
  * next tick may try again (the marker bounces forever and passes are free, chest spec §8a). The
  * rest read after a successful press adds its own settle window, `REST_READ_MS`, and is clamped to
  * `budgetMs + REST_READ_MS` from the call's start — so the whole call is bounded by the pre-press
- * budget plus the rest read, never by the budget alone. `minWindowMs` is the caller's floor over the
- * time left to the plan's instant, `reading.atMs + plan.atMs - now()`: a pass tighter than that is
- * dropped and the next reading re-plans (contracts §7 keeps the floor here, not in the planner).
- * The reading's clock is not `now()` — a frame can be up to `FRAME_MAX_AGE_MS` (300 ms) old when it
- * is planned — so the floor has to be taken from what is actually left, not from the plan's own
- * delay. A dimmed 解除 button is `resolved`, not a live pass (chest spec §8a) — nothing is pressed,
- * because this pass was already answered.
+ * budget plus the rest read, never by the budget alone. Whether a *pass* is worth attempting is the
+ * caller's judgement, not this module's: `choosePass` is asked before any press, and this loop only
+ * decides *when* (the planned instant) or *whether the landing is still good* (the late press). The
+ * reading's clock is not `now()` — a frame can be up to `FRAME_MAX_AGE_MS` (300 ms) old when it is
+ * planned — so both tests are taken from what is actually left, never from the plan's own delay. A
+ * dimmed 解除 button is `resolved`, not a live pass (chest spec §8a) — nothing is pressed, because
+ * this pass was already answered.
  *
  * ## The refusals
  *
@@ -52,7 +60,7 @@
  * second may reach the tick's failure accounting — and neither is retried here: the World's own
  * capture path owns warm-up retries and the session-end decision, and it runs on the very next
  * tick. `resolved` is a dimmed button; `press-refused` the actuator's answer; `misconfigured` a
- * non-finite or non-positive budget, a non-finite or negative `minWindowMs`, or a non-finite clock,
+ * non-finite or non-positive budget or a non-finite clock,
  * refused before the first sample in the same spirit as `planTap`'s own input guards. The three
  * that end a spent budget are split by what the loop had: `no-velocity` when fewer than three
  * readings arrived (a speed needs three), `no-reachable-zone` when speeds came but `planTap` never
@@ -61,7 +69,10 @@
  */
 import type { ActionResult, Frame, FrameSource, Point, QteZone } from '../contracts.ts';
 import { parseQte, qteWindow, type QteRefusalReason } from '../perception/chest.ts';
-import { planTap, qteVelocity, type QtePass, type QtePassChoice, type QteSample } from '../policy/qte.ts';
+import {
+  BOUNCE_LEFT_X, BOUNCE_RIGHT_X, planTap, predictRest, qteVelocity,
+  type QtePass, type QtePassChoice, type QteSample,
+} from '../policy/qte.ts';
 
 // ---------------------------------------------------------------------------------------------
 // Measured constants
@@ -77,6 +88,15 @@ const REST_READ_MS = 600;
 
 /** The spacing of rest polls: the settle window is measured in reads, not in a hot spin. */
 const REST_POLL_MS = 16;
+
+/**
+ * The margin a predicted landing keeps inside a zone, pixels. The prediction's real uncertainty is
+ * the brake model's: the one measured stop gives tau = 112 ms while the plan uses the 10 % shorter
+ * 101.7 ms (`2 x qteDecelPxPerS2`), so the actual landing is up to `v · 0.0103` px past the
+ * prediction — 12.8 px at 1 240 px/s — plus a few px of glyph and latency noise. 20 px covers that,
+ * and a zone narrower than twice the margin is left to the exact path rather than gambled on.
+ */
+const PREDICT_MARGIN_PX = 20;
 
 /** Two consecutive readings this close mean the marker has parked. */
 const REST_SETTLE_PX = 2;
@@ -131,12 +151,12 @@ export type QteRefusal =
   | 'reroll'            // the caller's attempt-vs-reroll policy took the bar as not worth pressing
   | 'no-better-pass'     // the reroll budget is spent and no pass beat the recorded baseline
   | 'press-refused'     // the actuator declined the press (not foreground, engine gone)
-  | 'misconfigured';    // bad budget, minWindowMs or clock: refused before sampling
+  | 'misconfigured';    // bad budget or clock: refused before sampling
 
 export interface QteTiming {
   readonly ok: true;
   readonly v: number;             // px/s, signed
-  readonly atMs: number;          // the delay planTap asked for, from the reading that produced it
+  readonly atMs: number;          // the delay waited before the press; 0 when the landing was predicted
   readonly target: number;        // the zone centre the plan aimed at
   readonly tapX: number;          // the marker's position on the planning reading
   readonly restX: number | null;  // where it parked, when the bar was still there to read
@@ -154,9 +174,7 @@ export type QteOutcome = QteTiming | { readonly ok: false; readonly reason: QteR
 /**
  * `budgetMs` is the **pre-press** budget. The rest read that follows a successful press adds
  * `REST_READ_MS`, so the whole call is bounded by `budgetMs + REST_READ_MS`; a non-finite or
- * non-positive budget is refused as `misconfigured` rather than run unbounded. `minWindowMs` is the
- * floor over the time remaining to the plan's instant; a non-finite or negative value is refused
- * the same way (zero is a legitimate "no floor").
+ * non-positive budget is refused as `misconfigured` rather than run unbounded.
  */
 export interface QteTimingOptions {
   readonly sampler: QteSampler;
@@ -165,7 +183,6 @@ export interface QteTimingOptions {
   readonly wait: (ms: number) => Promise<void>;
   readonly latencyMs: number;
   readonly decelPxPerS2: number;
-  readonly minWindowMs: number;
   readonly budgetMs: number;
   /**
    * The attempt-vs-reroll decision (operator rule 2026-10-31). Absent means "press whenever a pass
@@ -195,16 +212,11 @@ export type QteTimer = (options: QteTimingOptions) => Promise<QteOutcome>;
  * budget plus the rest read's settle window.
  */
 export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
-  const { sampler, press, now, wait, latencyMs, decelPxPerS2, minWindowMs, budgetMs, choosePass } = options;
+  const { sampler, press, now, wait, latencyMs, decelPxPerS2, budgetMs, choosePass } = options;
 
   // A mis-typed number must not become a press, and an unbounded loop is the one failure this
-  // module could not report as a value: refuse both before the first sample. `minWindowMs` belongs
-  // in the same guard — `NaN` makes `delayMs < NaN` false and silently disables the one floor
-  // between a plan and a gamble, and a negative floor is not a floor. Zero is a floor of zero.
-  if (
-    !Number.isFinite(budgetMs) || budgetMs <= 0
-    || !Number.isFinite(minWindowMs) || minWindowMs < 0
-  ) {
+  // module could not report as a value: refuse both before the first sample.
+  if (!Number.isFinite(budgetMs) || budgetMs <= 0) {
     return { ok: false, reason: 'misconfigured' };
   }
   const startedAtMs = now();
@@ -260,14 +272,12 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
       horizonMs: remainingMs,
     });
     planAttempted = true;
-    // No centre is reachable in this pass and horizon: keep sampling; a bounce is free.
-    if (plan === null) continue;
-    planFound = true;
-    // The attempt-vs-reroll decision (operator rule 2026-10-31). It is asked on the plan, before the
-    // floor: the policy judges the bar's own pass (zone width over speed), not the lead time left to
-    // an instant. A `reroll` returns now, before any wait and before the floor, so the caller can
-    // cancel the QTE and change the speed; the first two rerolled passes are its baseline.
-    if (choosePass !== undefined) {
+    if (plan !== null) planFound = true;
+    // The attempt-vs-reroll decision (operator rule 2026-10-31). It is asked on the plan, before any
+    // press: the policy judges the bar's own pass (zone width over speed), not how much lead is
+    // left. A `reroll` returns now, before any wait, so the caller can cancel the QTE and change the
+    // speed; the first two rerolled passes are its baseline.
+    if (plan !== null && choosePass !== undefined) {
       const zone = reading.zones.find((z) => plan.target >= z.from && plan.target <= z.to) ?? null;
       if (zone !== null) {
         const choice = choosePass({
@@ -278,20 +288,38 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
         if (choice === 'give-up') return { ok: false, reason: 'no-better-pass' };
       }
     }
-    // The floor guards the lead time we can still act on. `plan.atMs` is a delay from the reading's
-    // clock (§7), and that clock can already be hundreds of ms old when the plan is made — a frame
-    // carries up to `FRAME_MAX_AGE_MS` (300 ms) of age — so a plan whose own delay looks generous
-    // can name an instant only a few ms away. Compare what is left from *now*. The old
-    // `plan.atMs < minWindowMs` test is subsumed: a reading is stamped before `now()` (contracts
-    // §0.4), so `reading.atMs + plan.atMs - now() <= plan.atMs`. A pass tighter than the floor is
-    // dropped and the next reading re-plans; the reading stays in the rolling window (contracts §7
-    // keeps the floor here, not in the planner).
-    const delayMs = reading.atMs + plan.atMs - now();
-    if (delayMs < minWindowMs) continue;
+    // Two ways to a press, in order of accuracy. 1. The plan's instant is still ahead (`plan.atMs`
+    // is a delay from the reading's clock, §7, and that clock can be hundreds of ms old): sleep to
+    // it and the rest lands on the centre it aimed at. 2. It has passed, or no centre is reachable:
+    // press now if the *landing* is inside a zone — the rest is what the game judges, measured on
+    // the 2026-10-31 press that parked 55 px past its target and was accepted.
+    let delayMs = 0;
+    let plannedAtMs = 0;
+    let target = plan?.target ?? 0;
+    const leftMs = plan === null ? 0 : reading.atMs + plan.atMs - now();
+    if (leftMs <= 0) {
+      const landingRest = predictRest({
+        markerX: reading.markerX,
+        v,
+        ageMs: now() - reading.atMs,
+        latencyMs,
+        decelPxPerS2,
+      });
+      const landing = landingRest === null ? undefined : reading.zones.find((zone) =>
+        landingRest >= zone.from + PREDICT_MARGIN_PX
+        && landingRest <= zone.to - PREDICT_MARGIN_PX
+        && (v > 0 ? landingRest <= BOUNCE_RIGHT_X : landingRest >= BOUNCE_LEFT_X));
+      // No landing inside a zone: keep sampling. A bounce is free until an attempt is spent.
+      if (landing === undefined) continue;
+      target = (landing.from + landing.to) / 2;
+    } else {
+      delayMs = leftMs;
+      plannedAtMs = plan?.atMs ?? 0;
+    }
 
-    // `delayMs` is already the remaining time, so the wait is exactly it (never negative after the
-    // floor) and the budget cannot be overrun: `remainingMs` was the horizon.
-    await wait(delayMs);
+    // `delayMs` is the time left to the instant (zero on the predicted path), so the budget cannot
+    // be overrun: `remainingMs` was the horizon.
+    if (delayMs > 0) await wait(delayMs);
 
     const pressed = await press();
     if (!pressed.ok) return { ok: false, reason: 'press-refused' };
@@ -300,8 +328,8 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
     return {
       ok: true,
       v,
-      atMs: plan.atMs,
-      target: plan.target,
+      atMs: plannedAtMs,
+      target,
       tapX: reading.markerX,
       restX: rest.restX,
       restSettled: rest.restSettled,

@@ -173,6 +173,36 @@ export function planTap(input: PlanTapInput): TapPlan | null {
   return soonest;
 }
 
+/** The inputs of `predictRest`: where the marker is, how fast, and how much action is in flight. */
+export interface PredictRestInput {
+  readonly markerX: number;
+  readonly v: number;
+  /** How old the reading is when the press would be issued: `now() - reading.atMs`, milliseconds. */
+  readonly ageMs: number;
+  readonly latencyMs: number;
+  readonly decelPxPerS2: number;
+}
+
+/**
+ * Where the marker parks if the press is issued **now**: the frame's own age, the input leg and the
+ * brake all move the marker after the reading was taken, so
+ *
+ *   `markerX + v·(ageMs + latencyMs)/1000 + sign(v)·brakeDistancePx(v)`
+ *
+ * The same brake model and the same reference acceleration (twice the fit) that `planTap` uses, so a
+ * press decided here and a press the planner scheduled answer the same physics: the marker's own
+ * speed and the zone it has to land in, never a clock. `null` is a non-answer (a bad input), never a
+ * guess.
+ */
+export function predictRest(input: PredictRestInput): number | null {
+  const { markerX, v, ageMs, latencyMs, decelPxPerS2 } = input;
+  if (!Number.isFinite(markerX) || !Number.isFinite(v) || v === 0) return null;
+  if (!Number.isFinite(ageMs) || ageMs < 0) return null;
+  if (!Number.isFinite(latencyMs) || latencyMs < 0) return null;
+  if (!Number.isFinite(decelPxPerS2) || decelPxPerS2 <= 0) return null;
+  return markerX + v * ((ageMs + latencyMs) / 1_000) + Math.sign(v) * brakeDistancePx(v, 2 * decelPxPerS2);
+}
+
 // ---------------------------------------------------------------------------------------------
 // qteVelocity (research §8)
 // ---------------------------------------------------------------------------------------------

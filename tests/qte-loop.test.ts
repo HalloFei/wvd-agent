@@ -205,7 +205,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -227,16 +227,17 @@ describe('timeQte', () => {
     expect(sampler.passedPrevious.slice(0, 3)).toEqual([undefined, 700, 720]);
   });
 
-  it('does not press when the plan is shorter than the minimum window, and presses on the next pass', async () => {
+  it('presses a plan whose instant the sample cost has already reached', async () => {
+    // 606 px/s; at 704.4 the plan's instant is 9.9 ms away — (808 − 704.4 − 97.58)/606 — and the
+    // sample itself costs 10 ms, so the instant is just behind us. The landing is not: pressing now
+    // carries the marker 606·(0.010 + 0.060) + 606·0.1017 = 104 px, to 808.4, the left zone's centre.
+    // The press is immediate: a 10 ms lead is not a reason to refuse a pass.
     const clock = virtualClock(0);
     const sampler = scriptedSampler(
       [
         { atMs: 0, markerX: 664.4 },
         { atMs: 33, markerX: 684.4 },
-        // 704.4 plus the 97.58 px lead (v·0.06 + v²/6000) stops 6 px short of 808:
-        // (808 − 704.4 − 97.58)/606 ≈ 9.9 ms, under the 150 ms floor.
         { atMs: 66, markerX: 704.4 },
-        // A real distance from the next centre: the same speed, 477 ms from the right zone.
         { atMs: 99, markerX: 724.4 },
         { atMs: 600, markerX: 820 },   // the rest read
       ],
@@ -246,24 +247,22 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
-    // The ~10 ms plan is under the floor and is dropped; the next reading re-plans and presses.
     expect(out.ok).toBe(true);
-    if (out.ok) {
-      expect(out.atMs).toBeGreaterThanOrEqual(150);
-      expect(out.restX).toBe(820);
-    }
-    expect(presses).toHaveLength(1);
-    expect(presses[0]).toBeGreaterThan(66 + 10);
+    if (!out.ok) return;
+    expect(out.target).toBe(808);
+    expect(out.tapX).toBe(704.4);
+    expect(out.atMs).toBe(0);
+    expect(presses).toEqual([76]);
+    expect(out.restX).toBe(820);
   });
 
-  it('refuses a plan whose instant is inside the floor by now(), then presses on the next pass', async () => {
+  it('keeps the 51 ms a stale frame still leaves, and sleeps exactly that', async () => {
     // The third frame arrives 400 ms late, so by the time it is planned `now()` is 466 ms while the
-    // plan's instant is 66 + 451. The plan's own delay (451 ms) clears the floor, but only 51 ms
-    // are actually left; comparing the delay rather than the time remaining would press 51 ms later
-    // — a gamble the floor exists to refuse. The next pass, on fresh frames, presses normally.
+    // plan's instant is 66 + 450.5. Fifty ms of the lead is left: still ahead of us, so the plan is
+    // kept and the sleep is the remaining 50.5 ms — not the plan's 450.5, and not a refusal.
     const clock = virtualClock(0);
     const script: ReadonlyArray<{ atMs: number; markerX: number; costMs?: number }> = [
       { atMs: 0, markerX: 700 },
@@ -292,17 +291,106 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    // The press is the fresh 566 ms pass's: marker 800, its plan's instant 566 + ~352 ms. The stale
-    // frame at 66 ms came first and named an instant only ~51 ms away; it must not have pressed.
-    expect(out.tapX).toBe(800);
-    expect(out.atMs).toBeCloseTo(351.5, 0);
+    expect(out.tapX).toBe(740);
+    expect(out.atMs).toBeCloseTo(450.5, 0);
+    expect(clock.waits[0]).toBeCloseTo(50.5, 0);
     expect(presses).toHaveLength(1);
-    expect(presses[0]).toBeCloseTo(566 + out.atMs, 0);
+    expect(presses[0]).toBeCloseTo(66 + out.atMs, 0);
+  });
+
+  it('presses a 1 242 px/s bar whose plan is 55 ms away', async () => {
+    // The 13:59 bar's measured geometry (t-mvvzwhb1): 41 px per 33 ms = 1 242 px/s, zones
+    // [696,920] and [999,1223]. At 830 the plan targets the right zone's 1111 with a 64.5 ms delay;
+    // the sample cost leaves 54.5 ms. The pass-window floor would drop it; the lead is a physical
+    // boundary, and 54.5 ms of it is still ahead.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 748 },
+        { atMs: 33, markerX: 789 },
+        { atMs: 66, markerX: 830 },
+        { atMs: 99, markerX: 871 },
+        { atMs: 132, markerX: 912 },
+        { atMs: 165, markerX: 953 },
+        { atMs: 198, markerX: 994 },
+      ],
+      clock,
+    );
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.target).toBe(1111);
+    expect(out.tapX).toBe(830);
+    expect(out.atMs).toBeCloseTo(64.5, 0);
+    expect(clock.waits[0]).toBeCloseTo(54.5, 0);
+    expect(presses).toHaveLength(1);
+  });
+
+  it('presses now when the plan instant has passed but the landing is still in a zone', async () => {
+    // Same bar, one zone later: at 960 the right zone's centre is only 151 px ahead while the lead
+    // is 201 px, so planTap refuses — but a press now carries the marker 213 px and parks it at
+    // 1 173, inside [999,1223]. The press is immediate: no wait, no floor, the landing is the test.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 878 },
+        { atMs: 33, markerX: 919 },
+        { atMs: 66, markerX: 960 },
+        { atMs: 99, markerX: 1001 },
+        { atMs: 132, markerX: 1042 },
+        { atMs: 165, markerX: 1083 },
+        { atMs: 198, markerX: 1124 },
+      ],
+      clock,
+    );
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.target).toBe(1111);
+    expect(out.tapX).toBe(960);
+    expect(out.atMs).toBe(0);              // predicted from this reading: nothing was waited for
+    expect(presses).toEqual([76]);         // 66 ms reading + the 10 ms sample cost
+  });
+
+  it('does not press when the predicted landing is past the bounce', async () => {
+    // At 1 242 px/s the carry is 213 px: a marker at 1 242 would park at 1 455, past the 1 261.5
+    // reversal, where the model no longer holds. The loop must wait for the next pass instead.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 1160 },
+        { atMs: 33, markerX: 1201 },
+        { atMs: 66, markerX: 1242 },
+      ],
+      clock,
+    );
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 400,
+    });
+
+    // Speeds came but no landing was ever inside a zone: the loop reports that, not a spent budget.
+    expect(out).toEqual({ ok: false, reason: 'no-reachable-zone' });
+    expect(presses).toHaveLength(0);
   });
 
   it('stops with bar-gone when a sample refuses', async () => {
@@ -319,7 +407,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'bar-gone' });
@@ -340,7 +428,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'resolved' });
@@ -361,7 +449,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 1000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 1000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'budget-spent' });
@@ -383,7 +471,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     // The press happened; a bar that vanished before it parked is not the press's failure.
@@ -417,7 +505,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     // A capture that throws after the press is the same unreadable rest as a refusal: `null`, and
@@ -443,7 +531,7 @@ describe('timeQte', () => {
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait,
       press: async () => ({ ok: false, reason: 'rejected', detail: 'not-foreground' }),
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'press-refused' });
@@ -462,7 +550,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'capture-failed' });
@@ -475,7 +563,7 @@ describe('timeQte', () => {
     const { press, presses } = recordingPress(clock);
     const base = {
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150,
+      latencyMs: 60, decelPxPerS2: 3000,
     };
 
     // A non-positive or non-finite budget makes the loop unbounded; a non-finite clock makes every
@@ -485,12 +573,6 @@ describe('timeQte', () => {
     }
     expect(await timeQte({ ...base, now: () => Number.NaN, budgetMs: 4000 }))
       .toEqual({ ok: false, reason: 'misconfigured' });
-    // A non-finite or negative floor is the same kind of misconfiguration: NaN silently disables the
-    // guard (`delayMs < NaN` is false), and a negative floor is not a floor.
-    for (const minWindowMs of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
-      expect(await timeQte({ ...base, minWindowMs, budgetMs: 4000 }))
-        .toEqual({ ok: false, reason: 'misconfigured' });
-    }
 
     // Refused before the first sample: nothing was looked at and nothing was pressed.
     expect(sampler.passedPrevious).toHaveLength(0);
@@ -510,7 +592,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 1000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 1000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'no-velocity' });
@@ -532,7 +614,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 240,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 240,
     });
 
     expect(out).toEqual({ ok: false, reason: 'no-reachable-zone' });
@@ -566,7 +648,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -605,7 +687,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press: pressPastBudget,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -766,7 +848,7 @@ describe('bandSampler', () => {
 
     const out = await timeQte({
       sampler: bandSampler(source), now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, minWindowMs: 150, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);

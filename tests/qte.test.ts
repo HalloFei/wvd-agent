@@ -5,7 +5,7 @@ import type { Frame, Observation, Perceiver, PixelRect, QteZone, RgbaImage } fro
 import { cropBgra } from '../src/engine/crop.mjs';
 import { ChestPerceiver, parseQte, qteWindow } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
-import { brakeAccelerationPxPerS2, brakeDistancePx, brakeTimeS, chooseQtePass, planTap, qteVelocity, type QtePass } from '../src/policy/qte.ts';
+import { brakeAccelerationPxPerS2, brakeDistancePx, brakeTimeS, chooseQtePass, planTap, predictRest, qteVelocity, type QtePass } from '../src/policy/qte.ts';
 
 /**
  * The six stills are one chest, recorded 2026-10-24 01:41 (`testdata/chest/2026-10-24-qte-0141/`).
@@ -580,6 +580,33 @@ describe('planTap', () => {
 
   it('refuses a marker that is not moving', () => {
     expect(planTap({ markerX: 800, v: 0, zones: ZONES, ...TAP })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// predictRest — where the marker lands if the press is issued now
+// ---------------------------------------------------------------------------------------------
+
+describe('predictRest', () => {
+  it('carries the reading through its age, the input leg and the brake', () => {
+    // 610 px/s: 610·(0.050 + 0.075) = 76.25 px before the game sees the press, then the drag
+    // brake's 610 · 610/6000 = 62.02 px, i.e. 138.27 px in total.
+    expect(predictRest({ markerX: 700, v: 610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000 }))
+      .toBeCloseTo(838.27, 1);
+  });
+
+  it('carries a leftward marker the other way', () => {
+    expect(predictRest({ markerX: 700, v: -610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000 }))
+      .toBeCloseTo(561.73, 1);
+  });
+
+  it('refuses an input it cannot answer', () => {
+    const base = { markerX: 700, v: 610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000 };
+    expect(predictRest({ ...base, v: 0 })).toBeNull();
+    expect(predictRest({ ...base, markerX: Number.NaN })).toBeNull();
+    expect(predictRest({ ...base, ageMs: -1 })).toBeNull();
+    expect(predictRest({ ...base, latencyMs: Number.NaN })).toBeNull();
+    expect(predictRest({ ...base, decelPxPerS2: 0 })).toBeNull();
   });
 });
 
