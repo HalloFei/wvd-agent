@@ -119,11 +119,11 @@ export interface RouteCommands {
    */
   cancelQte(): Promise<ActionResult>;
   /**
-   * Step one tile off the chest after a cancel: the party stands *on* the chest's tile then, so no
-   * prompt is offered; the step makes the chest adjacent again and the game draws 打开 (operator,
-   * 2026-10-31). The hold is `hazardEscapeHoldMs`.
+   * Re-engage the chest after a cancel: **S then W**. The party stands *on* the chest's tile then, so
+   * no prompt is offered, and stepping off alone leaves the screen silent (measured 2026-10-31); the
+   * step off plus the step back on draws 打开 on the next frame. The hold is `hazardEscapeHoldMs`.
    */
-  stepBack(): Promise<ActionResult>;
+  reenterChest(): Promise<ActionResult>;
 }
 
 /** One session's collaborators: everything the loop drives, for as long as it runs. */
@@ -1516,7 +1516,7 @@ export class WvdWorld implements World {
           answers: ['chest-prompt'],
           whileWaiting: {
             when: ['dungeon', 'unknown'],
-            send: () => this.#commands.stepBack(),
+            send: () => this.#commands.reenterChest(),
             sent: false,
           },
         };

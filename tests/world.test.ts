@@ -26,7 +26,7 @@ import type {
   Point,
 } from '../src/contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
-import { acceptChestPrompt, cancelQte, DISARM_SCAN, enableBattleAuto, stepBackFromChest } from '../src/actions/chest.ts';
+import { acceptChestPrompt, cancelQte, DISARM_SCAN, enableBattleAuto, reenterChest } from '../src/actions/chest.ts';
 import { timeQte, type QteTimer, type QteTimingOptions } from '../src/actions/qte.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { MAX_PRESS_HOLD_MS } from '../src/contracts.ts';
@@ -374,7 +374,7 @@ function makeWorld(options: {
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       enableBattleAuto: () => enableBattleAuto(actuator),
       cancelQte: () => cancelQte(actuator),
-      stepBack: () => stepBackFromChest(actuator, cfg.hazardEscapeHoldMs),
+      reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
     },
     openSession: async () => {
       openSessionCalls += 1;
@@ -1563,10 +1563,14 @@ describe('the chest re-engage after a QTE cancel', () => {
     expect(actuator.calls.some((call) => call.startsWith('key '))).toBe(false);
     expect(host.logRecords.some((record) => record.message.includes('chest QTE reroll 1/5'))).toBe(true);
 
-    // The game is back in the 3-D view: the step goes out once, and the route gets no turn.
+    // The game is back in the 3-D view: the re-engage goes out once — S (away) then W (back in) — and
+    // the route gets no turn. One step off alone is silent live (2026-10-31, two 10 s attempts).
     perceiver.observation = { screen: 'dungeon', atMs: 200, confidence: 1 };
     await world.tick();
-    expect(actuator.calls.filter((call) => call === `key 31 ${cfg.hazardEscapeHoldMs}`)).toHaveLength(1);
+    expect(actuator.calls.filter((call) => call.startsWith('key '))).toEqual([
+      `key 31 ${cfg.hazardEscapeHoldMs}`,
+      `key 17 ${cfg.hazardEscapeHoldMs}`,
+    ]);
     const afterStep = actuator.calls.length;
 
     // A second 3-D tick: no second step, and no G.

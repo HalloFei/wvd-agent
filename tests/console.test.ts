@@ -27,7 +27,7 @@ import type {
 } from '../src/contracts.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
-import { acceptChestPrompt, cancelQte, enableBattleAuto, stepBackFromChest } from '../src/actions/chest.ts';
+import { acceptChestPrompt, cancelQte, enableBattleAuto, reenterChest } from '../src/actions/chest.ts';
 import { timeQte } from '../src/actions/qte.ts';
 import { routePolicy } from '../src/policy/route.ts';
 import { classify } from '../src/policy/session.ts';
@@ -209,7 +209,7 @@ function makeConsole(options: {
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       enableBattleAuto: () => enableBattleAuto(actuator),
       cancelQte: () => cancelQte(actuator),
-      stepBack: () => stepBackFromChest(actuator, cfg.hazardEscapeHoldMs),
+      reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
     },
     openSession: options.noEngine
       ? undefined

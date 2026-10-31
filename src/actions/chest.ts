@@ -63,9 +63,29 @@ export const CHEST_STEP_BACK_SCAN = 0x1f;
 /** The WASD step hold when a caller has no configured one (contracts §8 navigation floor). */
 const STEP_HOLD_MS = 250;
 
-/** Step one tile away from the chest so the 打开 prompt returns (the reroll's second half). */
+/** Step one tile away from the chest (the first half of the reroll's re-engage). */
 export async function stepBackFromChest(actuator: Actuator, holdMs: number = STEP_HOLD_MS): Promise<ActionResult> {
   return actuator.holdKey(CHEST_STEP_BACK_SCAN, Math.max(1, holdMs));
+}
+
+/** The step back onto the chest's tile: **W**, Windows set-1 `0x11`. */
+export const CHEST_FORWARD_SCAN = 0x11;
+
+/**
+ * Re-engage a chest after a QTE cancel: **S then W**, one step each.
+ *
+ * Measured live 2026-10-31: the cancel leaves the party on the chest's own tile, and the 打开 prompt
+ * comes back only when the party *enters* a tile beside the chest. Stepping off alone was silent —
+ * two attempts, ten seconds of 3-D view each — while the step off followed by the step back on drew
+ * the prompt on the next frame. WASD is camera-relative and the cancel leaves the party facing the
+ * chest it just opened, so S is the step away and W the step back in.
+ *
+ * The two holds are the navigation key `hazardEscapeHoldMs`; the caller passes the configured value.
+ */
+export async function reenterChest(actuator: Actuator, holdMs: number = STEP_HOLD_MS): Promise<ActionResult> {
+  const away = await stepBackFromChest(actuator, holdMs);
+  if (!away.ok) return away;
+  return actuator.holdKey(CHEST_FORWARD_SCAN, Math.max(1, holdMs));
 }
 
 /** The pause between two UI taps: the game draws the first button's state before the second lands. */

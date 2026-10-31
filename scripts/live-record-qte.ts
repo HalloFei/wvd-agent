@@ -42,7 +42,7 @@ import {
   DISARM_SCAN,
   acceptChestPrompt,
   cancelQte,
-  stepBackFromChest,
+  reenterChest,
 } from '../src/actions/chest.ts';
 import { chooseQtePass, type QtePass } from '../src/policy/qte.ts';
 import { chooseOpener } from '../src/policy/chest.ts';
@@ -328,8 +328,8 @@ while (now() - t0 < capMs) {
     rerolls += 1;
     say(`reroll ${rerolls}/${cfg.maxRerolls}: window ${Math.round(pass?.windowMs ?? 0)} ms at ${Math.round(pass?.speedPxPerS ?? 0)} px/s; cancel ${cancelled.ok ? 'took' : 'failed'}`);
     if (!(await waitForScreen('dungeon', 4000, 'after the cancel'))) break;
-    await stepBackFromChest(actuator, cfg.hazardEscapeHoldMs);
-    if (!(await waitForScreen('chest-prompt', cfg.openerPanelTimeoutMs, 'after the step back'))) break;
+    await reenterChest(actuator, cfg.hazardEscapeHoldMs);
+    if (!(await waitForScreen('chest-prompt', cfg.openerPanelTimeoutMs, 'after the re-engage'))) break;
     if (!(await openThroughPanel())) break;
     continue;
   }
