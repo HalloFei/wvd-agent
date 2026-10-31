@@ -32,6 +32,8 @@ const MEASUREMENTS = new URL('measurements.json', FIXTURES);
 const QTE_FIXTURES = new URL('../testdata/chest/2026-10-24-qte-0141/', import.meta.url);
 /** The 3-D view: HUD and map, no modal panel. */
 const NAV_FIXTURES = new URL('../testdata/nav-1024-0213/', import.meta.url);
+/** The live FFXI panel (2026-10-31 13:58): 陷阱解除 111 — three glyphs of the same digit. */
+const LIVE_PANEL = new URL('../testdata/chest/2026-10-31-panel-111/', import.meta.url);
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures
@@ -378,6 +380,30 @@ describe('tapOpenerCard', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// parseOpener — the live panel whose 陷阱解除 is 111
+// ---------------------------------------------------------------------------------------------
+
+describe('parseOpener — the live panel whose 陷阱解除 is 111', () => {
+  it('reads a three-digit numeral whose middle 1 is a 3-column stem', async () => {
+    // The regression this fixture exists for: at MIN_GLYPH_COLUMNS 4 the middle 1 of DragonSlayer's
+    // 111 was discarded as antialiasing, the two surviving atoms started 18 px apart, and readNumber
+    // refused the numeral as truncated — which refused the whole panel on a chest that shows no
+    // missing digits at all. The stem is a real glyph: the flags around it are 52 and 54 luma above
+    // the card fill against an ink threshold of 55 (measurements.json carries the column profile).
+    const panel = await parseOpener(await jpegFrame('panel-111.jpg', 1_000, LIVE_PANEL));
+
+    expect(panel).not.toBeNull();
+    expect(panel!.members.map((member) => member.detect)).toEqual([38, 28, 34, 96, 62, 82]);
+    expect(panel!.members.map((member) => member.disarm)).toEqual([49, 50, 38, 111, 43, 87]);
+    // Two different absences: slot 4 draws no heart at all (the main character, `null`), and slot 5's
+    // 90 is the R30 decoder case — `jpeg-js` reads it here while GDI+ renders it below the heart
+    // atlas's floor (the native-decoder test below pins that difference), so `NaN` there, 90 here.
+    expect(panel!.members.map((member) => member.willpower))
+      .toEqual([100, 100, 100, null, 90, 100]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // chooseOpener — the policy
 // ---------------------------------------------------------------------------------------------
 
@@ -559,10 +585,10 @@ describe('the half-tick budget', () => {
 describe('parseOpener — through the native decoder', () => {
   const WINDOWS = process.platform === 'win32';
 
-  async function gdiFrame(name: string): Promise<Frame | null> {
+  async function gdiFrame(name: string, dir = FIXTURES): Promise<Frame | null> {
     const { decodeJpeg, gdiplusProblem } = await import('../src/engine/gdiplus.mjs');
     if (gdiplusProblem() !== '') return null;
-    const bytes = await readFile(new URL(name, FIXTURES));
+    const bytes = await readFile(new URL(name, dir));
     const image = await decodeJpeg(bytes);
     return { atMs: 0, width: image.width, height: image.height, toRgba: async () => image };
   }
@@ -598,5 +624,18 @@ describe('parseOpener — through the native decoder', () => {
     expect(choice?.index).toBe(3);
     expect(openerSlot(choice!.index)!.id).toBe('bottom-left');
     expect(openerCardCentre(choice!.index)).toEqual({ x: 786, y: 908 });
+  });
+
+  it.skipIf(!WINDOWS)('reads the 111 panel through GDI+ too', async () => {
+    // The same decoder path as the live World: the capture the 3-column stem was measured on.
+    const frame = await gdiFrame('panel-111.jpg', LIVE_PANEL);
+    if (frame === null) return;
+    const panel = await parseOpener(frame);
+    expect(panel).not.toBeNull();
+    expect(panel!.members.map((member) => member.disarm)).toEqual([49, 50, 38, 111, 43, 87]);
+    // The decoder difference this fixture also carries: 爱丽丝's 90 is a number through jpeg-js and
+    // unreadable through GDI+, the decoder the World uses.
+    expect(panel!.members.map((member) => member.willpower))
+      .toEqual([100, 100, 100, null, Number.NaN, 100]);
   });
 });

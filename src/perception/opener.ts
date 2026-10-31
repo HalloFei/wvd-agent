@@ -152,9 +152,17 @@ const HEART_LUMA_MIN = 140;
 /**
  * Glyph geometry. Digits are 7–9 px wide and 12–13 rows tall, separated by 1–2 px; a run wider than
  * 12 px is two digits whose JPEG halo closed the gap, split at the measured 9.4 px pitch ("00" in a
- * heart is 18 px). A narrow sliver (fewer than 4 columns) is antialiasing, not a glyph.
+ * heart is 18 px).
+ *
+ * **Three columns is a digit, not antialiasing.** `1` is the narrowest glyph, and its anti-aliased
+ * flag can fall under the ink threshold while its stem survives. On the live 2026-10-31 panel the
+ * middle `1` of `111` measured exactly 3 lit columns — its flags at 52 and 54 luma above a fill of
+ * 46, against `INK_LUMA_DELTA` 55 — so a 4-column floor discarded it, the surviving atoms started
+ * 18 px apart, and `readNumber` refused the numeral as truncated (`MAX_DIGIT_START_GAP` 13). One
+ * unread 陷阱 numeral refuses the whole panel, because that numeral ranks every card. Two real glyphs
+ * are separated by a 1–2 px gap, so a 3-column *run* between them cannot be a halo: it is a stem.
  */
-const MIN_GLYPH_COLUMNS = 4;
+const MIN_GLYPH_COLUMNS = 3;
 const MAX_GLYPH_COLUMNS = 12;
 const DIGIT_PITCH = 9.4;
 /** A card shows at most three digits (105 is the widest observed); more runs is noise, not a number. */

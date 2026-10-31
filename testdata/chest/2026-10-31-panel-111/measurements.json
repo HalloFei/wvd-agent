@@ -1,0 +1,50 @@
+{
+ "what": "the 由谁打开? panel of a live FFXI chest, 2026-10-31 13:58, captured through the engine child at the World's q75 JPEG encode",
+ "frame": "panel-111.jpg",
+ "size": [
+  1920,
+  1080
+ ],
+ "source": "scripts/live-record-qte.ts, run .tmp/record/qte-2026-10-31T06-00-24-444Z (the panel, before the card was tapped)",
+ "members": [
+  {
+   "name": "#1",
+   "detect": 38,
+   "disarm": 49,
+   "willpower": 100
+  },
+  {
+   "name": "#2",
+   "detect": 28,
+   "disarm": 50,
+   "willpower": 100
+  },
+  {
+   "name": "#3",
+   "detect": 34,
+   "disarm": 38,
+   "willpower": 100
+  },
+  {
+   "name": "#4",
+   "detect": 96,
+   "disarm": 111,
+   "willpower": null
+  },
+  {
+   "name": "#5",
+   "detect": 62,
+   "disarm": 43,
+   "willpower": 90
+  },
+  {
+   "name": "#6",
+   "detect": 82,
+   "disarm": 87,
+   "willpower": 100
+  }
+ ],
+ "willpower_note": "values read off the panel image. #4 draws no heart and no numeral (the main character, contracts §OpenerMember `null`); #5 draws 90, but it renders below the heart atlas's identity floor and reads as `NaN`.",
+ "why_this_fixture": "the middle 1 of #4's 陷阱解除 111 is only a 3-column ink run: its anti-aliased flags sit 52 and 54 luma above the card fill (46) against INK_LUMA_DELTA 55, so only the stem counts. MIN_GLYPH_COLUMNS is 3 because of this panel — at 4 the stem was discarded as antialiasing, the surviving atoms started 18 px apart, and readNumber refused the numeral as truncated, which refused the whole panel (a 陷阱 numeral ranks every card).",
+ "column_profile_disarm_slot4": "782:69 783:141 784:194 785:140 786:70 | 790:25 791:52 792:138 793:208 794:149 795:54 | 800:57 801:139 802:189 803:142 804:55 (band x 778-865, y 938-954, delta above the fill)"
+}
