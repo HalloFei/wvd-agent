@@ -42,6 +42,8 @@ export interface WvdConfigSection extends WorldSection {
   fightTimeoutMs: number;
   escalateMaxPerHour: number;
   escalateTimeoutMs: number;
+  /** How long an unnamed screen must persist before the loop asks about it, milliseconds. */
+  escalateSettleMs: number;
   stopHotkey: string;
 }
 
@@ -79,6 +81,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   fightTimeoutMs: 180000,
   escalateMaxPerHour: 20,
   escalateTimeoutMs: 90000,
+  escalateSettleMs: 5000,
   stopHotkey: 'Ctrl+Alt+W',
 };
 
@@ -195,6 +198,11 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.wvd.escalateTimeoutMs': {
         type: 'integer', title: '升级等待上限', description: '等待回答的时间，毫秒。',
+      },
+      'worlds.wvd.escalateSettleMs': {
+        type: 'integer', title: '无名画面等待',
+        description: '画面无法命名时，先等这么久再决定是否提问，毫秒；0 表示第一帧就问。',
+        minimum: 0,
       },
       'worlds.wvd.stopHotkey': {
         type: 'string', title: '停止快捷键', description: '由子进程注册的全局停止键。',

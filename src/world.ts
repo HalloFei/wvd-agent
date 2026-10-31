@@ -183,6 +183,7 @@ const WARMUP_TICKS = 3;
 const STALL_ESCALATE_DIVISOR = 4;
 /** Below this a stall-escalate floor would ask a question about a screen that is still settling. */
 const MIN_STALL_ESCALATE_MS = 500;
+
 /** One hour on the loop's clock: `escalateMaxPerHour`'s window. */
 const HOUR_MS = 60 * 60 * 1000;
 /** A stream pushes at most twice a second: a 10 Hz tick is not a 10 Hz repaint. */
@@ -465,6 +466,10 @@ export class WvdWorld implements World {
   /** Push timestamps inside the hourly window; the count is a query, not a counter. */
   #escalationPushes: number[] = [];
   #escalationCooldownUntilMs = 0;
+  /** When the screen became unnamed; null while it is named. The settle window's clock. */
+  #unnamedSinceMs: number | null = null;
+  /** The cooldown window already reported: one wait is one line, not one per tick. */
+  #cooldownNotedUntilMs = -1;
   #nextEscalationId = 1;
   #engineProblem: string | null = null;
   #lastStopReason: string | null = null;
@@ -889,17 +894,17 @@ export class WvdWorld implements World {
       chestsRemaining: this.#chestsRemaining,
     };
     const spent = this.#spentThisHour(now);
+    // A transition is unnamed for a few ticks and resolves by itself: the clock starts on the first
+    // unnamed frame and a named screen clears it, so the question is only asked once the screen has
+    // stayed nameless for `escalateSettleMs` (`worlds.wvd.escalateSettleMs`). The stall clock below is
+    // the backstop for a transition that never ends.
+    const unnamed = observation.screen === 'unknown' && observation.confidence > 0;
+    if (unnamed) this.#unnamedSinceMs ??= now;
+    else this.#unnamedSinceMs = null;
+    const unnamedSinceMs = this.#unnamedSinceMs;
+
     let verdict = this.#classify(state, spent, this.#cfg.escalateMaxPerHour);
-    // An opener click owns its transition. The opening animation and the panel's fade are frames
-    // nothing names (`unknown`), and asking the model about them would spend the wait the panel is
-    // about to answer. Only *this* press may suppress that verdict — the stall clock below still
-    // escalates a transition that never ends, and its own timeout bounds the suppression.
-    if (
-      verdict === 'escalate'
-      && waiting
-      && this.#inFlight?.kind === 'open-chest'
-      && observation.screen === 'unknown'
-    ) {
+    if (verdict === 'escalate' && unnamedSinceMs !== null && now - unnamedSinceMs < this.#cfg.escalateSettleMs) {
       verdict = 'ok';
     }
     if (verdict === 'ok' && stalledMs >= this.#stallEscalateMs()) verdict = 'escalate';
@@ -1222,7 +1227,12 @@ export class WvdWorld implements World {
   async #escalate(session: WvdSession, frame: Frame, observation: Observation, now: number): Promise<void> {
     if (this.#supervisor.isOpen()) return;
     if (now < this.#escalationCooldownUntilMs) {
-      this.#host?.log.warn('wvd: still cooling down after the last question; not asking again yet');
+      // One line per cooldown, not one per tick: the cooldown is `escalateTimeoutMs` long and the
+      // loop ticks at ~10 Hz inside it (measured 2026-10-31: ~900 lines in 90 s).
+      if (this.#cooldownNotedUntilMs !== this.#escalationCooldownUntilMs) {
+        this.#cooldownNotedUntilMs = this.#escalationCooldownUntilMs;
+        this.#host?.log.warn('wvd: still cooling down after the last question; not asking again yet');
+      }
       return;
     }
     const spent = this.#spentThisHour(now);

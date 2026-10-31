@@ -355,7 +355,12 @@ function makeWorld(options: {
         },
       },
   };
-  const cfg: WvdConfigSection = { ...structuredClone(WVD_DEFAULTS), enabled: false, tickMs: 50, ...options.cfg };
+  // The settle window is pinned to 0 here: most tests are about what the loop does *with* a verdict,
+  // and a 1 s window would make every one of them model a transition first. The tests that pin the
+  // window itself pass `escalateSettleMs` explicitly.
+  const cfg: WvdConfigSection = {
+    ...structuredClone(WVD_DEFAULTS), enabled: false, tickMs: 50, escalateSettleMs: 0, ...options.cfg,
+  };
   const host = options.host ?? new FakeHost();
   const clock = new TestClock();
   let openSessionCalls = 0;
@@ -1030,6 +1035,63 @@ describe('the escalation exchange', () => {
     expect(stuck.event.text).toContain('could not be captured');
   });
 
+  it('does not ask about an unnamed screen that resolves inside the settle window', async () => {
+    // The chest panel's fade: unnamed for a few ticks, then the panel. It must not spend a question
+    // (and the operator's 90 s) on a transition the next frames answer — measured 2026-10-31, both
+    // chest runs paid 90 s for exactly these frames.
+    const { world, host, perceiver, clock } = makeWorld({
+      observation: unknownButSeen,
+      cfg: { escalateSettleMs: 1_000, escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+
+    await world.tick();                  // the fade's first unnamed frame
+    clock.advance(150);
+    await world.tick();                  // unnamed, 150 ms in
+    perceiver.observation = dungeonMap;  // the panel settles
+    clock.advance(150);
+    await world.tick();
+
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(0);
+  });
+
+  it('asks about an unnamed screen once it outlasts the settle window', async () => {
+    const { world, host, clock } = makeWorld({
+      observation: unknownButSeen,
+      cfg: { escalateSettleMs: 1_000, escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+
+    await world.tick();                  // unnamed since this tick
+    clock.advance(900);
+    await world.tick();                  // 900 ms: still settling
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(0);
+
+    clock.advance(200);                  // 1 100 ms: it has outlasted the window
+    await world.tick();
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(1);
+  });
+
+  it('says "cooling down" once per cooldown, not once per tick', async () => {
+    const { world, host, clock } = makeWorld({
+      observation: unknownButSeen,
+      cfg: { escalateSettleMs: 1_000, escalateTimeoutMs: 100 },
+    });
+    await started(world, host);
+
+    await world.tick();
+    clock.advance(1_100);
+    await world.tick();                  // asks; the question times out and the cooldown opens
+
+    clock.advance(10);
+    await world.tick();
+    clock.advance(10);
+    await world.tick();
+
+    const cooling = () => host.logRecords.filter((record) => record.message.includes('cooling down'));
+    expect(cooling()).toHaveLength(1);
+  });
+
   it('does not wait when the host archived the event instead of delivering it', async () => {
     const host = new FakeHost();
     host.delivery = 'archive-only';
@@ -1404,7 +1466,9 @@ describe('the opener click', () => {
     const { world, host, perceiver, actuator, clock } = makeWorld({
       observation: chestPrompt,
       // A regression asks the model; the test then fails on the pushed event instead of waiting.
-      cfg: { escalateTimeoutMs: 25 },
+      // The settle window is production's: the animation below is the measured 4.1 s of unnamed
+      // frames, and the window is what must cover it.
+      cfg: { escalateSettleMs: WVD_DEFAULTS.escalateSettleMs, escalateTimeoutMs: 25 },
     });
     await started(world, host);
     await world.tick();

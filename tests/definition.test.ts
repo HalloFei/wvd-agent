@@ -98,11 +98,11 @@ describe('WVD World definition', () => {
     expect(host.events).toEqual([]);
   });
 
-  it('declares all thirty-four contracts §8 keys with defaults the console can render', () => {
+  it('declares all thirty-five contracts §8 keys with defaults the console can render', () => {
     const properties = WVD_CONFIG_GROUP.schema.properties;
     const keyOf = (path: string) => path.slice('worlds.wvd.'.length);
-    expect(Object.keys(properties)).toHaveLength(34);
-    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(34);
+    expect(Object.keys(properties)).toHaveLength(35);
+    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(35);
     for (const path of Object.keys(properties)) {
       expect(path.startsWith('worlds.wvd.')).toBe(true);
       expect(WVD_DEFAULTS).toHaveProperty(keyOf(path));
@@ -127,6 +127,8 @@ describe('WVD World definition', () => {
     expect(properties['worlds.wvd.rerollLeadRatio']).toMatchObject({ type: 'number', minimum: 0, maximum: 1 });
     // the snapshot width is the one value the child refuses outside the wire bounds; the schema is
     // where a bad setting is caught, not a 5 s engine timeout that never names the field
+    // 0 is a legitimate "ask on the first frame"; the default is one settle window.
+    expect(properties['worlds.wvd.escalateSettleMs']).toMatchObject({ type: 'integer', minimum: 0 });
     expect(properties['worlds.wvd.escalationImageWidth'])
       .toMatchObject({ type: 'integer', minimum: MIN_CAPTURE_WIDTH, maximum: MAX_CAPTURE_WIDTH });
     expect(WVD_DEFAULTS).toMatchObject({
@@ -135,7 +137,7 @@ describe('WVD World definition', () => {
       mapOpenTimeoutMs: 3000, openerPanelTimeoutMs: 10000,
       willpowerFloor: 60, maxRerolls: 5, rerollLeadRatio: 0.5, qteLatencyMs: 75, qteDecelPxPerS2: 3000, qteMinWindowMs: 150,
       qteAttemptsFallback: 2, qteSubLoopMs: 4000,
-      autoBattleEnableAttempts: 3, fightTimeoutMs: 180000, escalateMaxPerHour: 20, escalateTimeoutMs: 90000, stopHotkey: 'Ctrl+Alt+W',
+      autoBattleEnableAttempts: 3, fightTimeoutMs: 180000, escalateMaxPerHour: 20, escalateTimeoutMs: 90000, escalateSettleMs: 5000, stopHotkey: 'Ctrl+Alt+W',
     });
   });
 

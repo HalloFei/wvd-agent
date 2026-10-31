@@ -78,7 +78,10 @@ policy either clicks on a black frame or waits forever on a normal view.
   decoded. This is the only observation that may end a session, because there is nothing to look at.
 - **a positive confidence, below every act floor** — something is drawn and no recogniser can name
   it (a battle, a loading screen, the opener panel, a menu). A human can look at that frame, so the
-  session escalates and asks; stopping would end the run on the first fight or floor transition.
+  session escalates and asks — but only once the screen has stayed unnamed for `escalateSettleMs`:
+  a transition is unnamed for a few ticks and resolves by itself, and asking about it spends the
+  operator's whole wait on frames the next ones answer (measured 2026-10-31, both chest runs paid
+  90 s for the panel's fade). Stopping would end the run on the first fight or floor transition.
   `CompositePerceiver` keeps the strongest positive refusal when no recogniser clears its floor.
 
 ## 3. Perception
@@ -425,6 +428,7 @@ object (§0 rule 3).
 | `fightTimeoutMs` | integer | `180000` | battle | a fight longer than this is a stall |
 | `escalateMaxPerHour` | integer | `20` | escalation | model calls before the session stops |
 | `escalateTimeoutMs` | integer | `90000` | escalation | wait for Coo's answer |
+| `escalateSettleMs` | integer | `5000` | escalation | an unnamed screen must persist this long before the loop asks; `0` asks on the first frame |
 | `stopHotkey` | string | `Ctrl+Alt+W` | engine | global stop, registered natively by the child |
 
 `qteLatencyMs` is a **measured** value with provenance in the chest spec §3. `qteDecelPxPerS2` is
