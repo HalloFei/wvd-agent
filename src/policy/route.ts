@@ -80,7 +80,10 @@ export function nextIntent(state: RouteState): Intent {
       // `chooseOpener`, and with no qualifying member the World escalates instead of clicking.
       return { kind: 'open-chest' };
     case 'chest-qte':
+    case 'chest-opening':
     case 'loading':
+      // The opening is the chest module's moment (the lid and the hands, no bar yet): the loop sends
+      // nothing and re-perceives — the bar or the loot is what comes next.
       return { kind: 'wait', ms: SETTLE_MS };
     default:
       // every ScreenId above has a rule; a newly added screen lands here as a wait, never a click

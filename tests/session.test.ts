@@ -39,6 +39,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   dungeonmap: dungeonMap(),
   combat: { screen: 'combat', atMs: AT, confidence: CONFIDENT },
   'chest-prompt': { screen: 'chest-prompt', atMs: AT, confidence: CONFIDENT },
+  'chest-opening': { screen: 'chest-opening', atMs: AT, confidence: CONFIDENT },
   'chest-open': {
     screen: 'chest-open',
     atMs: AT,

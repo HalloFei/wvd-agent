@@ -953,6 +953,7 @@ function emptyScreens(): Record<ScreenId, number> {
     dungeonmap: 0,
     combat: 0,
     'chest-open': 0,
+    'chest-opening': 0,
     'chest-qte': 0,
     'chest-prompt': 0,
     loot: 0,

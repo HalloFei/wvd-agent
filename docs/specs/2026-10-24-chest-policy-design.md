@@ -91,7 +91,14 @@ first 150 ms of the bar: two frames fix `v`, then one scheduled press, no correc
 Recorded 2026-10-24 on a live chest, with frames in `testdata/chest/2026-10-24-live-qte/`:
 
 - Answering the panel starts a **lid animation with no bar** — the chest fills the frame and hands
-  reach for it. In that burst (`open-*.jpg`) there is no disarm bar anywhere.
+  reach for it. In that burst (`open-*.jpg`) there is no disarm bar anywhere. **This moment has its
+  own screen id, `chest-opening` (2026-10-31).** Two measurements name it, both from the eight
+  opening frames against every other screen in the corpus: the **party HUD is not drawn** (bright
+  HP/MP text in its band is 0–12 px, against 153+ on the QTE, 506 on the panel, 8 040 on the 3-D
+  view), and **the chest fills the middle** (warm pixels ≥ 6 % of the central half-frame: opening
+  0.09–0.31, 3-D view 0.01, loot 0.03). The 打开 prompt shares the missing HUD and is named by its
+  own recogniser, which runs first. The route policy's answer for `chest-opening` is `wait` — the
+  loop sends nothing and re-perceives; the bar or the loot is what comes next.
 - **Then the bar appears**, roughly 1.5–2 s later, in the same chest (`qte-*.jpg`, `qte-bar-*.jpg`).
 
 So the absence of a bar immediately after the panel is **not** evidence of an untrapped chest. The

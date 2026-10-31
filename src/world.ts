@@ -374,6 +374,22 @@ interface InFlight {
   walking: boolean;
   /** The map readout at press time, so a party walking under an open map is not "no effect". */
   readonly readAtPress: MapRead | null;
+  /**
+   * The screens that answer this command. Absent keeps the default rule ("any screen but the one it
+   * was pressed on"); present, only those screens answer — a modal sequence whose next frame is not
+   * the answer, e.g. a QTE cancel answered by the 打开 prompt coming back.
+   */
+  readonly answers?: readonly ScreenId[] | undefined;
+  /**
+   * One action the loop may send while the answer has not arrived, on the screens that justify it.
+   * The re-engage uses it for the step off the chest's tile: after a cancel the party stands on the
+   * chest, so the prompt cannot be offered until it steps away (operator, 2026-10-31).
+   */
+  readonly whileWaiting?: {
+    readonly when: readonly ScreenId[];
+    readonly send: () => Promise<ActionResult>;
+    sent: boolean;
+  } | undefined;
 }
 
 /** What the last map read said: the loop's only measure of whether the farm advanced. */
@@ -853,8 +869,13 @@ export class WvdWorld implements World {
     // bar is a fresh decision instead of a command still waiting. No intent is taken from the policy
     // and no route command is sent while the QTE is on screen.
     if (observation.screen === 'chest-qte') {
-      if (this.#inFlight?.kind === 'open-chest') this.#openerClickAnswered(observation.screen, now);
-      await this.#timeQte(session, frame);
+      // A cancel waiting for the prompt is not re-timed: the bar on screen is the one it just left,
+      // or a frame the game has not retired yet. Only a press without a declared answer (the card
+      // click) is answered here.
+      if (this.#inFlight?.kind === 'open-chest' && this.#inFlight.answers === undefined) {
+        this.#openerClickAnswered(observation.screen, now);
+      }
+      if (this.#inFlight?.answers === undefined) await this.#timeQte(session, frame);
       return;
     }
 
@@ -982,6 +1003,7 @@ export class WvdWorld implements World {
       }
       case 'chest-open':
       case 'chest-qte':
+      case 'chest-opening':
       case 'loot':
       case 'combat':
         // A screen a walk produces. Staying on one is not progress, so a fight that never ends stalls.
@@ -1059,6 +1081,36 @@ export class WvdWorld implements World {
     // chest §3a). The screen the press was made on and `unknown` are not answers: the prompt may
     // not have taken the click yet, and the opening animation or a fade is a frame nothing named.
     if (inFlight.kind === 'open-chest') {
+      // A declared answer set (the QTE cancel): only those screens answer, and while the answer is
+      // still owed the loop may send exactly one intermediate action. The route policy never runs
+      // in this window, which is the whole point — the frame after a cancel is a plain 3-D view,
+      // and the route's answer to that is `open-map` (a G pressed over the chest).
+      if (inFlight.answers !== undefined) {
+        if (inFlight.answers.includes(observation.screen)) {
+          this.#openerClickAnswered(observation.screen, now);
+          return false;
+        }
+        const step = inFlight.whileWaiting;
+        if (step !== undefined && !step.sent && step.when.includes(observation.screen)) {
+          step.sent = true;
+          const sent = await step.send();
+          this.#host?.log[sent.ok ? 'info' : 'warn'](sent.ok
+            ? 'wvd: re-engaging the chest: stepped off its tile'
+            : `wvd: the chest re-engage step was refused (${sent.reason})`);
+        }
+        const waitedMs = now - inFlight.sinceMs;
+        const timeoutMs = Math.max(1, this.#cfg.openerPanelTimeoutMs);
+        if (waitedMs >= timeoutMs) {
+          this.#inFlight = null;
+          this.#failed.add('open-chest');
+          this.#host?.log.warn(
+            `wvd: the chest did not come back after the QTE cancel (${Math.round(waitedMs)} ms); `
+              + 'not re-engaging it until the farm advances',
+          );
+          return false;
+        }
+        return this.#inFlight !== null;
+      }
       // The answer is a *change*: the panel for a prompt press, the QTE/loot/battle for a card
       // press. The screen the press was made on and `unknown` are both not answers.
       if (observation.screen !== 'unknown' && observation.screen !== inFlight.fromScreen) {
@@ -1448,12 +1500,26 @@ export class WvdWorld implements World {
       const cancelled = await this.#commands.cancelQte();
       if (cancelled.ok) {
         this.#qteRerolls += 1;
-        // The party is standing on the chest's tile: step off it so the 打开 prompt comes back and
-        // the next tick can open the panel again (operator rule, 2026-10-31).
-        const stepped = await this.#commands.stepBack();
-        if (!stepped.ok) {
-          this.#host?.log.warn(`wvd: the chest could not be re-engaged: step back was refused (${stepped.reason})`);
-        }
+        // The cancel is a command whose answer is the 打开 prompt coming back — not the next frame.
+        // The party stands on the chest's tile then, so the prompt needs one step off it first; the
+        // in-flight record supplies both facts and the loop keeps its hands off the route policy
+        // until the prompt answers (operator, 2026-10-31).
+        const now = this.#now();
+        this.#inFlight = {
+          kind: 'open-chest',
+          fromScreen: 'chest-qte',
+          sinceMs: now,
+          evidenceAtMs: now,
+          signature: null,
+          walking: false,
+          readAtPress: null,
+          answers: ['chest-prompt'],
+          whileWaiting: {
+            when: ['dungeon', 'unknown'],
+            send: () => this.#commands.stepBack(),
+            sent: false,
+          },
+        };
       }
       this.#host?.log.info(
         `wvd: chest QTE reroll ${this.#qteRerolls}/${cfg.maxRerolls}: `

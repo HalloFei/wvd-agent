@@ -26,7 +26,7 @@ import type {
   Point,
 } from '../src/contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
-import { acceptChestPrompt, DISARM_SCAN, enableBattleAuto } from '../src/actions/chest.ts';
+import { acceptChestPrompt, cancelQte, DISARM_SCAN, enableBattleAuto, stepBackFromChest } from '../src/actions/chest.ts';
 import { timeQte, type QteTimer, type QteTimingOptions } from '../src/actions/qte.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { MAX_PRESS_HOLD_MS } from '../src/contracts.ts';
@@ -373,8 +373,8 @@ function makeWorld(options: {
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       enableBattleAuto: () => enableBattleAuto(actuator),
-      cancelQte: async () => ({ ok: true }),
-      stepBack: async () => ({ ok: true }),
+      cancelQte: () => cancelQte(actuator),
+      stepBack: () => stepBackFromChest(actuator, cfg.hazardEscapeHoldMs),
     },
     openSession: async () => {
       openSessionCalls += 1;
@@ -1537,5 +1537,45 @@ describe('the opener click', () => {
     await tick;
 
     expect(actuator.calls.filter((call) => call.startsWith('tap '))).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The reroll's re-engage (2026-10-31)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * After a QTE cancel the party stands on the chest's own tile and the game returns to the 3-D view;
+ * the 打开 prompt only comes back once the party steps off. The cancel is therefore a command whose
+ * answer is `chest-prompt`, with one while-waiting step — and while it waits the route policy must
+ * not run: on a 3-D frame its answer is `open-map`, i.e. a G pressed over the chest.
+ */
+describe('the chest re-engage after a QTE cancel', () => {
+  it('cancels, steps off the chest once, and routes nothing until the prompt answers', async () => {
+    const { world, host, perceiver, actuator, cfg } = makeWorld({
+      observation: qteBar,
+      timing: async () => ({ ok: false, reason: 'reroll' }),
+    });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toContain('tap 738,758');
+    expect(actuator.calls.some((call) => call.startsWith('key '))).toBe(false);
+    expect(host.logRecords.some((record) => record.message.includes('chest QTE reroll 1/5'))).toBe(true);
+
+    // The game is back in the 3-D view: the step goes out once, and the route gets no turn.
+    perceiver.observation = { screen: 'dungeon', atMs: 200, confidence: 1 };
+    await world.tick();
+    expect(actuator.calls.filter((call) => call === `key 31 ${cfg.hazardEscapeHoldMs}`)).toHaveLength(1);
+    const afterStep = actuator.calls.length;
+
+    // A second 3-D tick: no second step, and no G.
+    await world.tick();
+    expect(actuator.calls.length).toBe(afterStep);
+
+    // The prompt answers the cancel; the ordinary policy now presses 打开.
+    perceiver.observation = { screen: 'chest-prompt', atMs: 300, confidence: 1 };
+    await world.tick();
+    expect(actuator.calls.at(-1)).toBe('tap 955,858');
   });
 });

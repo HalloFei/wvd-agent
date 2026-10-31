@@ -32,6 +32,7 @@ import { captureJpeg, focusGame, sendInput, Win32Capture } from './engine/win32.
 import { ChestPerceiver } from './perception/chest.ts';
 import { CombatPerceiver } from './perception/combat.ts';
 import { ChestPromptPerceiver } from './perception/prompt.ts';
+import { ChestOpeningPerceiver } from './perception/chest-opening.ts';
 import { CompositePerceiver } from './perception/composite.ts';
 import { HudPerceiver } from './perception/hud.ts';
 import { TownPerceiver, WorldMapPerceiver } from './perception/location.ts';
@@ -102,6 +103,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     { perceiver: new ChestPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new MapPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new ChestPromptPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    // The opening is named after the prompt: both draw no HUD, and only the prompt's own recogniser
+    // can tell the 打开 menu from the lid lifting.
+    { perceiver: new ChestOpeningPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new CombatPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new HudPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The HUD refuses both of these at 0.2; they run last so a dungeon frame never pays for them.

@@ -28,6 +28,7 @@ import { captureJpeg, focusGame, sendInput, Win32Capture } from '../src/engine/w
 import { ChestPerceiver } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
 import { ChestPromptPerceiver } from '../src/perception/prompt.ts';
+import { ChestOpeningPerceiver } from '../src/perception/chest-opening.ts';
 import { CombatPerceiver } from '../src/perception/combat.ts';
 import { HudPerceiver } from '../src/perception/hud.ts';
 import { TownPerceiver, WorldMapPerceiver } from '../src/perception/location.ts';
@@ -58,6 +59,7 @@ function perceiver(): CompositePerceiver {
     { perceiver: new ChestPerceiver(), floor: 0.5 },
     { perceiver: new MapPerceiver(), floor: 0.5 },
     { perceiver: new ChestPromptPerceiver(), floor: 0.5 },
+    { perceiver: new ChestOpeningPerceiver(), floor: 0.5 },
     { perceiver: new CombatPerceiver(), floor: 0.5 },
     { perceiver: new HudPerceiver(), floor: 0.5 },
     { perceiver: new WorldMapPerceiver(), floor: 0.5 },

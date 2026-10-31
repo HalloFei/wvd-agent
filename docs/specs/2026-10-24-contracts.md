@@ -64,7 +64,7 @@ encoder changes one module and no parser.
 ```ts
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
-  | 'chest-open' | 'chest-qte' | 'loot' | 'loading' | 'unknown';
+  | 'chest-open' | 'chest-qte' | 'chest-opening' | 'loot' | 'loading' | 'unknown';
 ```
 
 `dungeon` is the 3D exploration view — the party walking, the HUD up, no map open. It is the screen
