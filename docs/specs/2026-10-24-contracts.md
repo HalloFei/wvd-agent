@@ -64,8 +64,14 @@ encoder changes one module and no parser.
 ```ts
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
-  | 'chest-open' | 'chest-qte' | 'chest-opening' | 'loot' | 'loading' | 'unknown';
+  | 'chest-open' | 'chest-qte' | 'chest-opening' | 'loot' | 'loading' | 'chest-prompt'
+  | 'dungeon-select' | 'unknown';
 ```
+
+`dungeon-select` is the FFXI Dungeon Select list between the world map node and the 3D dungeon. Its
+recogniser matches the legacy zone rows in the list band (第三区 0.781 @0.70, 第一区 0.762 @0.66);
+the task names it with `expect` instead of a fixed wait, and `travel` uses the `openworldmap` control
+or the row's label from it. It is a hand-off screen: the route waits, the task/action owns it.
 
 `dungeon` is the 3D exploration view — the party walking, the HUD up, no map open. It is the screen
 the route acts on by opening the map, and it is distinguishable from `unknown` because the 3D view has

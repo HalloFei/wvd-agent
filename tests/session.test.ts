@@ -14,7 +14,7 @@ function state(observation: Observation, willpower: number[] = [80], chestsRemai
 
 /** A screen with no payload of its own, at any confidence. */
 function screen(
-  kind: 'town' | 'worldmap' | 'dungeon' | 'loot' | 'loading' | 'unknown',
+  kind: 'town' | 'worldmap' | 'dungeon' | 'dungeon-select' | 'loot' | 'loading' | 'unknown',
   confidence = CONFIDENT,
 ): Observation {
   return { screen: kind, atMs: AT, confidence };
@@ -54,6 +54,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   },
   loot: screen('loot'),
   loading: screen('loading'),
+  'dungeon-select': screen('dungeon-select'),
 };
 
 /** The route's acting floor from both sides, plus the out-of-contract zero and a negative. */
@@ -140,14 +141,16 @@ describe('the session classifier', () => {
   });
 
   it('continues where the route waits by design rather than from doubt', () => {
-    // loading, a QTE, loot and the world map are hand-offs: the route waits for another module or
-    // for the screen to settle at full confidence. Escalating those would spend the hourly budget on
-    // loading screens, so the loop's stall counter, not this verdict, owns their persistence
-    // (controller ruling).
-    for (const kind of ['loading', 'chest-qte', 'loot', 'worldmap'] as const) {
+    // loading, a QTE, the world map and the Dungeon Select list are hand-offs: the route waits for
+    // another module or for the screen to settle at full confidence. Escalating those would spend the
+    // hourly budget on loading screens, so the loop's stall counter, not this verdict, owns their
+    // persistence (controller ruling). Loot is no longer a hand-off: the route taps the card.
+    for (const kind of ['loading', 'chest-qte', 'worldmap', 'dungeon-select'] as const) {
       expect(nextIntent(state(identified[kind])).kind, kind).toBe('wait');
       expect(classify(state(identified[kind]), 0, CAP), kind).toBe('ok');
     }
+    expect(nextIntent(state(identified.loot))).toEqual({ kind: 'loot' });
+    expect(classify(state(identified.loot), 0, CAP)).toBe('ok');
   });
 
   it('says ok on the opener panel, which the route now acts on', () => {

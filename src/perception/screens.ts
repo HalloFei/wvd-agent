@@ -52,6 +52,7 @@ export const SCREENS: readonly ScreenId[] = [
   'chest-opening',
   'loot',
   'loading',
+  'dungeon-select',
 ];
 
 export function screenStandings(facts: FrameFacts): readonly ScreenStanding[] {
@@ -77,6 +78,8 @@ export function screenStandings(facts: FrameFacts): readonly ScreenStanding[] {
     { screen: 'chest-opening', support: 0, ruledOut: false },
     { screen: 'loot', support: 0, ruledOut: false },
     { screen: 'loading', support: 0, ruledOut: false },
+    // The Dungeon Select rows are the only evidence; its own recogniser speaks.
+    { screen: 'dungeon-select', support: 0, ruledOut: false },
   ];
 }
 

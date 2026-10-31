@@ -37,6 +37,7 @@ import { LootPerceiver } from './perception/loot.ts';
 import { CompositePerceiver } from './perception/composite.ts';
 import { HudPerceiver } from './perception/hud.ts';
 import { TownPerceiver, WorldMapPerceiver } from './perception/location.ts';
+import { DungeonSelectPerceiver } from './perception/dungeon-select.ts';
 import { TRAVEL_IDS } from './perception/locations.ts';
 import { MapPerceiver } from './perception/map.ts';
 import { routePolicy } from './policy/route.ts';
@@ -115,6 +116,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     // The HUD refuses both of these at 0.2; they run last so a dungeon frame never pays for them.
     { perceiver: new WorldMapPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new TownPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    // The DLL-style list between the world map and the dungeon; named last because only its own
+    // row recogniser speaks and a normal frame must not pay for it.
+    { perceiver: new DungeonSelectPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
   ]);
 
   const openSession = async (): Promise<SessionOpen> => {

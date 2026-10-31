@@ -14,7 +14,7 @@ import type {
 
 const SCREENS: ReadonlySet<string> = new Set<ScreenId>([
   'town', 'worldmap', 'dungeon', 'dungeonmap', 'combat',
-  'chest-open', 'chest-qte', 'loot', 'loading', 'unknown',
+  'chest-open', 'chest-qte', 'loot', 'loading', 'dungeon-select', 'unknown',
 ]);
 
 const KEY_NAMES: ReadonlySet<string> = new Set(['g', 'l', 'q', 'f', 'r', 'tab', 'esc', 'space']);

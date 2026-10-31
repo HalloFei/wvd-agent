@@ -11,6 +11,7 @@
  */
 import type { ActionFailure, Actuator, Frame, Observation, Point, RgbaImage, ScreenId } from '../contracts.ts';
 import { waitStable } from '../frames/stable.ts';
+import { DUNGEON_SELECT_AREA, DUNGEON_SELECT_FLOOR, DUNGEON_SELECT_SCALES } from '../perception/dungeon-select.ts';
 import { LOCATIONS, type LocationEntry } from '../perception/locations.ts';
 import { findTemplate, type Match } from '../perception/match.ts';
 
@@ -43,15 +44,12 @@ const ZOOM_IN_SCAN = 0x12;
 const PRESS_MS = 60;
 /** The parchment between the letterboxed pillars; all nodes live inside it. */
 const MAP_AREA = { x: 450, y: 0, width: 1_200, height: 1_080 } as const;
-/** The Dungeon Select list: its rows sit 56 px apart inside this band, the label art at 0.66–0.70. */
-const DUNGEON_SELECT_AREA = { x: 850, y: 300, width: 500, height: 400 } as const;
-const DUNGEON_SELECT_SCALES = [0.64, 0.66, 0.68, 0.70] as const;
 /** The Dungeon Select row that opens the world map; measured live at 0.946 @ 0.68, hit (1100,666). */
 const OPEN_WORLD_MAP_AREA = { x: 850, y: 600, width: 500, height: 160 } as const;
 const OPEN_WORLD_MAP_SCALES = [0.66, 0.68] as const;
-const OPEN_WORLD_MAP_FLOOR = 0.85;
-/** 第三区-城内2F- measures 0.781 here; the matcher's 0.80 floor is the world map's node floor. */
-const DUNGEON_SELECT_FLOOR = 0.72;
+const OPEN_WORLD_MAP_FLOOR = 0.80;
+/** The Dungeon Select row that opens the world map; measured live 2026-10-31 (the guide point). */
+const DUNGEON_SELECT_WORLD_MAP_AT = { x: 1100, y: 666 } as const;
 const TOWN_ICON_BAND = { x: 1_100, y: 900, width: 220, height: 180 } as const;
 const PANEL_BAND = { x: 480, y: 720, width: 400, height: 360 } as const;
 const CONTROL_SCALES = [0.66, 0.68] as const;
@@ -128,15 +126,29 @@ async function openFrom(
 
   let frame = start.frame;
   let screen = start.observation.screen;
-  // The Dungeon Select screen is not a ScreenId, but its 打开世界地图 row is the legacy
-  // `openworldmap` control. Match it before the town/world-map settle poll, or this screen would
-  // wait out the whole poll and refuse. Measured live 2026-10-31: 0.946 @ 0.68 at (1028,650).
-  if (screen !== 'town' && screen !== 'worldmap') {
-    // The Dungeon Select screen is unnamed and is reached through a loading screen, which is also
-    // unnamed. Trying the control once on the initial frame can therefore miss it: the control is
-    // not drawn yet, and the settle poll below only knows town/worldmap, so it would wait out the
-    // whole 10 s and never look again. Re-settle and retry the control until the screen becomes a
-    // place with a map, the deadline passes, or a control opens the map.
+  // The named Dungeon Select stage has a measured control: its row's hit point opened the map
+  // live. The legacy template scores only 0.265 in the native frame (the row is drawn with the
+  // party panel up and the native JPEG differs from the saved q90), so this stage must not depend
+  // on the template. One bounded retry covers a click swallowed by the fade.
+  if (screen === 'dungeon-select') {
+    env.log?.('wvd: opening the world map from the Dungeon Select row');
+    const pressed = await env.actuator.tap(DUNGEON_SELECT_WORLD_MAP_AT);
+    if (!pressed.ok) return failure(pressed.reason, pressed.detail);
+    let opened = await poll(env, (candidate) => candidate === 'worldmap' || candidate === 'town', OPEN_TIMEOUT_MS, now);
+    if (!opened.ok) {
+      env.log?.('wvd: the Dungeon Select row did not open the map on the first tap; retrying once');
+      const retried = await env.actuator.tap(DUNGEON_SELECT_WORLD_MAP_AT);
+      if (!retried.ok) return failure(retried.reason, retried.detail);
+      opened = await poll(env, (candidate) => candidate === 'worldmap' || candidate === 'town', OPEN_TIMEOUT_MS, now);
+      if (!opened.ok) return opened;
+    }
+    if (opened.screen === 'worldmap') return { ok: true };
+    frame = opened.frame;
+    screen = opened.screen;
+  } else if (screen !== 'town' && screen !== 'worldmap') {
+    // An unnamed screen (a loading frame, or an older select frame) is reached through a loading
+    // screen, which is also unnamed. The template control is the legacy fallback; the named stage
+    // above is the normal path.
     const deadline = now() + SETTLE_MS;
     for (;;) {
       const image = await decode(frame);

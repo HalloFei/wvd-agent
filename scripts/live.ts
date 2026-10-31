@@ -32,6 +32,7 @@ import { ChestOpeningPerceiver } from '../src/perception/chest-opening.ts';
 import { CombatPerceiver } from '../src/perception/combat.ts';
 import { HudPerceiver } from '../src/perception/hud.ts';
 import { TownPerceiver, WorldMapPerceiver } from '../src/perception/location.ts';
+import { DungeonSelectPerceiver } from '../src/perception/dungeon-select.ts';
 import { TRAVEL_IDS, LOCATIONS } from '../src/perception/locations.ts';
 import { MapPerceiver, readMapDetailed } from '../src/perception/map.ts';
 import { travelTo } from '../src/actions/worldmap.ts';
@@ -64,6 +65,7 @@ function perceiver(): CompositePerceiver {
     { perceiver: new HudPerceiver(), floor: 0.5 },
     { perceiver: new WorldMapPerceiver(), floor: 0.5 },
     { perceiver: new TownPerceiver(), floor: 0.5 },
+    { perceiver: new DungeonSelectPerceiver(), floor: 0.5 },
   ]);
 }
 

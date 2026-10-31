@@ -7,7 +7,7 @@
     "steps": [
       { "op": "expect", "screen": "town", "timeoutMs": 20000 },
       { "op": "travel", "to": "ffxi-gcn" },
-      { "op": "wait", "ms": 8000 },
+      { "op": "expect", "screen": "dungeon-select", "timeoutMs": 30000 },
       { "op": "travel", "to": "ffxi-zone3" },
       { "op": "expect", "screen": "dungeon", "timeoutMs": 45000 },
       { "op": "tap", "at": [1787, 96] },
@@ -34,7 +34,7 @@
       { "op": "key", "key": "f" },
       { "op": "wait", "ms": 8000 },
       { "op": "tap", "at": [960, 714] },
-      { "op": "wait", "ms": 5000 },
+      { "op": "expect", "screen": "dungeon-select", "timeoutMs": 15000 },
       { "op": "travel", "to": "vnh" },
       { "op": "expect", "screen": "town", "timeoutMs": 30000 }
     ]

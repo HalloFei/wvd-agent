@@ -968,6 +968,7 @@ function emptyScreens(): Record<ScreenId, number> {
     'chest-prompt': 0,
     loot: 0,
     loading: 0,
+    'dungeon-select': 0,
     unknown: 0,
   };
 }
