@@ -12,8 +12,10 @@
  * - The map canvas **scrolls** (21, 72 and 210 px measured on one floor), so no absolute origin is a
  *   constant. The click transform is relative to the chevron: `chevron + (Δx·36, −Δy·36)`. Icons are
  *   mapped the same way; the lattice is fitted per frame only to validate the structure.
- * - Refusal is a first-class answer. A frame that fails any measured gate is `null` — observe()
- *   reports `unknown` with confidence 0 — because a confident wrong map is worse than no map.
+ * - Refusal is a first-class answer, and it **names the gate** that refused the frame
+ *   (`readMapDetailed` → `{ ok: false, gate }`); `readMap` keeps the plain `null` for callers that
+ *   only ever needed the map, and observe() still reports `unknown` with confidence 0. A confident
+ *   wrong map is worse than no map, and an unnamed refusal is a diagnosis nobody can read.
  *
  * Geometry: 1920×1080 device pixels. A frame of another size is unsupported (contracts §0.5: refuse,
  * do not mis-scale the fixed rects). The digits are 12 px at a fixed rect and only seven of the ten
@@ -390,12 +392,49 @@ interface ParsedMap {
 }
 
 /**
+ * Why the parser refused a frame: one name per measured gate, in the order the parser asks them.
+ * Observability only — the gates, their order and their thresholds are unchanged by the naming.
+ * The readout's interior gates are named too, because R28/R28a/R28b/R28c were all diagnosed inside
+ * that reader, and a bare `readout` would send the next incident back to a bisect.
+ */
+export type MapRefusalGate =
+  | 'unsupported-size'
+  | 'uniform-frame'
+  | 'decode-failed'
+  | 'readout-labels'
+  | 'readout-label-width'
+  | 'readout-runs'
+  | 'readout-digit-width'
+  | 'readout-digit-unmatched'
+  | 'readout-parse'
+  | 'title-bar-light'
+  | 'map-ink'
+  | 'no-title'
+  | 'no-lattice'
+  | 'lattice-support'
+  | 'no-chevron';
+
+/** The parser's whole answer: the map it read, or the gate that refused the frame. */
+export type MapParse =
+  | ({ readonly ok: true } & ParsedMap)
+  | { readonly ok: false; readonly gate: MapRefusalGate };
+
+/**
+ * Read the map out of one frame, or name the gate that refused it. This is the reader a diagnosis
+ * uses: a saved live frame answers "which measured gate" in one call.
+ */
+export async function readMapDetailed(frame: Frame): Promise<MapParse> {
+  return parse(frame);
+}
+
+/**
  * Read the map out of one frame. `null` is the answer for every refusal: the frame is another size,
  * uniform, not the map screen, or carries a readout/lattice/chevron this parser cannot trust.
+ * `readMapDetailed` answers the same question with the gate's name.
  */
 export async function readMap(frame: Frame): Promise<MapState | null> {
   const parsed = await parse(frame);
-  return parsed?.map ?? null;
+  return parsed.ok ? parsed.map : null;
 }
 
 /**
@@ -418,7 +457,7 @@ export function tileOnScreen(map: MapState, tile: Point): Point {
 export class MapPerceiver implements Perceiver {
   async observe(frame: Frame): Promise<Observation> {
     const parsed = await parse(frame);
-    if (!parsed) return { screen: 'unknown', atMs: frame.atMs, confidence: 0 };
+    if (!parsed.ok) return { screen: 'unknown', atMs: frame.atMs, confidence: 0 };
     return {
       screen: 'dungeonmap',
       atMs: frame.atMs,
@@ -428,49 +467,51 @@ export class MapPerceiver implements Perceiver {
   }
 }
 
-async function parse(frame: Frame): Promise<ParsedMap | null> {
+async function parse(frame: Frame): Promise<MapParse> {
+  let image: RgbaImage;
   try {
-    const image = await frame.toRgba();
-    return parseImage(image);
+    image = await frame.toRgba();
   } catch {
-    // Failure is a value (contracts §0.6): a decode failure is "not observed", not a throw.
-    return null;
+    // Failure is a value (contracts §0.6): a decode failure is "not observed", not a throw — and it
+    // is its own gate, never the same answer as "this frame is not the map".
+    return { ok: false, gate: 'decode-failed' };
   }
+  return parseImage(image);
 }
 
-function parseImage(image: RgbaImage): ParsedMap | null {
+function parseImage(image: RgbaImage): MapParse {
   const { data, width, height } = image;
 
   // 0. Size and uniformity -------------------------------------------------------------------
-  if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) return null;
-  if (isUniform(data, width, height)) return null;
+  if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) return { ok: false, gate: 'unsupported-size' };
+  if (isUniform(data, width, height)) return { ok: false, gate: 'uniform-frame' };
 
   // 1. G1: the coordinate readout ------------------------------------------------------------
   const readout = readReadout(data, width);
-  if (!readout) return null;
+  if (!readout.ok) return readout;
 
   // 2. G2: the title bar's dark strip --------------------------------------------------------
-  if (darkFraction(data, width) < TITLE_BAR_DARK_FRACTION) return null;
+  if (darkFraction(data, width) < TITLE_BAR_DARK_FRACTION) return { ok: false, gate: 'title-bar-light' };
 
   // 3. One scan of the map panel feeds G3, G6's profiles, and both colour blobs. ---------------
   const panel = scanPanel(data, width);
-  if (panel.mapInk < MAP_INK_MIN || panel.mapInk > MAP_INK_MAX) return null;
+  if (panel.mapInk < MAP_INK_MIN || panel.mapInk > MAP_INK_MAX) return { ok: false, gate: 'map-ink' };
 
   // 4. G4 + R27: a centred Latin floor token that lands in the measured slots. ----------------
   const title = readTitle(image);
-  if (!title) return null;
+  if (!title) return { ok: false, gate: 'no-title' };
 
   // 5. G6: the wall lattice ----------------------------------------------------------------
   // Both axes must be *present* (a fit over ≥8 detected lines); the quality test is the X axis's
   // support — the FFXI glow that defeats a residual crosses the Y profile, not the X one.
   const latticeX = fitLattice(panel.columns, LATTICE_X);
   const latticeY = fitLattice(panel.rows, LATTICE_Y);
-  if (!latticeX || !latticeY) return null;
-  if (latticeX.support < LATTICE_SUPPORT_MIN) return null;
+  if (!latticeX || !latticeY) return { ok: false, gate: 'no-lattice' };
+  if (latticeX.support < LATTICE_SUPPORT_MIN) return { ok: false, gate: 'lattice-support' };
 
   // 6. G5: the chevron (the click origin) ----------------------------------------------------
   const chevron = findChevron(panel.yellow, width, latticeX.phase, latticeY.phase);
-  if (!chevron) return null;
+  if (!chevron) return { ok: false, gate: 'no-chevron' };
 
   // 7. Icons, all positioned relative to the chevron. ---------------------------------------
   const icons = findIcons(data, width, panel, readout, chevron, latticeX.phase, latticeY.phase);
@@ -493,7 +534,7 @@ function parseImage(image: RgbaImage): ParsedMap | null {
   // An unnamed (non-Latin) title is a weaker gate than three matched glyphs, never a stronger one.
   if (title.text === '') confidence = Math.min(confidence, 0.85);
 
-  return { map, confidence };
+  return { ok: true, map, confidence };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -553,7 +594,10 @@ interface Readout {
   readonly margins: readonly number[];
 }
 
-function readReadout(data: Uint8Array, width: number): Readout | null {
+/** The readout's own answer: the digits it read, or the gate inside G1 that refused them. */
+type ReadoutParse = ({ readonly ok: true } & Readout) | { readonly ok: false; readonly gate: MapRefusalGate };
+
+function readReadout(data: Uint8Array, width: number): ReadoutParse {
   const columnInk = new Uint8Array(READOUT_W);
   for (let y = READOUT_Y; y < READOUT_Y + READOUT_H; y += 1) {
     const row = y * width;
@@ -578,12 +622,14 @@ function readReadout(data: Uint8Array, width: number): Readout | null {
     runs.findIndex(([from]) => Math.abs(READOUT_X + from - expected) <= READOUT_LABEL_TOLERANCE);
   const xLabel = labelAt(READOUT_LABEL_X[0]);
   const yLabel = labelAt(READOUT_LABEL_X[1]);
-  if (xLabel < 0 || yLabel < 0 || yLabel <= xLabel + 1) return null;
+  if (xLabel < 0 || yLabel < 0 || yLabel <= xLabel + 1) return { ok: false, gate: 'readout-labels' };
 
   for (const index of [xLabel, yLabel]) {
     const [from, to] = runs[index]!;
     // A label may carry its colon when the two touch (17–18 px); anything wider is another glyph.
-    if (to - from + 1 < READOUT_LABEL_MIN_W || to - from + 1 > READOUT_LABEL_MAX_W + 5) return null;
+    if (to - from + 1 < READOUT_LABEL_MIN_W || to - from + 1 > READOUT_LABEL_MAX_W + 5) {
+      return { ok: false, gate: 'readout-label-width' };
+    }
   }
 
   // One or two digits per axis: a corridor reads `X: 7`, a side corridor `X: 13`. The colon is the
@@ -598,22 +644,26 @@ function readReadout(data: Uint8Array, width: number): Readout | null {
   const yFrom = yLabel + (colonAfter(yLabel, runs.length) ? 2 : 1);
   const xRuns = runs.slice(xFrom, yLabel);
   const yRuns = runs.slice(yFrom);
-  if (xRuns.length < 1 || xRuns.length > 2 || yRuns.length < 1 || yRuns.length > 2) return null;
+  if (xRuns.length < 1 || xRuns.length > 2 || yRuns.length < 1 || yRuns.length > 2) {
+    return { ok: false, gate: 'readout-runs' };
+  }
 
   const digits: string[] = [];
   const margins: number[] = [];
   for (const [from, to] of [...xRuns, ...yRuns]) {
-    if (to - from + 1 < READOUT_DIGIT_MIN_W || to - from + 1 > READOUT_DIGIT_MAX_W) return null;
+    if (to - from + 1 < READOUT_DIGIT_MIN_W || to - from + 1 > READOUT_DIGIT_MAX_W) {
+      return { ok: false, gate: 'readout-digit-width' };
+    }
     const match = readDigit(data, width, from, to);
-    if (!match) return null;
+    if (!match) return { ok: false, gate: 'readout-digit-unmatched' };
     digits.push(match.digit);
     margins.push(match.margin);
   }
 
   const x = Number(digits.slice(0, xRuns.length).join(''));
   const y = Number(digits.slice(xRuns.length).join(''));
-  if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
-  return { x, y, margins };
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return { ok: false, gate: 'readout-parse' };
+  return { ok: true, x, y, margins };
 }
 
 /**

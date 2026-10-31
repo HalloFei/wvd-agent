@@ -33,7 +33,7 @@ import { CombatPerceiver } from '../src/perception/combat.ts';
 import { HudPerceiver } from '../src/perception/hud.ts';
 import { TownPerceiver, WorldMapPerceiver } from '../src/perception/location.ts';
 import { TRAVEL_IDS, LOCATIONS } from '../src/perception/locations.ts';
-import { MapPerceiver } from '../src/perception/map.ts';
+import { MapPerceiver, readMapDetailed } from '../src/perception/map.ts';
 import { travelTo } from '../src/actions/worldmap.ts';
 import { createTaskRunner } from '../src/tasks/runner.ts';
 import { parseTask } from '../src/tasks/schema.ts';
@@ -158,11 +158,16 @@ try {
   switch (command) {
     case 'status':
     case 'observe': {
-      const classification = await see.classify(await source.capture());
+      const frame = await source.capture();
+      const classification = await see.classify(frame);
+      // The map parser's own answer, gate included: the screen is not the map and this says which
+      // measured gate refused it, without a bisected copy of the module (task t-mvmuxnkc-jveshn).
+      const mapParse = await readMapDetailed(frame);
       out({
         ok: true,
         foreground: await foreground(client),
         ...describe(classification.answer),
+        mapGate: mapParse.ok ? null : mapParse.gate,
         // Every screen the frame speaks about: what it supports, and what it rules out.
         standings: classification.standings
           .filter((standing) => standing.support > 0 || standing.ruledOut)

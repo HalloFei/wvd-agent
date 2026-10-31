@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import type { Frame, MapIcon, MapState, RgbaImage } from '../src/contracts.ts';
-import { MapPerceiver, readMap, tileOnScreen } from '../src/perception/map.ts';
+import { MapPerceiver, readMap, readMapDetailed, tileOnScreen } from '../src/perception/map.ts';
 import { floorKeyDistance } from '../src/tasks/steps.ts';
 
 /**
@@ -109,6 +109,63 @@ describe('readMap', () => {
   });
 });
 
+/**
+ * The refusal names its gate (task t-mvmuxnkc-jveshn). `readMap` keeps answering `null`; the detailed
+ * reader is what a diagnosis reads, so a live refusal costs one call on the saved frame instead of a
+ * bisected copy of the parser.
+ */
+describe('readMapDetailed — a refusal names the gate that refused it', () => {
+  it('names the size gate for a frame that is not 1920x1080', async () => {
+    const image: RgbaImage = { data: new Uint8Array(64 * 64 * 4), width: 64, height: 64 };
+    const frame: Frame = { atMs: 1, width: 64, height: 64, toRgba: async () => image };
+
+    expect(await readMapDetailed(frame)).toEqual({ ok: false, gate: 'unsupported-size' });
+  });
+
+  it('names the gate that refuses the HUD-only frame', async () => {
+    expect(await readMapDetailed(await jpegFrame('minimap-and-hud.jpg')))
+      .toEqual({ ok: false, gate: 'readout-labels' });
+  });
+
+  it('names the digit gate when a readout glyph matches no template', async () => {
+    const frame = await jpegFrame('map.jpg');
+    const image = await frame.toRgba();
+    const data = Uint8Array.from(image.data);
+
+    // The same mutation the refusal test above uses: the X tens digit becomes a checkerboard.
+    for (let y = 900; y < 912; y += 1) {
+      for (let x = 1041; x < 1047; x += 1) {
+        const value = (x + y) % 2 === 0 ? 255 : 0;
+        const offset = (y * image.width + x) * 4;
+        data[offset] = value;
+        data[offset + 1] = value;
+        data[offset + 2] = value;
+        data[offset + 3] = 255;
+      }
+    }
+
+    const mutated: Frame = {
+      ...frame,
+      toRgba: async () => ({ data, width: image.width, height: image.height }),
+    };
+
+    expect(await readMapDetailed(mutated)).toEqual({ ok: false, gate: 'readout-digit-unmatched' });
+  });
+
+  it('names a decode failure rather than folding it into a refusal', async () => {
+    const frame: Frame = {
+      atMs: 1,
+      width: 1920,
+      height: 1080,
+      toRgba: async () => {
+        throw new Error('decode failed');
+      },
+    };
+
+    expect(await readMapDetailed(frame)).toEqual({ ok: false, gate: 'decode-failed' });
+  });
+});
+
 describe('MapPerceiver', () => {
   it('reports a dungeonmap observation with its confidence and the frame time', async () => {
     const frame = await jpegFrame('map.jpg', 12_345);
@@ -169,7 +226,9 @@ describe('readMap — the floor title fingerprint', () => {
     expect(latin!.titleKey).not.toBe(ffxi!.titleKey);
   });
 
-  it('still refuses the HUD frame at the title ink gate', async () => {
+  // Measured 2026-10-31: this frame is refused at the readout band and never reaches the floor-key
+  // gate; the gate's name is pinned by the readMapDetailed test above.
+  it('still refuses the HUD frame, at the readout band', async () => {
     expect(await readMap(await jpegFrame('minimap-and-hud.jpg'))).toBeNull();
   });
 });
