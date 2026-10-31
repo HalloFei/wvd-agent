@@ -151,6 +151,28 @@ describe('runSteps', () => {
       .toMatchObject({ ok: false, reason: 'floor-mismatch' });
   });
 
+  it('lets a step titleKey override the task floor key, in both directions', async () => {
+    const threeF = '0c0280000d6ff0000d7ffc0008c37000';
+    const fourF = '000000007f3ffe007ffeff00220bb600';
+    // The committed 4F fixture key differs from the live key by three bits; the tolerance accepts it.
+    const fourFFixture = '000000007f3ffe007f7efe00220ba600';
+
+    // The 4F step gate accepts the 4F frame even though the task's key is 3F.
+    const onFour = makeEnv({ observations: [mapObservation(fourFFixture)] });
+    expect(await runSteps(script([{ op: 'expectFloor', titleKey: fourF }]), onFour.env, threeF))
+      .toMatchObject({ ok: true });
+
+    // The same 4F frame under the task's 3F gate (no step key) is a mismatch.
+    const wrongLeg = makeEnv({ observations: [mapObservation(fourFFixture)] });
+    expect(await runSteps(script([{ op: 'expectFloor', timeoutMs: 150 }]), wrongLeg.env, threeF))
+      .toMatchObject({ ok: false, reason: 'floor-mismatch' });
+
+    // A 3F step gate reads the 3F frame the other way round.
+    const onThree = makeEnv({ observations: [mapObservation(threeF)] });
+    expect(await runSteps(script([{ op: 'expectFloor', titleKey: threeF }]), onThree.env, fourF))
+      .toMatchObject({ ok: true });
+  });
+
   it('fails the step when the camera cannot produce a frame', async () => {
     const { env } = makeEnv({ capture: async () => { throw new Error('no-frame'); } });
     const result = await runSteps(script([{ op: 'expect', screen: 'dungeon', timeoutMs: 100 }]), env, 'k');

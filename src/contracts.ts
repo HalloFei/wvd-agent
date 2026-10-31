@@ -232,6 +232,7 @@ export type Intent =
   | { kind: 'open-map' }
   | { kind: 'move'; target: Point }
   | { kind: 'open-chest' }
+  | { kind: 'loot' }
   | { kind: 'fight' }
   | { kind: 'exit' }
   | { kind: 'run-script'; name: ScriptId }
@@ -265,6 +266,8 @@ export interface TaskStep {
   /** The destination id a `travel` step names; validated against the catalog at load. */
   readonly to?: string;
   readonly screen?: ScreenId;
+  /** `expectFloor` only: the 32-hex floor key to gate; the task's own key when absent. */
+  readonly titleKey?: string;
   readonly timeoutMs?: number;
 }
 

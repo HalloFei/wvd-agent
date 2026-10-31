@@ -1,13 +1,16 @@
 /**
- * The chest's fixed inputs: the two taps before its panel, and the disarm key (design §7, chest §3b).
+ * The chest's fixed inputs: the two taps before its panel, the disarm key, and the one tap that
+ * collects the loot (design §7, chest §3b).
  *
- * The taps are fixed UI points of the 1920×1080 client area, measured on the live game (2026-10-24):
+ * The taps are fixed UI points of the 1920×1080 client area, measured on the live game:
  *
  * - the party standing next to a chest is offered `打开` at (955, 858); `什么也不做` sits below it
  *   and is never tapped;
  * - a battle carries `倍速` at (691, 708) and `自动` at (1231, 708). Pressing them once per battle is
  *   what makes an unattended fight end; pressing them again toggles nothing off because the game
- *   ignores a tap on an active button.
+ *   ignores a tap on an active button;
+ * - the loot overlay collects with one tap at (960, 510), measured live on 2026-10-31: the contents
+ *   card itself is the target and no control is drawn under the point.
  *
  * Every function returns the actuator's `ActionResult` unchanged: a `rejected` tap (the game is not
  * foreground) is the answer, never retried here.
@@ -104,4 +107,22 @@ export async function enableBattleAuto(actuator: Actuator): Promise<ActionResult
   if (!speed.ok) return speed;
   await settle(TAP_SETTLE_MS);
   return actuator.tap(BATTLE_AUTO_AT);
+}
+
+/**
+ * The loot overlay's collect: the centre of the contents card, (960, 510) on the 1920×1080 client.
+ *
+ * **Measured live (2026-10-31).** The operator's manual tap at this point collected the loot and
+ * dismissed the card; no control is drawn under it, so the card itself is the target. The perceiver
+ * that names the screen is `LootPerceiver` (`src/perception/loot.ts`); this point has nothing to do
+ * with that capture's 1280×720 size — the action always speaks the client's pixels.
+ *
+ * One tap per call. A caller that wants to repeat a tap until the card leaves owns that repetition
+ * (it is a policy fact, not an action's), and a rejected tap is returned unchanged, never retried.
+ */
+export const LOOT_COLLECT_AT: Point = { x: 960, y: 510 };
+
+/** Collect the loot on screen: one tap at the measured card centre. */
+export async function tapLoot(actuator: Actuator): Promise<ActionResult> {
+  return actuator.tap(LOOT_COLLECT_AT);
 }

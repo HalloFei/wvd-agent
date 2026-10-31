@@ -31,6 +31,8 @@ export interface WvdConfigSection extends WorldSection {
   maxRerolls: number;
   rerollLeadRatio: number;
   qteLatencyMs: number;
+  /** When true, the planner adds the measured brake carry; default false (freeze at registration). */
+  qteBrakeEnabled: boolean;
   qteDecelPxPerS2: number;
   qteMinWindowMs: number;
   qteAttemptsFallback: number;
@@ -71,6 +73,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   maxRerolls: 5,
   rerollLeadRatio: 0.5,
   qteLatencyMs: 75,
+  qteBrakeEnabled: false,
   qteDecelPxPerS2: 3000,
   qteMinWindowMs: 150,
   qteAttemptsFallback: 2,
@@ -165,6 +168,10 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.wvd.qteLatencyMs': {
         type: 'integer', title: 'QTE 输入延迟', description: '实测的输入延迟，毫秒。', minimum: 1,
+      },
+      'worlds.wvd.qteBrakeEnabled': {
+        type: 'boolean', title: 'QTE 刹车模型',
+        description: '启用后按滑行刹车提前量计划；默认关闭（2026-10-31 实测按压在登记点冻结）。',
       },
       'worlds.wvd.qteDecelPxPerS2': {
         type: 'integer', title: 'QTE 减速度', description: '拟合的滑行常数，像素/秒²；暂定值。', minimum: 1,

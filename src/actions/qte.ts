@@ -34,9 +34,10 @@
  * on the zone's centre. Once it has passed, the question stops being "when" and becomes "where": a
  * press issued now still carries the marker (`predictRest`), and if the landing is inside a zone —
  * with the model's margin, before the bounce — the press is taken late rather than not at all. That
- * is what makes a 1 200 px/s bar pressable at all: its lead is ~177 ms of travel (latency 75 ms +
- * the drag brake's 101.7 ms), so by the time a frame has been parsed the planned instant is often
- * just behind us, and refusing it would refuse every pass.
+ * is what makes a 1 200 px/s bar pressable at all: its lead is 75 ms of travel with the brake
+ * switch off (the default) or ~177 ms with it on (latency 75 ms plus the drag brake's 101.7 ms), so
+ * by the time a frame has been parsed the planned instant is often just behind us, and refusing it
+ * would refuse every pass.
  *
  * ## What bounds the call
  *
@@ -91,10 +92,12 @@ const REST_POLL_MS = 16;
 
 /**
  * The margin a predicted landing keeps inside a zone, pixels. The prediction's real uncertainty is
- * the brake model's: the one measured stop gives tau = 112 ms while the plan uses the 10 % shorter
- * 101.7 ms (`2 x qteDecelPxPerS2`), so the actual landing is up to `v · 0.0103` px past the
- * prediction — 12.8 px at 1 240 px/s — plus a few px of glyph and latency noise. 20 px covers that,
- * and a zone narrower than twice the margin is left to the exact path rather than gambled on.
+ * the timing model's: with the brake switch on, the one measured stop gives tau = 112 ms while the
+ * plan uses the 10 % shorter 101.7 ms (`2 x qteDecelPxPerS2`), so the actual landing is up to
+ * `v · 0.0103` px past the prediction — 12.8 px at 1 240 px/s. With it off (the default) the live
+ * 2026-10-31 presses left ~4 px, and either way there are a few px of glyph and latency noise. 20 px
+ * covers all of that, and a zone narrower than twice the margin is left to the exact path rather
+ * than gambled on.
  */
 const PREDICT_MARGIN_PX = 20;
 
@@ -183,6 +186,12 @@ export interface QteTimingOptions {
   readonly wait: (ms: number) => Promise<void>;
   readonly latencyMs: number;
   readonly decelPxPerS2: number;
+  /**
+   * Add the drag brake's post-press carry to the plan and the late press. Default false: the live
+   * 2026-10-31 presses froze at the press, so the default lead is the plain input leg. Forwarded
+   * unchanged to `planTap` and `predictRest`; the World wires `worlds.wvd.qteBrakeEnabled`.
+   */
+  readonly brakeEnabled?: boolean;
   readonly budgetMs: number;
   /**
    * The attempt-vs-reroll decision (operator rule 2026-10-31). Absent means "press whenever a pass
@@ -212,7 +221,7 @@ export type QteTimer = (options: QteTimingOptions) => Promise<QteOutcome>;
  * budget plus the rest read's settle window.
  */
 export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
-  const { sampler, press, now, wait, latencyMs, decelPxPerS2, budgetMs, choosePass } = options;
+  const { sampler, press, now, wait, latencyMs, decelPxPerS2, brakeEnabled = false, budgetMs, choosePass } = options;
 
   // A mis-typed number must not become a press, and an unbounded loop is the one failure this
   // module could not report as a value: refuse both before the first sample.
@@ -270,6 +279,7 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
       latencyMs,
       decelPxPerS2,
       horizonMs: remainingMs,
+      brakeEnabled,
     });
     planAttempted = true;
     if (plan !== null) planFound = true;
@@ -304,6 +314,7 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
         ageMs: now() - reading.atMs,
         latencyMs,
         decelPxPerS2,
+        brakeEnabled,
       });
       const landing = landingRest === null ? undefined : reading.zones.find((zone) =>
         landingRest >= zone.from + PREDICT_MARGIN_PX

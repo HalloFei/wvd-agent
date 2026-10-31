@@ -44,8 +44,8 @@ function reading(overrides: Partial<PlanReading> = {}): PlanReading {
 }
 
 /** A real rightward plan taken at `markerX`, and the press position its own formula predicts. */
-function rightwardPlan(markerX = 800): { readonly plan: TapPlan; readonly pressX: number } {
-  const plan = planTap({ markerX, v: 610, zones: PARSED_ZONES, ...TAP });
+function rightwardPlan(markerX = 800, brakeEnabled = false): { readonly plan: TapPlan; readonly pressX: number } {
+  const plan = planTap({ markerX, v: 610, zones: PARSED_ZONES, ...TAP, brakeEnabled });
   if (plan === null) throw new Error('the test input must plan');
   return { plan, pressX: markerX + 610 * (plan.atMs / 1_000) };
 }
@@ -139,11 +139,30 @@ describe('planProblem', () => {
     });
   });
 
-  it('fires at ~27 px, the residual a 10 % speed error leaves on a 450 ms plan', () => {
-    // The recording's longest checked plans run ~450 ms. A 10 % error in v displaces the prediction
-    // by 0.1 · 610 px/s · 0.45 s ≈ 27 px, so a 27 px residual has to fire or the speed-error
+  it('fires at ~30 px, the residual a 10 % speed error leaves on a 490 ms plan', () => {
+    // With no brake (the default) the near zone's centre leaves the plan once the marker is past
+    // 807.5 − 45.75 = 761.75, and the longest "next zone" plan is ~497 ms. At 765 the far centre is
+    // (1111 − 765 − 45.75)/610 = 492 ms out. A 10 % error in v displaces the prediction by
+    // 0.1 · 610 px/s · 0.492 s ≈ 30 px, so a 30 px residual has to fire or the speed-error
     // sensitivity `docs/status.md` claims is gone.
-    const { plan, pressX } = rightwardPlan(729);
+    const { plan, pressX } = rightwardPlan(765);
+    expect(plan.atMs).toBeGreaterThan(485);
+    expect(plan.atMs).toBeLessThan(500);
+
+    const outside = planProblem(
+      reading({ markerX: 765 }),
+      plan,
+      readingAfter(plan, pressX, 30),
+      BOUNCE,
+    );
+    expect(outside.problem).toContain('(30.0 px off, tolerance 12 px)');
+    expect(outside.compared).toBe(true);
+  });
+
+  it('keeps the 2026-10-24 ~27 px / 450 ms check with brakeEnabled: true', () => {
+    // The pre-switch numbers, preserved under the switch: at 729 the braked plan runs 449.6 ms, so a
+    // 10 % speed error displaces the prediction by 0.1 · 610 px/s · 0.45 s ≈ 27 px.
+    const { plan, pressX } = rightwardPlan(729, true);
     expect(plan.atMs).toBeGreaterThan(440);
     expect(plan.atMs).toBeLessThan(460);
 

@@ -98,11 +98,11 @@ describe('WVD World definition', () => {
     expect(host.events).toEqual([]);
   });
 
-  it('declares all thirty-five contracts §8 keys with defaults the console can render', () => {
+  it('declares all thirty-six contracts §8 keys with defaults the console can render', () => {
     const properties = WVD_CONFIG_GROUP.schema.properties;
     const keyOf = (path: string) => path.slice('worlds.wvd.'.length);
-    expect(Object.keys(properties)).toHaveLength(35);
-    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(35);
+    expect(Object.keys(properties)).toHaveLength(36);
+    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(36);
     for (const path of Object.keys(properties)) {
       expect(path.startsWith('worlds.wvd.')).toBe(true);
       expect(WVD_DEFAULTS).toHaveProperty(keyOf(path));

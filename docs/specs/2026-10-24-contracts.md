@@ -322,6 +322,7 @@ export type Intent =
   | { kind: 'open-map' }
   | { kind: 'move'; target: Point }
   | { kind: 'open-chest' }
+  | { kind: 'loot' }
   | { kind: 'fight' }
   | { kind: 'exit' }
   | { kind: 'wait'; ms: number }
@@ -361,6 +362,7 @@ export interface TapPlan { readonly atMs: number; readonly target: number }
 export function planTap(input: {
   markerX: number; v: number; zones: readonly QteZone[];
   latencyMs: number; decelPxPerS2: number; horizonMs: number;
+  brakeEnabled?: boolean;   // default false; add the drag carry only when the switch asks
 }): TapPlan | null;
 ```
 
@@ -413,6 +415,7 @@ object (§0 rule 3).
 | `maxRerolls` | integer | `3` | chest | QTE rerolls per chest, floor chests only |
 | `rerollLeadRatio` | number 0–1 | `0.5` | chest | reroll when lead exceeds this fraction of the zone |
 | `qteLatencyMs` | integer | `75` | chest | measured input latency |
+| `qteBrakeEnabled` | boolean | `false` | chest | add the measured brake carry to plans; default off (press resolves at registration) |
 | `qteDecelPxPerS2` | integer | `3000` | chest | fitted slide constant, provisional |
 | `qteMinWindowMs` | integer | `150` | chest | refuse a pass tighter than this |
 | `qteAttemptsFallback` | integer | `2` | chest | used when the counter is unreadable |
@@ -463,6 +466,8 @@ export interface TaskStep {
   readonly count?: 1 | 2;
   readonly key?: TaskKeyName;
   readonly holdMs?: number;
+  /** `expectFloor` only: the 32-hex floor key to gate; the task's own key when absent. */
+  readonly titleKey?: string;
   readonly ms?: number;
   /** The destination id a `travel` step names; validated against the catalog at load. */
   readonly to?: string;

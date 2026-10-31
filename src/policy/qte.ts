@@ -5,13 +5,19 @@
  * The model, measured on the recorded chest (research §8, spec §3):
  *
  * ```
- * stop_x = markerX + v·delay + v·L + sign(v)·v²/(2a)
+ * stop_x = markerX + v·delay + v·L [+ sign(v)·brakeDistance]
  * ```
  *
- * `L` is the input latency (`qteLatencyMs`, measured 48.7–67.2 ms), `a` is the post-tap slide
- * (`qteDecelPxPerS2`, provisional 3000, one-sample support 2740–3100), and the slide term carries
- * the sign of motion because the marker keeps sliding the way it was going — get the sign wrong and
- * a leftward plan aims 62 px past the zone on a 610 px/s chest.
+ * `L` is the input latency (`qteLatencyMs`, measured 48.7–67.2 ms). The bracketed slide term is the
+ * post-tap drag brake (`qteDecelPxPerS2`, provisional 3000, one-sample support 2740–3100), and it
+ * carries the sign of motion because the marker keeps sliding the way it was going — get the sign
+ * wrong and a leftward plan aims 62 px past the zone on a 610 px/s chest.
+ *
+ * **The brake term is off by default** (`brakeEnabled`, the `worlds.wvd.qteBrakeEnabled` config).
+ * The 2026-10-31 live presses parked ~4 px past the press, so the game froze the marker where the
+ * input landed and there was no carry to add (chest spec §3); the one recording with a stop did
+ * carry 68 px, so the model stays reachable behind the switch instead of being deleted. A plan
+ * without the carry is the plain `v·L`.
  *
  * Two things the signature of contracts §7 cannot express, and where they live instead:
  *
@@ -129,10 +135,18 @@ export interface PlanTapInput {
   readonly latencyMs: number;
   readonly decelPxPerS2: number;
   readonly horizonMs: number;
+  /**
+   * Add the drag brake's post-press carry to the lead (the 2026-10-24 recording's model). Default
+   * false: the live 2026-10-31 presses parked at the press, so the default lead is the plain
+   * `v·latencyMs/1000`. The sub-loop forwards `worlds.wvd.qteBrakeEnabled` here and to
+   * `predictRest`.
+   */
+  readonly brakeEnabled?: boolean;
 }
 
 /**
- * Solve `markerX + v·delay + v·L + sign(v)·v²/(2a) = zone centre` for the soonest reachable zone.
+ * Solve `markerX + v·delay + lead = zone centre` for the soonest reachable zone, where `lead` is
+ * `v·L` and, with `brakeEnabled`, `sign(v)·brakeDistancePx(v, 2a)` more.
  *
  * Refusal (`null`) means "no pass is feasible in this horizon": the marker is not moving, every
  * centre is behind it, every centre lies past a bounce in the direction of travel, or the press
@@ -140,17 +154,19 @@ export interface PlanTapInput {
  * marker bounces forever and passes are free until an attempt is spent).
  */
 export function planTap(input: PlanTapInput): TapPlan | null {
-  const { markerX, v, zones, latencyMs, decelPxPerS2, horizonMs } = input;
+  const { markerX, v, zones, latencyMs, decelPxPerS2, horizonMs, brakeEnabled = false } = input;
 
   // A non-answer from perception must not become a NaN press. `decelPxPerS2 ≤ 0` would divide by 0.
   if (!Number.isFinite(markerX) || !Number.isFinite(v) || v === 0) return null;
   if (!Number.isFinite(latencyMs) || !Number.isFinite(decelPxPerS2) || decelPxPerS2 <= 0) return null;
   if (!Number.isFinite(horizonMs) || horizonMs < 0) return null;
 
-  // The carry is the brake model's, not an inline constant deceleration: `decelPxPerS2` keeps its
-  // measured meaning (the uniform-deceleration fit), and the model's reference acceleration is twice
-  // it, which is the same carry at the recorded speed under `d = v · t` (see `brakeDistancePx`).
-  const lead = v * (latencyMs / 1_000) + Math.sign(v) * brakeDistancePx(v, 2 * decelPxPerS2);
+  // The lead is the input leg, plus the brake model's carry only when the switch asks for it: the
+  // carry is not an inline constant deceleration, `decelPxPerS2` keeps its measured meaning (the
+  // uniform-deceleration fit) and the model's reference acceleration is twice it, which is the same
+  // carry at the recorded speed under `d = v · t` (see `brakeDistancePx`).
+  const lead = v * (latencyMs / 1_000)
+    + (brakeEnabled ? Math.sign(v) * brakeDistancePx(v, 2 * decelPxPerS2) : 0);
   const reversal = v > 0 ? BOUNCE_RIGHT_X : BOUNCE_LEFT_X;
   const horizonS = horizonMs / 1_000;
 
@@ -181,13 +197,16 @@ export interface PredictRestInput {
   readonly ageMs: number;
   readonly latencyMs: number;
   readonly decelPxPerS2: number;
+  /** Add the drag brake's carry after the press; default false, as in `planTap`. */
+  readonly brakeEnabled?: boolean;
 }
 
 /**
- * Where the marker parks if the press is issued **now**: the frame's own age, the input leg and the
- * brake all move the marker after the reading was taken, so
+ * Where the marker parks if the press is issued **now**: the frame's own age and the input leg move
+ * the marker after the reading was taken, and, only with `brakeEnabled`, the drag brake carries it
+ * further, so
  *
- *   `markerX + v·(ageMs + latencyMs)/1000 + sign(v)·brakeDistancePx(v)`
+ *   `markerX + v·(ageMs + latencyMs)/1000 [+ sign(v)·brakeDistancePx(v)]`
  *
  * The same brake model and the same reference acceleration (twice the fit) that `planTap` uses, so a
  * press decided here and a press the planner scheduled answer the same physics: the marker's own
@@ -195,12 +214,13 @@ export interface PredictRestInput {
  * guess.
  */
 export function predictRest(input: PredictRestInput): number | null {
-  const { markerX, v, ageMs, latencyMs, decelPxPerS2 } = input;
+  const { markerX, v, ageMs, latencyMs, decelPxPerS2, brakeEnabled = false } = input;
   if (!Number.isFinite(markerX) || !Number.isFinite(v) || v === 0) return null;
   if (!Number.isFinite(ageMs) || ageMs < 0) return null;
   if (!Number.isFinite(latencyMs) || latencyMs < 0) return null;
   if (!Number.isFinite(decelPxPerS2) || decelPxPerS2 <= 0) return null;
-  return markerX + v * ((ageMs + latencyMs) / 1_000) + Math.sign(v) * brakeDistancePx(v, 2 * decelPxPerS2);
+  const brake = brakeEnabled ? Math.sign(v) * brakeDistancePx(v, 2 * decelPxPerS2) : 0;
+  return markerX + v * ((ageMs + latencyMs) / 1_000) + brake;
 }
 
 // ---------------------------------------------------------------------------------------------

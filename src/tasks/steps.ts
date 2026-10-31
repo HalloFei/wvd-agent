@@ -121,7 +121,8 @@ function isStop(value: unknown): value is Stop {
 
 /**
  * Run one script. The steps run in order; the first failure returns immediately. `floorKey` is the
- * key `expectFloor` compares against — a plain string, so this module never needs the task object.
+ * key an `expectFloor` step falls back to when it names none — a plain string, so this module never
+ * needs the task object.
  */
 export async function runSteps(
   script: TaskScript,
@@ -191,6 +192,8 @@ async function pollScreen(step: TaskStep, index: number, env: ScriptEnv): Promis
 }
 
 async function pollFloor(step: TaskStep, index: number, env: ScriptEnv, floorKey: string): Promise<Stop | null> {
+  // A step may gate one leg (3F on the way up, 4F on arrival) with its own key.
+  const expected = step.titleKey ?? floorKey;
   const deadline = Date.now() + (step.timeoutMs ?? DEFAULT_EXPECT_TIMEOUT_MS);
   let seen = 'no observation';
   for (;;) {
@@ -199,7 +202,7 @@ async function pollFloor(step: TaskStep, index: number, env: ScriptEnv, floorKey
     if (isStop(captured)) return stopped(index, captured.reason, captured.detail);
     const observation = await env.observe(captured);
     if (observation.screen === 'dungeonmap') {
-      if (isExpectedFloor(floorKey, observation.map.titleKey)) return null;
+      if (isExpectedFloor(expected, observation.map.titleKey)) return null;
       seen = `floor ${observation.map.titleKey}`;
     } else {
       seen = `screen ${observation.screen}`;

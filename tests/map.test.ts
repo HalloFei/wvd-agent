@@ -269,6 +269,21 @@ describe('readMap — the FFXI third floor', () => {
     // R27b: the glow shifts a couple of bits; the task's gate compares with a small tolerance.
     expect(floorKeyDistance(clean!.titleKey, glow!.titleKey)).toBeLessThanOrEqual(8);
   });
+
+  it('reads the same markers after the party walked and the harken glows', async () => {
+    const clean = await readMap(await ffxiFrame('third-floor.jpg'));
+    const glow = await readMap(await ffxiFrame('third-floor-glow.jpg'));
+
+    // The glow capture is the same floor after the party walked from X: 13 Y: 23 to the harken
+    // (X: 7 Y: 24); the canvas scrolls by 210 px but a mark does not move. Measured 2026-10-31:
+    // this frame used to read its harken and nothing else, because the icon cells were placed from
+    // the lattice fit's phase (2 px off in Y on this translucent frame) instead of the chevron.
+    const of = (map: MapState, kind: MapIcon['kind']): string[] =>
+      map.icons.filter((icon) => icon.kind === kind).map((icon) => cell(icon.at)).sort();
+    expect(of(glow!, 'chest')).toEqual(of(clean!, 'chest'));
+    expect(of(glow!, 'hole')).toEqual(of(clean!, 'hole'));
+    expect(of(glow!, 'harken')).toEqual(of(clean!, 'harken'));
+  });
 });
 
 /**
@@ -301,10 +316,61 @@ describe('readMap — the live 第三区 capture the glow refused (2026-10-25)',
     // The same cells the clean capture of this floor carries (the tests above): a glow moves no mark.
     expect(of('harken')).toEqual(['6,24']);
     expect(of('hole')).toEqual(['1,17', '20,8']);
+    // This session's chest spawns at (25,8) — the 2026-10-24 floor spawns a different set, so the
+    // clean capture above is not the oracle for it; the glyph was pixel-verified on the frame.
+    expect(of('chest')).toEqual(['25,8']);
     // R27b: the floor gate compares fingerprints with a small tolerance; the glow shifts a few bits.
     expect(floorKeyDistance(map!.titleKey, '0c0280000d6ff0000d7ffc0008c37000')).toBeLessThanOrEqual(8);
   });
 });
+
+/**
+ * The live 第四区 capture the 4F route depends on (2026-10-31, player X: 21 Y: 1). The parser read
+ * the six orchid teleport rings and **no chest**, while the canvas draws three of the 第三区 chest
+ * glyphs (measured NCC 0.96–0.98 at their cells). Root cause: the icon cells were enumerated from
+ * the X lattice fit, whose pitch on this translucent frame came out 35.9 and whose phase therefore
+ * sits 3.1 px east of the true 36-px grid; the template search only reaches ±2 px, so every
+ * template icon missed. The colour blobs (teleport, hazard) and the chevron do not use the lattice
+ * phase, which is why the frame still read six rings.
+ *
+ * The harken is **not** visible here: this floor's harken cell is (10,23), which under this frame's
+ * scroll lands at y ≈ 10 — above the map panel. The bright cross the operator saw at ~(835,535) is
+ * a wall-line corner (a vertical and a horizontal cell border meeting), not the sparkle; the same
+ * floor's 2026-10-24 capture draws the sparkle at (10,23). Pinning the empty set is what stops a
+ * future detector from inventing one and sending the party to a wall.
+ */
+describe('readMap — the live 第四区 capture (2026-10-31)', () => {
+  const LIVE = new URL('../testdata/nav-2026-10-31-ffxi4f-4f/', import.meta.url);
+
+  async function liveFrame(name: string): Promise<Frame> {
+    const bytes = await readFile(new URL(name, LIVE));
+    const decoded = jpeg.decode(bytes, { useTArray: true });
+    const image: RgbaImage = { data: decoded.data, width: decoded.width, height: decoded.height };
+    return { atMs: 1_000, width: decoded.width, height: decoded.height, toRgba: async () => image };
+  }
+
+  it('reads the party cell, the six rings and the three chests the canvas draws', async () => {
+    const map = await readMap(await liveFrame('fourth-floor-live.jpg'));
+
+    expect(map).not.toBeNull();
+    // The readout and the floor fingerprint the operator saw on screen, byte for byte.
+    expect(map!.player).toEqual({ x: 21, y: 1 });
+    expect(map!.titleKey).toBe('000000007f3ffe007ffeff00220bb600');
+
+    const of = (kind: MapIcon['kind']): string[] =>
+      map!.icons.filter((icon) => icon.kind === kind).map((icon) => cell(icon.at)).sort();
+
+    // The two chests the operator pointed at, plus the third the canvas draws south of the party:
+    // the chest glyphs are cell-centred, so the cells are the answer a tile walk consumes.
+    expect(of('chest')).toEqual(['12,3', '20,2', '21,5']);
+    // The orchid rings this frame carries, including (0,3), the sixth ring the row below the
+    // 2026-10-24 capture could not show (its canvas hung it below the panel).
+    expect(of('teleport')).toEqual(['0,3', '12,18', '17,13', '17,15', '4,9', '7,13']);
+    // See the header: the floor's harken is off-panel on this scroll; the (835,535) cross is walls.
+    expect(of('harken')).toEqual([]);
+  });
+});
+
 /**
  * The grid→screen transform a tile walk is aimed with (contracts §3 `origin`): exactly the inverse
  * of `findIcons`' own `toGrid`, so the cell the parser names and the cell a tap lands on are one

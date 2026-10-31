@@ -110,6 +110,8 @@ export interface RouteCommands {
   automoveToExit(): Promise<ActionResult>;
   /** Accept the `打开` prompt of the chest the party stands at. */
   acceptChestPrompt(): Promise<ActionResult>;
+  /** Collect the chest loot card with one tap at its measured centre. */
+  tapLoot(): Promise<ActionResult>;
   /** Press 倍速 then 自动 once, for the battle on screen. */
   enableBattleAuto(): Promise<ActionResult>;
   /**
@@ -452,8 +454,11 @@ export class WvdWorld implements World {
   #qteRerolls = 0;
   /** The pass the policy saw on the last decision, recorded only while the baseline is filling. */
   #lastQtePass: QtePass | null = null;
-  /** The reroll budget is spent with nothing better: the bar is left alone until the screen moves. */
+  /** The reroll budget is spent with nothing better: the bar is taken as the last attempt. */
   #qteGivenUp = false;
+  /** The loot card's tap clock and count, so a modal that never leaves is bounded (lootTap*). */
+  #lootTapAtMs: number | null = null;
+  #lootTaps = 0;
   /** Commands sent and waiting for their screen to answer (one at a time). */
   #inFlight: InFlight | null = null;
   /** Commands that changed nothing on this screen epoch: never re-sent until the farm advances. */
@@ -775,6 +780,8 @@ export class WvdWorld implements World {
       this.#qteRerolls = 0;
       this.#lastQtePass = null;
       this.#qteGivenUp = false;
+      this.#lootTapAtMs = null;
+      this.#lootTaps = 0;
       this.#ticks = 0;
       this.#captureFailures = 0;
       this.#willpower = [];
@@ -956,6 +963,10 @@ export class WvdWorld implements World {
   #track(observation: Observation): void {
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen !== 'combat') this.#battleAutoOn = false;
+    if (observation.screen !== 'loot') {
+      this.#lootTapAtMs = null;
+      this.#lootTaps = 0;
+    }
     if (observation.screen === 'chest-open') {
       // A willpower the panel did not show (the main character draws no heart) or could not read is
       // not a spendable number: it is left out of the budget rather than counted as zero or as a
@@ -1417,6 +1428,14 @@ export class WvdWorld implements World {
     this.#willpower = [];
     this.#openerRefusal = null;
     this.#escalationCooldownUntilMs = 0;
+    // Per-cycle QTE/battle state: a give-up or a partly spent reroll budget in one cycle must not
+    // silence the next cycle's bar.
+    this.#qteGivenUp = false;
+    this.#qteRerolls = 0;
+    this.#lastQtePass = null;
+    this.#battleAutoOn = false;
+    this.#lootTapAtMs = null;
+    this.#lootTaps = 0;
   }
 
   /**
@@ -1444,9 +1463,9 @@ export class WvdWorld implements World {
    * settled. An unsettled `restX` is a moving marker, not a rest, and the fit must be able to tell.
    */
   async #timeQte(session: WvdSession, frame: Frame): Promise<void> {
-    // The reroll budget is spent and nothing beat the baseline: leave the bar alone until the screen
-    // moves. Trying again would only re-decide the same pass every tick.
-    if (this.#qteGivenUp) return;
+    // The reroll budget is spent and nothing beat the baseline: the bar is pressed as the last
+    // attempt instead of being left on screen (the p2 card's option b). A miss costs an attempt and
+    // the trap still grants the loot, so the chest resolves and the loop moves on.
     // The dry run reports the intent whatever the window size: it sends nothing either way, and an
     // operator reading it must see what the live loop would do, not a live-sounding refusal.
     if (this.#cfg.dryRun) {
@@ -1482,6 +1501,7 @@ export class WvdWorld implements World {
           timer.unref?.();
         }),
         latencyMs: cfg.qteLatencyMs,
+        brakeEnabled: cfg.qteBrakeEnabled,
         decelPxPerS2: cfg.qteDecelPxPerS2,
         budgetMs: cfg.qteSubLoopMs,
         // The attempt-vs-reroll rule (operator, 2026-10-31): five rerolls per chest, the first two
@@ -1489,6 +1509,7 @@ export class WvdWorld implements World {
         // is taken. The callback also stashes the pass for the recording below; the policy is pure.
         choosePass: (pass) => {
           this.#lastQtePass = pass;
+          if (this.#qteGivenUp) return 'press';
           return chooseQtePass(pass, {
             rerolls: this.#qteRerolls,
             budget: Math.max(0, cfg.maxRerolls),
@@ -1652,6 +1673,24 @@ export class WvdWorld implements World {
             + `陷阱发现 ${choice.member.detect}) at the ${slot.id} card, ${centre.x},${centre.y}`,
         );
         await this.#press('open-chest', fromScreen, () => tapOpenerCard(session.actuator, choice.index));
+        return;
+      }
+      case 'loot': {
+        // The loot card is a modal: one tap at the measured card centre collects it. The tap is
+        // throttled by `lootTapIntervalMs`; after `lootTapMax` taps the card is left to the stall
+        // clock and the escalation, rather than becoming a 10 Hz tap loop.
+        const tappedAt = this.#now();
+        if (this.#lootTapAtMs !== null
+          && tappedAt - this.#lootTapAtMs < Math.max(1, this.#cfg.lootTapIntervalMs)) return;
+        if (this.#lootTaps >= Math.max(1, this.#cfg.lootTapMax)) {
+          this.#host?.log.warn('wvd: the loot card did not leave after the configured taps');
+          return;
+        }
+        this.#lootTapAtMs = tappedAt;
+        this.#lootTaps += 1;
+        const tapped = await this.#commands.tapLoot();
+        if (!tapped.ok) this.#host?.log.warn(`wvd: could not collect the loot (${tapped.reason})`);
+        else this.#host?.log.info('wvd: collected the loot card');
         return;
       }
       case 'fight':

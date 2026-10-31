@@ -45,6 +45,10 @@ const MAP_AREA = { x: 450, y: 0, width: 1_200, height: 1_080 } as const;
 /** The Dungeon Select list: its rows sit 56 px apart inside this band, the label art at 0.66–0.70. */
 const DUNGEON_SELECT_AREA = { x: 850, y: 300, width: 500, height: 400 } as const;
 const DUNGEON_SELECT_SCALES = [0.64, 0.66, 0.68, 0.70] as const;
+/** The Dungeon Select row that opens the world map; measured live at 0.946 @ 0.68, hit (1100,666). */
+const OPEN_WORLD_MAP_AREA = { x: 850, y: 600, width: 500, height: 160 } as const;
+const OPEN_WORLD_MAP_SCALES = [0.66, 0.68] as const;
+const OPEN_WORLD_MAP_FLOOR = 0.85;
 /** 第三区-城内2F- measures 0.781 here; the matcher's 0.80 floor is the world map's node floor. */
 const DUNGEON_SELECT_FLOOR = 0.72;
 const TOWN_ICON_BAND = { x: 1_100, y: 900, width: 220, height: 180 } as const;
@@ -60,17 +64,36 @@ const DRAG_SETTLE_MS = 250;
 const DRAG_STEP = 400;
 const DRAG_MS = 300;
 const MAX_ZOOMS = 3;
-const MAX_DRAGS = 8;
 const MAX_ZOOM_INS = 2;
+/**
+ * The node label band's top sits this many screen pixels above the node icon's clickable centre.
+ * Measured live 2026-10-31: 41 px on the town map at zoom 1.0 and 38 px on the Dungeon Select map
+ * at max zoom-out, so the rise is essentially screen-space constant (the icon shrinks towards the
+ * label). The label banner itself is not clickable: a tap on it did nothing live, a tap here moved.
+ */
+const NODE_ICON_RISE = 40;
+/** The label band is the same screen-space art at every zoom, so the node floor holds for it. */
+const LABEL_FLOOR = 0.8;
 /** Least-edge patch for a drag: the map's empty parchment, away from labels and controls. */
 const SAFE_INSET = { x: 550, y: 150, width: 950, height: 800 } as const;
 
-const PAN_OFFSETS: readonly Point[] = [
-  { x: DRAG_STEP, y: 0 }, { x: 0, y: DRAG_STEP },
-  { x: -DRAG_STEP, y: 0 }, { x: 0, y: -DRAG_STEP },
-  { x: DRAG_STEP, y: DRAG_STEP }, { x: -DRAG_STEP, y: DRAG_STEP },
-  { x: -DRAG_STEP, y: -DRAG_STEP }, { x: DRAG_STEP, y: -DRAG_STEP },
-];
+/**
+ * A serpentine pan, not a closed loop: eight directions around one point covers only ±400 px, and
+ * the Dungeon Select world map opens far from 诺森霍洛村 (measured live 2026-10-31). Five rows of
+ * eight 400-px drags sweep ~3 200 x 1 600 px before the zoom-ins. The target is matched after every
+ * step, so a nearby target costs one drag.
+ */
+const PAN_OFFSETS: readonly Point[] = (() => {
+  const offsets: Point[] = [];
+  for (let row = 0; row < 5; row += 1) {
+    for (let column = 0; column < 8; column += 1) {
+      offsets.push({ x: row % 2 === 0 ? DRAG_STEP : -DRAG_STEP, y: 0 });
+    }
+    if (row < 4) offsets.push({ x: 0, y: DRAG_STEP });
+  }
+  return offsets;
+})();
+const MAX_DRAGS = PAN_OFFSETS.length;
 
 /** The destination the catalog names, for a travel action. Controls are not destinations. */
 export function destinationOf(id: string): LocationEntry | null {
@@ -95,6 +118,49 @@ async function openFrom(
 
   let frame = initial.frame;
   let screen = initial.observation.screen;
+  // The Dungeon Select screen is not a ScreenId, but its 打开世界地图 row is the legacy
+  // `openworldmap` control. Match it before the town/world-map settle poll, or this screen would
+  // wait out the whole poll and refuse. Measured live 2026-10-31: 0.946 @ 0.68 at (1028,650).
+  if (screen !== 'town' && screen !== 'worldmap') {
+    const image = await decode(frame);
+    if (image !== null) {
+      const control = findTemplate(image, OPEN_WORLD_MAP_AREA, LOCATIONS.get('open-world-map')!.template, {
+        scales: OPEN_WORLD_MAP_SCALES,
+        minScore: OPEN_WORLD_MAP_FLOOR,
+      });
+      if (control !== null) {
+        env.log?.('wvd: opening the world map from the Dungeon Select control');
+        const pressed = await env.actuator.tap(centre(control));
+        if (!pressed.ok) return failure(pressed.reason, pressed.detail);
+        let opened = await poll(env, (candidate) => candidate === 'worldmap' || candidate === 'town', OPEN_TIMEOUT_MS, now);
+        if (!opened.ok) {
+          // The same swallowed-first-click class as the town icon: the control matched and was
+          // tapped, but the screen is still the Dungeon Select. Re-capture, re-match on the fresh
+          // frame, and tap once more before refusing.
+          const again = await captureAndObserve(env);
+          if (!again.ok) return again;
+          if (again.observation.screen === 'worldmap') return { ok: true };
+          const againImage = await decode(again.frame);
+          const againControl = againImage === null
+            ? null
+            : findTemplate(againImage, OPEN_WORLD_MAP_AREA, LOCATIONS.get('open-world-map')!.template, {
+              scales: OPEN_WORLD_MAP_SCALES,
+              minScore: OPEN_WORLD_MAP_FLOOR,
+            });
+          if (againControl === null) return opened;
+          const retryAt = centre(againControl);
+          env.log?.(`wvd: the Dungeon Select control did not open the map on the first tap; retrying once at ${retryAt.x},${retryAt.y}`);
+          const retried = await env.actuator.tap(retryAt);
+          if (!retried.ok) return failure(retried.reason, retried.detail);
+          opened = await poll(env, (candidate) => candidate === 'worldmap' || candidate === 'town', OPEN_TIMEOUT_MS, now);
+          if (!opened.ok) return opened;
+        }
+        if (opened.screen === 'worldmap') return { ok: true };
+        frame = opened.frame;
+        screen = opened.screen;
+      }
+    }
+  }
   if (screen !== 'town') {
     // A loading screen settles into town or world map; anything else is not a place with a map.
     const settled = await poll(env, (candidate) => candidate === 'town' || candidate === 'worldmap', SETTLE_MS, now);
@@ -131,11 +197,30 @@ async function openFrom(
     }
   }
 
-  const pressed = await env.actuator.tap(centre(icon, LOCATIONS.get('world-map-icon')!.anchor));
+  const target = centre(icon, LOCATIONS.get('world-map-icon')!.anchor);
+  env.log?.(`wvd: world-map icon ${icon.score.toFixed(3)} ${icon.width}x${icon.height} @ ${icon.scale.toFixed(2)} at ${icon.at.x},${icon.at.y} -> tap ${target.x},${target.y}`);
+  const pressed = await env.actuator.tap(target);
   if (!pressed.ok) return failure(pressed.reason, pressed.detail);
   const opened = await poll(env, (screen) => screen === 'worldmap', OPEN_TIMEOUT_MS, now);
-  if (!opened.ok) return opened;
-  return opened.screen === 'worldmap' ? { ok: true } : { ok: false, reason: 'world-map-control-not-found', detail: `map did not open (${opened.screen})` };
+  if (opened.ok) return { ok: true };
+  if (opened.reason !== 'world-map-control-not-found') return opened;
+  // A click issued on the first `town` frame after a transition can be swallowed by the game. The
+  // first poll has now waited out the transition; re-capture and re-match once instead of trusting
+  // the stale icon position. The retry is bounded and still runs through the same verification.
+  const again = await captureAndObserve(env);
+  if (!again.ok) return again;
+  if (again.observation.screen === 'worldmap') return { ok: true };
+  if (again.observation.screen !== 'town') return opened;
+  const againImage = await decode(again.frame);
+  if (againImage === null) return opened;
+  const againIcon = findTemplate(againImage, TOWN_ICON_BAND, LOCATIONS.get('world-map-icon')!.template, { scales: CONTROL_SCALES });
+  if (againIcon === null) return opened;
+  const retryAt = centre(againIcon, LOCATIONS.get('world-map-icon')!.anchor);
+  env.log?.(`wvd: the world map did not open on the first tap; retrying once at ${retryAt.x},${retryAt.y}`);
+  const retried = await env.actuator.tap(retryAt);
+  if (!retried.ok) return failure(retried.reason, retried.detail);
+  const retriedOpen = await poll(env, (screen) => screen === 'worldmap', OPEN_TIMEOUT_MS, now);
+  return retriedOpen.ok ? { ok: true } : retriedOpen;
 }
 
 /**
@@ -172,11 +257,20 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
     const match = findTemplate(image, MAP_AREA, entry.template);
 
     if (match !== null) {
-      const pressed = await env.actuator.tap(centre(match, entry.anchor));
-      if (!pressed.ok) return failure(pressed.reason, pressed.detail);
-      const left = await poll(env, (screen) => screen !== 'worldmap', LEAVE_TIMEOUT_MS, now, 'location-not-found');
-      if (!left.ok) return left;
-      return { ok: true };
+      return tapNodeAndWait(env, entry, centre(match, entry.anchor), now);
+    }
+
+    // Away from zoom 1.0 the node icon is drawn smaller while the label keeps its UI scale, so the
+    // composite cannot match. The label band can, and the icon sits a screen-space rise above it.
+    if (entry.labelBand !== undefined) {
+      const band = findTemplate(image, MAP_AREA, entry.labelBand, { minScore: LABEL_FLOOR });
+      if (band !== null) {
+        const at = { x: band.at.x + Math.round(band.width / 2), y: band.at.y - NODE_ICON_RISE };
+        if (insideMap(at)) {
+          env.log?.(`wvd: ${entry.label} was matched by its label band`);
+          return tapNodeAndWait(env, entry, at, now);
+        }
+      }
     }
 
     if (zooms < MAX_ZOOMS) {
@@ -210,6 +304,40 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
     }
     return { ok: false, reason: 'location-not-found', detail: `${entry.label} was not found on the map` };
   }
+}
+
+/**
+ * Tap a matched node and wait for the map to leave. If the screen is still the map, the first click
+ * may have been issued on a map that was still fading in (the recogniser names `worldmap` before the
+ * pan/zoom is interactive); re-capture, re-match on the fresh frame, and tap once more. The retry is
+ * bounded and still verifies the same thing: the screen must stop being `worldmap`.
+ */
+async function tapNodeAndWait(env: WorldMapEnv, entry: LocationEntry, at: Point, now: () => number): Promise<TravelResult> {
+  const pressed = await env.actuator.tap(at);
+  if (!pressed.ok) return failure(pressed.reason, pressed.detail);
+  const left = await poll(env, (screen) => screen !== 'worldmap', LEAVE_TIMEOUT_MS, now, 'location-not-found');
+  if (left.ok) return { ok: true };
+  if (left.reason !== 'location-not-found') return left;
+  const view = await captureAndObserve(env);
+  if (!view.ok) return view;
+  if (view.observation.screen !== 'worldmap') return { ok: true };
+  const image = await decode(view.frame);
+  if (image === null) return left;
+  const match = findTemplate(image, MAP_AREA, entry.template);
+  let retryAt: Point | null = match === null ? null : centre(match, entry.anchor);
+  if (retryAt === null && entry.labelBand !== undefined) {
+    const band = findTemplate(image, MAP_AREA, entry.labelBand, { minScore: LABEL_FLOOR });
+    if (band !== null) {
+      const candidate = { x: band.at.x + Math.round(band.width / 2), y: band.at.y - NODE_ICON_RISE };
+      if (insideMap(candidate)) retryAt = candidate;
+    }
+  }
+  if (retryAt === null) return left;
+  env.log?.(`wvd: ${entry.label} did not leave on the first tap; retrying once at ${retryAt.x},${retryAt.y}`);
+  const retried = await env.actuator.tap(retryAt);
+  if (!retried.ok) return failure(retried.reason, retried.detail);
+  const again = await poll(env, (screen) => screen !== 'worldmap', LEAVE_TIMEOUT_MS, now, 'location-not-found');
+  return again.ok ? { ok: true } : again;
 }
 
 /**
@@ -331,6 +459,16 @@ export function safePoint(image: RgbaImage): Point {
     }
   }
   return { x: best.x, y: best.y };
+}
+
+/** The map field a tap must land in; a clipped node's icon can sit outside the frame. */
+function insideMap(point: Point): boolean {
+  return (
+    point.x >= MAP_AREA.x &&
+    point.x < MAP_AREA.x + MAP_AREA.width &&
+    point.y >= MAP_AREA.y &&
+    point.y < MAP_AREA.y + MAP_AREA.height
+  );
 }
 
 function clampToMap(point: Point): Point {

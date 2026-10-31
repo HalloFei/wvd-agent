@@ -135,6 +135,12 @@ export interface ReplayOptions {
    * when `measurements.json` has no readable bar, since there is nothing to check a plan against.
    */
   readonly planCheck?: boolean;
+  /**
+   * Feed the planning model the brake carry (the 2026-10-24 recording's model) instead of the
+   * default plain `v·L`. Off by default so the check plans what production plans: the 2026-10-31
+   * live presses froze at the press, and `planTap`'s `brakeEnabled` defaults false.
+   */
+  readonly brakeEnabled?: boolean;
 }
 
 export type ReplayTools =
@@ -187,6 +193,7 @@ export async function replay(dir: string, options: ReplayOptions = {}): Promise<
           positions: 0,
           violations: [],
           frameMs: 1_000 / info.fps,
+          brakeEnabled: options.brakeEnabled === true,
         }
       : null;
   const composite = new CompositePerceiver([
@@ -484,6 +491,8 @@ interface PlanTally {
   readonly violations: string[];
   /** One video frame in ms; the press-instant lookup may not reach further than this. */
   readonly frameMs: number;
+  /** Whether the harness fed `planTap` the brake carry (`ReplayOptions#brakeEnabled`). */
+  readonly brakeEnabled: boolean;
 }
 
 /**
@@ -535,7 +544,7 @@ export const PLAN_PRESS_TOLERANCE_PX = 12;
  * Design acceptance 5 asks for exactly this: the sub-loop, fed the recording's frames at their own
  * timestamps, plans presses that land inside the recorded zones. The unit tests drive `planTap` with
  * a synthetic constant-speed stream; this is the only place the model meets real recorded marker
- * motion.
+ * motion. The brake model is `ReplayOptions#brakeEnabled`, off by default like production's.
  */
 function checkPlan(plan: PlanTally, atMs: number, qte: QteState, index: number): void {
   const sample = { atMs, markerX: qte.markerX };
@@ -553,6 +562,7 @@ function checkPlan(plan: PlanTally, atMs: number, qte: QteState, index: number):
     latencyMs: PLAN_LATENCY_MS,
     decelPxPerS2: PLAN_DECEL_PX_PER_S2,
     horizonMs: PLAN_HORIZON_MS,
+    brakeEnabled: plan.brakeEnabled,
   });
   if (tap === null) return;
   plan.planned += 1;

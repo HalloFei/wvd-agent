@@ -286,6 +286,7 @@ function fallbackWord(intent: Intent): string {
     case 'open-map': return 'opened the map';
     case 'move': return 'walked to the tile the map named';
     case 'open-chest': return 'tried the chest it was standing on';
+    case 'loot': return 'collected the loot card';
     case 'fight': return 'stayed in the battle';
     case 'exit': return 'leaves the dungeon and restarts the route';
     case 'run-script': return 'runs the task script';

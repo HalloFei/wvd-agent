@@ -67,8 +67,11 @@ export function nextIntent(state: RouteState): Intent {
       // a dungeon route: nothing in town to farm
       return { kind: 'exit' };
     case 'loot':
+      // The loot card is the chest module's moment: tap its measured centre and let the next
+      // screen move the route on. A card that stays is the stall clock's business.
+      return { kind: 'loot' };
     case 'worldmap':
-      // the chest module owns loot; the loop owns the world map
+      // the loop owns the world map
       return { kind: 'wait', ms: HANDOFF_MS };
     case 'chest-prompt':
       // The party is standing at a chest and the game is asking. Accepting is the chest step's

@@ -33,6 +33,7 @@ export function fallbackPhrase(intent: Intent): string {
     case 'open-map': return 'opens the map';
     case 'move': return 'walks to the tile the map names';
     case 'open-chest': return 'tries the chest it is standing on';
+    case 'loot': return 'collects the loot card';
     case 'fight': return 'keeps resolving the battle';
     case 'exit': return 'leaves the dungeon and restarts the route';
     case 'run-script': return 'runs the task script';

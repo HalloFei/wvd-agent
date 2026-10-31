@@ -189,8 +189,9 @@ function narrowBarBase(image: RgbaImage): RgbaImage {
 
 describe('timeQte', () => {
   it('presses once, at the instant the plan named, and reports the fit sample', async () => {
-    // marker 20 px per 33 ms → 606 px/s. The left zone's centre (808) is already behind the stop
-    // (740 + v·L + v²/2a = 837.6), so the plan aims at the right zone's 1111 and waits 451 ms.
+    // marker 20 px per 33 ms → 606 px/s. The no-brake lead is 606·0.06 = 36.4 px, so the left zone's
+    // centre (808) is still 68 px ahead and is the soonest reachable one: the plan waits 52.2 ms.
+    // The right zone's 1111 would take ~552 ms.
     const clock = virtualClock(0);
     const sampler = scriptedSampler(
       [
@@ -211,14 +212,14 @@ describe('timeQte', () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.v).toBeCloseTo(606, 0);
-    expect(out.target).toBe(1111);
+    expect(out.target).toBe(808);
     expect(out.tapX).toBe(740);
     // §7: the plan is a delay from the reading's clock, never a timestamp.
-    expect(out.atMs).toBeCloseTo(450.5, 0);
-    // The one pre-press sleep is the plan's: due at 66 + 450.54, asked at 76 (the sample cost).
-    expect(clock.waits[0]).toBeCloseTo(440.5, 0);
+    expect(out.atMs).toBeCloseTo(52.2, 1);
+    // The one pre-press sleep is the plan's: due at 66 + 52.2, asked at 76 (the sample cost).
+    expect(clock.waits[0]).toBeCloseTo(42.2, 1);
     expect(presses).toHaveLength(1);
-    expect(presses[0]).toBeCloseTo(66 + out.atMs, 0);   // the reading's clock plus the plan's delay
+    expect(presses[0]).toBeCloseTo(66 + out.atMs, 1);   // the reading's clock plus the plan's delay
     expect(out.restX).toBe(900);
     // The rest read repeated 900 one cadence later: two readings within the settle tolerance are
     // what makes this a rest (#18's fit must not take a moving sample for one).
@@ -227,11 +228,75 @@ describe('timeQte', () => {
     expect(sampler.passedPrevious.slice(0, 3)).toEqual([undefined, 700, 720]);
   });
 
+  it('presses the braked plan the 2026-10-24 recording measured (brakeEnabled: true)', async () => {
+    // The same bar with the switch on: the 61.6 px carry puts the left zone's centre behind the
+    // stop (740 + 36.4 + 61.6 = 838), so the plan aims at the right zone's 1111 and waits 450.5 ms —
+    // the expectation this test had before the switch defaulted off.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 700 },
+        { atMs: 33, markerX: 720 },
+        { atMs: 66, markerX: 740 },
+        { atMs: 600, markerX: 900 },   // the rest read
+      ],
+      clock,
+    );
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.target).toBe(1111);
+    expect(out.tapX).toBe(740);
+    expect(out.atMs).toBeCloseTo(450.5, 0);
+    expect(clock.waits[0]).toBeCloseTo(440.5, 0);
+    expect(presses).toHaveLength(1);
+    expect(presses[0]).toBeCloseTo(66 + out.atMs, 0);
+    expect(out.restX).toBe(900);
+    expect(out.restSettled).toBe(true);
+  });
+
   it('presses a plan whose instant the sample cost has already reached', async () => {
-    // 606 px/s; at 704.4 the plan's instant is 9.9 ms away — (808 − 704.4 − 97.58)/606 — and the
+    // 606 px/s; at 766.4 the plan's instant is 8.6 ms away — (808 − 766.4 − 36.36)/606 — and the
     // sample itself costs 10 ms, so the instant is just behind us. The landing is not: pressing now
-    // carries the marker 606·(0.010 + 0.060) + 606·0.1017 = 104 px, to 808.4, the left zone's centre.
-    // The press is immediate: a 10 ms lead is not a reason to refuse a pass.
+    // carries the marker 606·(0.010 + 0.060) = 42.4 px, to 808.8, the left zone's centre. The press
+    // is immediate: a 10 ms lead is not a reason to refuse a pass.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 726.4 },
+        { atMs: 33, markerX: 746.4 },
+        { atMs: 66, markerX: 766.4 },
+        { atMs: 99, markerX: 786.4 },
+        { atMs: 600, markerX: 820 },   // the rest read
+      ],
+      clock,
+    );
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.target).toBe(808);
+    expect(out.tapX).toBe(766.4);
+    expect(out.atMs).toBe(0);
+    expect(presses).toEqual([76]);
+    expect(out.restX).toBe(820);
+  });
+
+  it('presses the braked late landing (brakeEnabled: true)', async () => {
+    // With the switch on, the same bar at 704.4 has its planned instant 9.9 ms away
+    // ((808 − 704.4 − 97.58)/606), just behind the 10 ms sample cost; the predicted landing adds the
+    // 61.6 px carry to the 42.4 px of age and input leg and parks at 808.4 — the pre-switch test.
     const clock = virtualClock(0);
     const sampler = scriptedSampler(
       [
@@ -247,7 +312,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
     });
 
     expect(out.ok).toBe(true);
@@ -261,14 +326,56 @@ describe('timeQte', () => {
 
   it('keeps the 51 ms a stale frame still leaves, and sleeps exactly that', async () => {
     // The third frame arrives 400 ms late, so by the time it is planned `now()` is 466 ms while the
-    // plan's instant is 66 + 450.5. Fifty ms of the lead is left: still ahead of us, so the plan is
-    // kept and the sleep is the remaining 50.5 ms — not the plan's 450.5, and not a refusal.
+    // plan's instant is 66 + 451.5. Fifty-one ms of the lead is left: still ahead of us, so the plan
+    // is kept and the sleep is the remaining 51.5 ms — not the plan's 451.5, and not a refusal.
+    const clock = virtualClock(0);
+    const script: ReadonlyArray<{ atMs: number; markerX: number; costMs?: number }> = [
+      { atMs: 0, markerX: 761 },
+      { atMs: 33, markerX: 781 },
+      { atMs: 66, markerX: 801, costMs: 400 },
+      // The game moved on while the decode was slow: the next frame is stamped after it.
+      { atMs: 500, markerX: 806 },
+      { atMs: 533, markerX: 808 },
+      { atMs: 566, markerX: 808 },
+    ];
+    let index = 0;
+    let last = { atMs: 0, markerX: 761 };
+    const sampler: QteSampler = {
+      async sample() {
+        const entry = script[index];
+        index += 1;
+        last = entry ?? { ...last, atMs: last.atMs + SAMPLE_CADENCE_MS };
+        clock.advanceTo(last.atMs + (entry?.costMs ?? 10));
+        return {
+          ok: true,
+          reading: { atMs: last.atMs, markerX: last.markerX, zones: ZONES, enabled: true },
+        };
+      },
+    };
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.tapX).toBe(801);
+    expect(out.atMs).toBeCloseTo(451.5, 1);
+    expect(clock.waits[0]).toBeCloseTo(51.5, 1);
+    expect(presses).toHaveLength(1);
+    expect(presses[0]).toBeCloseTo(66 + out.atMs, 1);
+  });
+
+  it('keeps the braked 51 ms a stale frame leaves (brakeEnabled: true)', async () => {
+    // The pre-switch expectation for the same test: the carry makes the right zone the only
+    // reachable target and its plan is 450.5 ms out, so 466 ms of clock leaves 50.5 ms of lead.
     const clock = virtualClock(0);
     const script: ReadonlyArray<{ atMs: number; markerX: number; costMs?: number }> = [
       { atMs: 0, markerX: 700 },
       { atMs: 33, markerX: 720 },
       { atMs: 66, markerX: 740, costMs: 400 },
-      // The game moved on while the decode was slow: the next frame is stamped after it.
       { atMs: 500, markerX: 760 },
       { atMs: 533, markerX: 780 },
       { atMs: 566, markerX: 800 },
@@ -291,7 +398,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
     });
 
     expect(out.ok).toBe(true);
@@ -305,9 +412,41 @@ describe('timeQte', () => {
 
   it('presses a 1 242 px/s bar whose plan is 55 ms away', async () => {
     // The 13:59 bar's measured geometry (t-mvvzwhb1): 41 px per 33 ms = 1 242 px/s, zones
-    // [696,920] and [999,1223]. At 830 the plan targets the right zone's 1111 with a 64.5 ms delay;
-    // the sample cost leaves 54.5 ms. The pass-window floor would drop it; the lead is a physical
-    // boundary, and 54.5 ms of it is still ahead.
+    // [696,920] and [999,1223]. At 955 the left centre is already behind the no-brake stop, so the
+    // plan targets the right zone's 1111 with a 65.6 ms delay; the sample cost leaves 55.6 ms. The
+    // pass-window floor would drop it; the lead is a physical boundary, and 55.6 ms is still ahead.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 873 },
+        { atMs: 33, markerX: 914 },
+        { atMs: 66, markerX: 955 },
+        { atMs: 99, markerX: 996 },
+        { atMs: 132, markerX: 1037 },
+        { atMs: 165, markerX: 1078 },
+        { atMs: 198, markerX: 1119 },
+      ],
+      clock,
+    );
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.target).toBe(1111);
+    expect(out.tapX).toBe(955);
+    expect(out.atMs).toBeCloseTo(65.56, 1);
+    expect(clock.waits[0]).toBeCloseTo(55.56, 1);
+    expect(presses).toHaveLength(1);
+  });
+
+  it('presses the braked 1 242 px/s bar 55 ms out (brakeEnabled: true)', async () => {
+    // With the carry the plan is 64.5 ms out, so the 10 ms sample cost leaves 54.5 ms — the
+    // pre-switch expectation.
     const clock = virtualClock(0);
     const sampler = scriptedSampler(
       [
@@ -325,7 +464,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
     });
 
     expect(out.ok).toBe(true);
@@ -338,19 +477,20 @@ describe('timeQte', () => {
   });
 
   it('presses now when the plan instant has passed but the landing is still in a zone', async () => {
-    // Same bar, one zone later: at 960 the right zone's centre is only 151 px ahead while the lead
-    // is 201 px, so planTap refuses — but a press now carries the marker 213 px and parks it at
-    // 1 173, inside [999,1223]. The press is immediate: no wait, no floor, the landing is the test.
+    // Same bar, one zone later: at 1 034 the no-brake plan's instant is only 2 ms ahead — the
+    // reading plus the 10 ms sample cost has already reached it — so the plan is not slept on. A
+    // press now carries the marker 87 px and parks it at 1 121, inside [999,1223]. The press is
+    // immediate: no wait, no floor, the landing is the test.
     const clock = virtualClock(0);
     const sampler = scriptedSampler(
       [
-        { atMs: 0, markerX: 878 },
-        { atMs: 33, markerX: 919 },
-        { atMs: 66, markerX: 960 },
-        { atMs: 99, markerX: 1001 },
-        { atMs: 132, markerX: 1042 },
-        { atMs: 165, markerX: 1083 },
-        { atMs: 198, markerX: 1124 },
+        { atMs: 0, markerX: 952 },
+        { atMs: 33, markerX: 993 },
+        { atMs: 66, markerX: 1_034 },
+        { atMs: 99, markerX: 1_075 },
+        { atMs: 132, markerX: 1_116 },
+        { atMs: 165, markerX: 1_157 },
+        { atMs: 198, markerX: 1_198 },
       ],
       clock,
     );
@@ -364,9 +504,41 @@ describe('timeQte', () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.target).toBe(1111);
-    expect(out.tapX).toBe(960);
+    expect(out.tapX).toBe(1_034);
     expect(out.atMs).toBe(0);              // predicted from this reading: nothing was waited for
     expect(presses).toEqual([76]);         // 66 ms reading + the 10 ms sample cost
+  });
+
+  it('presses the braked late landing past the plan instant (brakeEnabled: true)', async () => {
+    // With the carry the same reading at 960 has its planned instant 49.9 ms behind (the lead is
+    // 201 px against a 151 px gap), so the late press is taken: 960 + 213 px parks at 1 173, inside
+    // [999,1223] — the pre-switch expectation.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 878 },
+        { atMs: 33, markerX: 919 },
+        { atMs: 66, markerX: 960 },
+        { atMs: 99, markerX: 1_001 },
+        { atMs: 132, markerX: 1_042 },
+        { atMs: 165, markerX: 1_083 },
+        { atMs: 198, markerX: 1_124 },
+      ],
+      clock,
+    );
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.target).toBe(1111);
+    expect(out.tapX).toBe(960);
+    expect(out.atMs).toBe(0);
+    expect(presses).toEqual([76]);
   });
 
   it('does not press when the predicted landing is past the bounce', async () => {
@@ -479,7 +651,7 @@ describe('timeQte', () => {
     if (out.ok) {
       expect(out.restX).toBeNull();
       expect(out.restSettled).toBe(false);
-      expect(out.target).toBe(1111);
+      expect(out.target).toBe(808);
     }
   });
 
@@ -600,13 +772,14 @@ describe('timeQte', () => {
   });
 
   it('stops with no-reachable-zone when every centre is behind the marker', async () => {
-    // A steady 606 px/s from 1100: every zone centre is already behind the predicted stop, so
-    // planTap refuses every pass — a speed without a reachable centre, inside the budget.
+    // A steady 606 px/s from 1 200: every zone centre is already behind the predicted stop and the
+    // late landing is past the right zone's margin and the reversal, so planTap and the late press
+    // both refuse — a speed without a reachable centre, inside the budget.
     const clock = virtualClock(0);
     const sampler = scriptedSampler(
       Array.from({ length: 40 }, (_, index) => ({
         atMs: index * SAMPLE_CADENCE_MS,
-        markerX: 1100 + index * 20,
+        markerX: 1_200 + index * 20,
       })),
       clock,
     );
@@ -854,10 +1027,10 @@ describe('bandSampler', () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.v).toBeCloseTo(606, 0);
-    // 1111 is the measured right zone's centre — (1092 + 1130) / 2 — the same x the wide fixture has.
-    expect(out.target).toBe(1111);
+    // 808 is the measured left zone's centre — (789 + 827) / 2 — the same x the wide fixture has.
+    expect(out.target).toBe(808);
     expect(out.tapX).toBe(740);
-    expect(out.atMs).toBeCloseTo(450.5, 0);
+    expect(out.atMs).toBeCloseTo(52.2, 1);
     expect(presses).toHaveLength(1);
     expect(out.restX).toBe(900);
     expect(out.restSettled).toBe(true);

@@ -293,6 +293,28 @@ the World started before it.
 `tests/engine.test.ts` pins the retry, the settle and the no-input-on-refusal. 484 tests, typecheck
 clean. The live half is the operator's: one Space press on an unpressed bar in a fresh session.
 
+## Round 6 — the 4F stair and the way back (2026-10-31, live)
+
+The operator's decision: farm **第四区** by taking the 第三区 stair up and back down; the QTE planner
+defaults to **no brake term** (`worlds.wvd.qteBrakeEnabled = false`) until a probe says otherwise.
+
+Measured live with the game open (1920×1080):
+
+- **The stair up works.** On the 3F map (player 7,24, origin 744.7,230), `R` then tap **(960,158)**
+  selects the door; the 自动移动 element is at **(960,236)** (not the usual 81 px above the tile).
+  Confirming it walks the party to 第四区 and lands at a chest prompt.
+- **The live 4F key is `000000007f3ffe007ffeff00220bb600`** (fixture `…7efe…`; 2-4 bits apart,
+  inside the 8-bit gate). The 4F map shows the two chest icons and a harken, but `readMap` returns
+  only six teleports — the chest/harken detectors miss them at this scroll. Pinned as a p0 board card.
+- **The stair down works.** On the 4F map, `F` (移动至出口) walks the party to 第三区. On the 3F map,
+  `F` walks to the harken altar; its menu opens on arrival.
+- **The harken menu's 归还 is at (960,714), not (955,822).** It returns to **Dungeon Select**, not the
+  rest town. The p0 card's coordinate is wrong for this menu.
+- **The way home.** The Dungeon Select `打开世界地图` row matches the legacy `openworldmap` control at
+  0.946 @ 0.68 (template centre (1028,650), hit (1100,666)); `src/actions/worldmap.ts` now has that
+  branch. But `travel vnh` from the world map opened there still misses 诺森霍洛村 after 3 zoom-outs,
+  44 serpentine drags and 2 zoom-ins; the town-to-map path is not yet proven. Pinned as a p1 board card.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

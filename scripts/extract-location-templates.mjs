@@ -21,6 +21,7 @@ const IMAGES = fileURLToPath(new URL('../../wvd/resources/images/', import.meta.
 
 const SOURCES = [
   ['world-map-icon', 'common/intoWorldMap.png'],
+  ['open-world-map', 'zh_CN/openworldmap.png'],
   ['panel-chevron', 'common/closePartyInfo.png'],
   ['inn', 'zh_CN/Inn.png'],
   ['city-royal', 'zh_CN/City_RoyalCityLuknalia.png'],

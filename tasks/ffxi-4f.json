@@ -1,9 +1,9 @@
 {
   "id": "ffxi-4f",
   "label": "[Chest] FFXI 4F",
-  "floor": { "titleKey": "0c0280000d6ff0000d7ffc0008c37000" },
+  "floor": { "titleKey": "000000007f3ffe007ffeff00220bb600" },
   "entry": {
-    "timeoutMs": 180000,
+    "timeoutMs": 240000,
     "steps": [
       { "op": "expect", "screen": "town", "timeoutMs": 20000 },
       { "op": "travel", "to": "ffxi-gcn" },
@@ -12,20 +12,31 @@
       { "op": "expect", "screen": "dungeon", "timeoutMs": 45000 },
       { "op": "tap", "at": [1787, 96] },
       { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },
-      { "op": "expectFloor", "timeoutMs": 5000 }
+      { "op": "expectFloor", "titleKey": "0c0280000d6ff0000d7ffc0008c37000", "timeoutMs": 5000 },
+      { "op": "key", "key": "r" },
+      { "op": "tap", "at": [960, 158] },
+      { "op": "wait", "ms": 900 },
+      { "op": "tap", "at": [960, 236] },
+      { "op": "wait", "ms": 8000 },
+      { "op": "expectFloor", "titleKey": "000000007f3ffe007ffeff00220bb600", "timeoutMs": 15000 }
     ]
   },
   "exit": {
-    "timeoutMs": 90000,
+    "timeoutMs": 180000,
     "steps": [
-      { "op": "tap", "at": [1849, 110] },
+      { "op": "tap", "at": [1787, 96] },
       { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },
-      { "op": "key", "key": "r" },
-      { "op": "tap", "at": [1060, 190] },
-      { "op": "wait", "ms": 900 },
-      { "op": "tap", "at": [1073, 270] },
-      { "op": "wait", "ms": 7000 },
-      { "op": "tap", "at": [950, 821] }
+      { "op": "key", "key": "f" },
+      { "op": "wait", "ms": 8000 },
+      { "op": "expect", "screen": "dungeon", "timeoutMs": 8000 },
+      { "op": "tap", "at": [1787, 96] },
+      { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },
+      { "op": "key", "key": "f" },
+      { "op": "wait", "ms": 8000 },
+      { "op": "tap", "at": [960, 714] },
+      { "op": "wait", "ms": 5000 },
+      { "op": "travel", "to": "vnh" },
+      { "op": "expect", "screen": "town", "timeoutMs": 30000 }
     ]
   }
 }

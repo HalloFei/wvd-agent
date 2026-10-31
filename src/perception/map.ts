@@ -177,9 +177,11 @@ const PHASE_STEP = 0.1;
  *
  * Only the X axis is gated. On the translucent floors the same glow crosses *rows* over the panel's
  * lower half, and the residual-optimal Y grid explains almost none of them (第三区's glow capture 2,
- * the live capture 1), so that axis cannot decide. It is still fitted, because its phase places the
- * icon rows and the chevron's own cell, and the chevron's cell residual is what validates that phase
- * (≤6 px on every accepted frame; 0.69 / 1.18 px on the live capture).
+ * the live capture 1), so that axis cannot decide. Both axes are still fitted, because the chevron's
+ * cell residual against that phase is what validates the chevron as the origin of the icon lattice
+ * (≤6 px on every accepted frame; 0.69 / 1.18 px on the live capture). The glyph cells themselves
+ * are placed from the chevron, not from this phase: a phase this contaminated cannot be trusted to
+ * 2 px on a translucent frame, which is exactly the template search's reach.
  */
 const LATTICE_SUPPORT_TOLERANCE = 2;
 const LATTICE_SUPPORT_MIN = 6;
@@ -514,7 +516,12 @@ function parseImage(image: RgbaImage): MapParse {
   if (!chevron) return { ok: false, gate: 'no-chevron' };
 
   // 7. Icons, all positioned relative to the chevron. ---------------------------------------
-  const icons = findIcons(data, width, panel, readout, chevron, latticeX.phase, latticeY.phase);
+  // The chevron is the anchor the click transform is defined from (contracts §3 `origin`), so the
+  // icon reader enumerates the cell lattice from it. The lattice fit only gates the frame and
+  // validates the chevron's own cell: on a translucent floor its phase is a couple of px off (live
+  // 2026-10-31 第四区: pitch 35.9, phase 3.1 px east of the drawn 36-px grid) and a ±2 px template
+  // search around that error misses every chest while the colour blobs and the chevron still read.
+  const icons = findIcons(data, width, panel, readout, chevron);
 
   const map: MapState = {
     floorTitle: title.text,
@@ -983,10 +990,11 @@ function lineCentres(profile: Float64Array, origin: number): number[] {
 /**
  * The 36.0-px grid this profile admits, and how many of its lines the grid explains.
  *
- * The grid itself is still the one with the tightest residual: the phase places icon rows and the
- * chevron's cell, and a count cannot resolve a phase better than 2 px. `support` is counted on that
- * grid, and it is what G6's quality test reads — so the geometry every other gate depends on is
- * unchanged, while a lit band that drags the residual no longer decides whether the map is a map.
+ * The grid itself is still the one with the tightest residual: the phase validates the chevron's
+ * own cell (the glyph cells are placed from the chevron, not from this phase), and a count cannot
+ * resolve a phase better than 2 px. `support` is counted on that grid, and it is what G6's quality
+ * test reads — so the geometry every other gate depends on is unchanged, while a lit band that
+ * drags the residual no longer decides whether the map is a map.
  */
 function fitLattice(profile: Float64Array, origin: number): LatticeFit | null {
   const centres = lineCentres(profile, origin);
@@ -1068,13 +1076,14 @@ function findIcons(
   panel: Panel,
   readout: Readout,
   chevron: Chevron,
-  linePhaseX: number,
-  linePhaseY: number,
 ): MapIcon[] {
   const icons: MapIcon[] = [];
   const seen = new Set<string>();
-  const cellPhaseX = linePhaseX + TILE_PX / 2;
-  const cellPhaseY = linePhaseY + TILE_PX / 2;
+  // The chevron is the party's cell centre — the one screen point this floor's click transform is
+  // anchored at — so the cell lattice the glyphs sit on is enumerated from it. Anchoring the cell
+  // windows anywhere else would make identification and aiming disagree by the anchor's error.
+  const cellPhaseX = chevron.x;
+  const cellPhaseY = chevron.y;
 
   const toGrid = (x: number, y: number): Point => ({
     x: readout.x + Math.round((x - chevron.x) / TILE_PX),

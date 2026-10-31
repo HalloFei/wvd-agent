@@ -52,6 +52,9 @@ class Session implements WorldMapEnv {
   foundOnDrag = false;
   tapResult: ActionResult = { ok: true };
   holdResult: ActionResult = { ok: true };
+  /** The first N icon/node taps are swallowed by the game, as a click during a fade is. */
+  dropTownIconTaps = 0;
+  dropNodeTaps = 0;
   dragResult: ActionResult = { ok: true };
   readonly fixtures: Fixtures;
   readonly abort: AbortSignal | undefined;
@@ -91,8 +94,15 @@ class Session implements WorldMapEnv {
       this.taps.push(at);
       if (!this.tapResult.ok) return this.tapResult;
       if (!this.mapOpen) {
-        if (this.panel === 'up') this.panel = 'down';
-        else this.mapOpen = true;
+        if (this.panel === 'up') {
+          this.panel = 'down';
+        } else if (this.dropTownIconTaps > 0) {
+          this.dropTownIconTaps -= 1;
+        } else {
+          this.mapOpen = true;
+        }
+      } else if (this.dropNodeTaps > 0) {
+        this.dropNodeTaps -= 1;
       } else {
         this.left = true;
       }
@@ -131,14 +141,33 @@ describe('openWorldMap', () => {
     expect(await openWorldMap(session)).toEqual({ ok: true });
     expect(session.taps).toHaveLength(2);
     expect(near(session.taps[0]!, { x: 697, y: 799 })).toBe(true);
-    expect(near(session.taps[1]!, { x: 1177, y: 1012 })).toBe(true);
+    expect(near(session.taps[1]!, { x: 1185, y: 1023 })).toBe(true);
   });
 
   it('taps the icon directly when the panel is already down', async () => {
     const session = new Session(await fixtures(), { start: 'town-down' });
     expect(await openWorldMap(session)).toEqual({ ok: true });
     expect(session.taps).toHaveLength(1);
-    expect(near(session.taps[0]!, { x: 1177, y: 1012 })).toBe(true);
+    expect(near(session.taps[0]!, { x: 1185, y: 1023 })).toBe(true);
+  });
+
+
+  it('retries the town icon once when the first click is swallowed', async () => {
+    const session = new Session(await fixtures(), { start: 'town-down' });
+    session.dropTownIconTaps = 1;
+    expect(await openWorldMap(session)).toEqual({ ok: true });
+    expect(session.taps).toHaveLength(2);
+    expect(near(session.taps[0]!, { x: 1185, y: 1023 })).toBe(true);
+    expect(near(session.taps[1]!, { x: 1185, y: 1023 })).toBe(true);
+  });
+
+  it('retries a map node once when the first tap is swallowed', async () => {
+    const fixturesNow = await fixtures();
+    const session = new Session(fixturesNow, { start: 'map' });
+    session.mapFrame = fixturesNow.mapVnh;
+    session.dropNodeTaps = 1;
+    expect(await travelTo('vnh', session)).toEqual({ ok: true });
+    expect(session.taps).toHaveLength(2);
   });
 
   it('refuses a screen with neither control, without tapping', async () => {
@@ -184,7 +213,8 @@ describe('travelTo', () => {
     if (!result.ok) expect(result.reason).toBe('location-not-found');
     expect(session.taps).toEqual([]);
     expect(session.keys).toEqual([0x10, 0x10, 0x10, 0x12, 0x12]);
-    expect(session.drags).toHaveLength(8);
+    // The Dungeon Select map opens far from 诺森霍洛村; the pan is the 44-step serpentine.
+    expect(session.drags).toHaveLength(44);
   });
 
   it('zooms in after the drags when the neighbour was hiding the node', async () => {
@@ -192,8 +222,23 @@ describe('travelTo', () => {
     session.foundOnZoomIn = true;
     expect(await travelTo('vnh', session)).toEqual({ ok: true });
     expect(session.keys).toEqual([0x10, 0x10, 0x10, 0x12]);
-    expect(session.drags).toHaveLength(8);
+    expect(session.drags).toHaveLength(44);
     expect(near(session.taps[0]!, { x: 960, y: 469 })).toBe(true);
+  });
+
+  it('matches a node by its label band when the map is zoomed out (Dungeon Select path)', async () => {
+    // Live frame 2026-10-31, the world map opened from Dungeon Select after three Q zoom-outs: the
+    // whole map is visible, 诺森霍洛村 is on it, but its icon is drawn at half size so the composite
+    // template scores 0.639 and the node is invisible to it. The label band is screen-space art and
+    // scores 0.856; the icon's clickable centre sits 40 px above the band's top.
+    const zoomed = await frame('testdata/worldmap/2026-10-31/dungeon-select-zoomout.jpg');
+    const session = new Session(await fixtures(), { start: 'map' });
+    session.mapFrame = zoomed;
+    expect(await travelTo('vnh', session)).toEqual({ ok: true });
+    expect(session.taps).toHaveLength(1);
+    expect(near(session.taps[0]!, { x: 609, y: 398 }, 12)).toBe(true);
+    expect(session.keys).toEqual([]);
+    expect(session.drags).toHaveLength(0);
   });
 
   it('refuses a clipped node (score below 0.8) rather than clicking it', async () => {

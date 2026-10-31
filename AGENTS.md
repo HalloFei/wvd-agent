@@ -72,3 +72,7 @@ directory; the source of truth stays here.
 - **The task board is the single authority for open work.** Specs and `docs/status.md` record
   decisions and measurements; they do not keep their own backlog. A gap that is not pinned is not
   tracked, and a pinned item carries its reproduction, fixtures and acceptance test.
+- **A ticket is answered with a proposal before code.** The `ticket-to-proposal` skill fixes the
+  eight slots — the observable, the diagnosis with its evidence tag, the options, the radius, the
+  risk, the test plan, the open questions with their defaults — and stops. A ticket is a board id
+  plus the repository; nothing is retyped from the card, and implementation starts only on approval.

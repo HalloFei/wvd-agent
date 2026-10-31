@@ -133,8 +133,8 @@ describe('the FFXI 4F route state machine', () => {
     expect(nextIntent(routeState(screen('town'), [80], 3))).toEqual({ kind: 'exit' });
   });
 
-  it('waits on the loot screen, which the chest module owns', () => {
-    expect(nextIntent(routeState(screen('loot'), [80], 3))).toEqual(WAIT_SLOW);
+  it('taps the loot card, which the chest module owns', () => {
+    expect(nextIntent(routeState(screen('loot'), [80], 3))).toEqual({ kind: 'loot' });
   });
 
   it('waits on the world map, which the loop owns', () => {

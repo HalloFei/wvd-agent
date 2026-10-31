@@ -72,7 +72,10 @@ describe('replay harness', () => {
     'replays the recorded chest through the real recognisers',
     async () => {
       const started = performance.now();
-      const report = await replay(RECORDING, { bandCheck: true, planCheck: true });
+      // The recording is the 2026-10-24 braked stop, so this acceptance checks the model that
+      // recording fitted. The production default (no brake) is tested in replay-plan.test.ts;
+      // feeding this braked recording through it exposes the known duplicate-frame velocity artifact.
+      const report = await replay(RECORDING, { bandCheck: true, planCheck: true, brakeEnabled: true });
       const wallMs = Math.round(performance.now() - started);
 
       console.log(

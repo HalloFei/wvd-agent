@@ -522,23 +522,23 @@ describe('planTap', () => {
     const plan = planTap({ markerX: 800, v: 610, zones: ZONES, ...TAP });
 
     expect(plan).not.toBeNull();
-    // stop = 800 + 610·0.075 + 610²/6000 = 907.767 → (1111 − 907.767)/610 = 333.17 ms.
+    // No brake (the default): stop = 800 + 610·0.075 = 845.75 → (1111 − 845.75)/610 = 434.84 ms.
     expect(plan!.target).toBe(1111);
     expect(plan!.target).toBeGreaterThanOrEqual(ZONES[1].from);
     expect(plan!.target).toBeLessThanOrEqual(ZONES[1].to);
-    expect(plan!.atMs).toBeCloseTo(333.17, 1);
+    expect(plan!.atMs).toBeCloseTo(434.84, 1);
   });
 
-  it('carries the sign of motion into the slide term', () => {
-    // Mirrored geometry: 311 px to the target either way. With `sign(v)·v²/(2a)` both take
-    // 333.17 ms; a slide term that ignored the sign would take 536 ms leftward.
+  it('carries the sign of motion into the latency lead', () => {
+    // Mirrored geometry: 311 px to the target either way. `v·latency` has the sign of motion, so
+    // both take 434.84 ms; a lead without the sign would take 584.75 ms leftward.
     const rightward = planTap({ markerX: 800, v: 610, zones: [{ from: 1101, to: 1121 }], ...TAP });
     const leftward = planTap({ markerX: 1200, v: -610, zones: [{ from: 879, to: 899 }], ...TAP });
 
     expect(rightward).not.toBeNull();
     expect(leftward).not.toBeNull();
     expect(leftward!.target).toBeCloseTo(889, 6);
-    expect(leftward!.atMs).toBeCloseTo(333.17, 1);
+    expect(leftward!.atMs).toBeCloseTo(434.84, 1);
     expect(leftward!.atMs).toBeCloseTo(rightward!.atMs, 6);
     // A negative lead: the plan aims behind a marker that is travelling left, and still waits.
     expect(leftward!.target).toBeLessThan(1200);
@@ -546,20 +546,22 @@ describe('planTap', () => {
   });
 
   it('plans a tap on the left zone for a leftward marker', () => {
-    const plan = planTap({ markerX: 1200, v: -610, zones: ZONES, ...TAP });
+    // At 1 150 the right zone's centre (1 111) is already behind the no-brake stop (1 150 − 45.75 =
+    // 1 104.25), so the plan takes the left zone's 808.
+    const plan = planTap({ markerX: 1150, v: -610, zones: ZONES, ...TAP });
 
     expect(plan).not.toBeNull();
     expect(plan!.target).toBe(808);
-    // (808 − 1200 + 107.767)/(−610) = 465.96 ms.
-    expect(plan!.atMs).toBeCloseTo(465.96, 1);
+    // No brake: (808 − 1 150 + 45.75)/(−610) = 485.66 ms.
+    expect(plan!.atMs).toBeCloseTo(485.66, 1);
   });
 
   it('takes the soonest reachable zone', () => {
     const plan = planTap({ markerX: 650, v: 610, zones: ZONES, ...TAP });
 
-    // (808 − 650 − 107.767)/610 = 82.35 ms, against 579 ms for the right zone.
+    // (808 − 650 − 45.75)/610 = 184.02 ms, against 681 ms for the right zone.
     expect(plan!.target).toBe(808);
-    expect(plan!.atMs).toBeCloseTo(82.35, 1);
+    expect(plan!.atMs).toBeCloseTo(184.02, 1);
   });
 
   it('refuses a target past the bounce in the direction of travel', () => {
@@ -588,16 +590,16 @@ describe('planTap', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('predictRest', () => {
-  it('carries the reading through its age, the input leg and the brake', () => {
-    // 610 px/s: 610·(0.050 + 0.075) = 76.25 px before the game sees the press, then the drag
-    // brake's 610 · 610/6000 = 62.02 px, i.e. 138.27 px in total.
+  it('carries the reading through its age and the input leg, with no brake by default', () => {
+    // 610 px/s: 610·(0.050 + 0.075) = 76.25 px before the game sees the press, and nothing more —
+    // the 2026-10-31 live presses had no post-press carry.
     expect(predictRest({ markerX: 700, v: 610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000 }))
-      .toBeCloseTo(838.27, 1);
+      .toBeCloseTo(776.25, 1);
   });
 
   it('carries a leftward marker the other way', () => {
     expect(predictRest({ markerX: 700, v: -610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000 }))
-      .toBeCloseTo(561.73, 1);
+      .toBeCloseTo(623.75, 1);
   });
 
   it('refuses an input it cannot answer', () => {
@@ -607,6 +609,99 @@ describe('predictRest', () => {
     expect(predictRest({ ...base, ageMs: -1 })).toBeNull();
     expect(predictRest({ ...base, latencyMs: Number.NaN })).toBeNull();
     expect(predictRest({ ...base, decelPxPerS2: 0 })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The brake switch — the 2026-10-24 model, still reachable behind brakeEnabled
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The default is no brake, but the one recording with a stop measured a 68 px carry and the model
+ * that reproduces it (`brakeDistancePx`) is still what a probe runs when it flips
+ * `worlds.wvd.qteBrakeEnabled` on. These are the pre-switch expectations, kept under the switch so
+ * the default change cannot silently delete the measured model.
+ */
+describe('brakeEnabled: the 2026-10-24 brake expectations', () => {
+  it('plans with the carry at the recorded speed', () => {
+    // stop = 800 + 610·0.075 + 61.02 = 907.77 → (1111 − 907.77)/610 = 333.17 ms.
+    const plan = planTap({ markerX: 800, v: 610, zones: ZONES, ...TAP, brakeEnabled: true });
+    expect(plan).not.toBeNull();
+    expect(plan!.target).toBe(1111);
+    expect(plan!.atMs).toBeCloseTo(333.17, 1);
+  });
+
+  it('mirrors the sign-corrected carry', () => {
+    const rightward = planTap({ markerX: 800, v: 610, zones: [{ from: 1101, to: 1121 }], ...TAP, brakeEnabled: true });
+    const leftward = planTap({ markerX: 1200, v: -610, zones: [{ from: 879, to: 899 }], ...TAP, brakeEnabled: true });
+    expect(leftward).not.toBeNull();
+    expect(leftward!.target).toBeCloseTo(889, 6);
+    expect(leftward!.atMs).toBeCloseTo(333.17, 1);
+    expect(leftward!.atMs).toBeCloseTo(rightward!.atMs, 6);
+  });
+
+  it('plans the left zone 465.96 ms out and takes the soonest zone at 82.35 ms', () => {
+    expect(planTap({ markerX: 1200, v: -610, zones: ZONES, ...TAP, brakeEnabled: true })!.atMs)
+      .toBeCloseTo(465.96, 1);
+    expect(planTap({ markerX: 650, v: 610, zones: ZONES, ...TAP, brakeEnabled: true })!.atMs)
+      .toBeCloseTo(82.35, 1);
+  });
+
+  it('predicts the braked rest', () => {
+    // The same 76.25 px of age and input leg, then the drag brake's 62.02 px.
+    expect(predictRest({ markerX: 700, v: 610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000, brakeEnabled: true }))
+      .toBeCloseTo(838.27, 1);
+    expect(predictRest({ markerX: 700, v: -610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000, brakeEnabled: true }))
+      .toBeCloseTo(561.73, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The live 2026-10-31 presses — why the switch defaults off
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The two presses the live run recorded on 2026-10-31, as `QteTiming` reports them: the planning
+ * reading's signed speed `v`, its marker `tapX`, and where the marker actually parked `restX`.
+ * Each rest is a consistent no-brake landing: travelling at `v` for the whole interval from the
+ * reading to the press's effect explains every pixel of the observed `tapX → restX` travel. The
+ * spec records that these presses parked **~4 px** past the press (chest spec §3), so the press's
+ * effect sits 4 px short of the rest; the brake model would add its carry on top and be tens of px
+ * past the rest.
+ */
+describe('the live 2026-10-31 presses', () => {
+  const PRESSES = [
+    { v: -429.79, tapX: 1_088.5, restX: 856.5 },   // leftward, into the left zone
+    { v: 802.0, tapX: 953.5, restX: 1_096.5 },      // rightward, into the right zone
+  ] as const;
+  const PARKED_PAST_PRESS_PX = 4;
+  const LATENCY_MS = 75;
+  const DECEL_PX_PER_S2 = 3_000;
+
+  it('predicts each live rest without the brake, and the brake model misses by its carry', () => {
+    for (const press of PRESSES) {
+      const travel = Math.abs(press.restX - press.tapX);
+      const pressTravel = travel - PARKED_PAST_PRESS_PX;
+      const readingToPressMs = (pressTravel / Math.abs(press.v)) * 1_000;
+      const ageMs = readingToPressMs - LATENCY_MS;
+      expect(ageMs).toBeGreaterThan(0);
+
+      const common = {
+        markerX: press.tapX, v: press.v, ageMs, latencyMs: LATENCY_MS, decelPxPerS2: DECEL_PX_PER_S2,
+      };
+      const noBrake = predictRest({ ...common, brakeEnabled: false });
+      const braked = predictRest({ ...common, brakeEnabled: true });
+      expect(noBrake).not.toBeNull();
+      expect(braked).not.toBeNull();
+
+      // The no-brake model reproduces the ~4 px residual the live spec records ...
+      const noBrakeError = Math.abs(noBrake! - press.restX);
+      const brakeError = Math.abs(braked! - press.restX);
+      expect(noBrakeError).toBeCloseTo(PARKED_PAST_PRESS_PX, 6);
+      // ... while the brake model overshoots by its carry, less that same residual.
+      expect(brakeError).toBeCloseTo(brakeDistancePx(press.v, 2 * DECEL_PX_PER_S2) - PARKED_PAST_PRESS_PX, 6);
+      expect(noBrakeError).toBeLessThan(brakeError);
+    }
   });
 });
 

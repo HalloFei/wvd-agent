@@ -181,7 +181,7 @@ deferred until a location needs it.
 | `key` | `key`, `holdMs?` | named game key → scan code in one table; `holdMs` clamped to `MAX_PRESS_HOLD_MS` |
 | `wait` | `ms` | sleeps, abortable |
 | `expect` | `screen`, `timeoutMs?` | captures and observes every 100 ms until the screen matches |
-| `expectFloor` | `timeoutMs?` | same loop, matching a `dungeonmap` observation whose `titleKey` equals `floor.titleKey` |
+| `expectFloor` | `timeoutMs?`, `titleKey?` | same loop, matching a `dungeonmap` observation whose `titleKey` equals `floor.titleKey` by default, or the step's `titleKey` (32 hex) when it names one — so one script can gate 第三区 and 第四区 |
 
 `key` names in v1: `g`, `l`, `q`, `f`, `r`, `tab`, `esc`, `space`. The table sits beside `SCAN` in
 `actions/automove.ts`; a test asserts the two agree for G/L/F/Q.
@@ -207,6 +207,8 @@ export interface TaskStep {
   readonly key?: 'g' | 'l' | 'q' | 'f' | 'r' | 'tab' | 'esc' | 'space';
   readonly ms?: number;
   readonly screen?: ScreenId;
+  /** `expectFloor` only: gate this floor instead of the task's own key. */
+  readonly titleKey?: string;
   readonly timeoutMs?: number;
 }
 

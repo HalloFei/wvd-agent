@@ -24,6 +24,9 @@ export const DEFAULT_SCRIPT_TIMEOUT_MS = 120_000;
 
 const MAX_COORDINATE = 16_383;
 
+/** A floor title fingerprint: 32 lowercase hex, the shape `map.ts` measures (R27a). */
+const TITLE_KEY = /^[0-9a-f]{32}$/;
+
 type Raw = Record<string, unknown>;
 
 const isObject = (value: unknown): value is Raw =>
@@ -41,7 +44,7 @@ const STEP_FIELDS: Record<TaskStep['op'], readonly string[]> = {
   key: ['op', 'key', 'holdMs'],
   wait: ['op', 'ms'],
   expect: ['op', 'screen', 'timeoutMs'],
-  expectFloor: ['op', 'timeoutMs'],
+  expectFloor: ['op', 'titleKey', 'timeoutMs'],
   travel: ['op', 'to'],
 };
 
@@ -98,12 +101,20 @@ function parseStep(raw: unknown, index: number, knownLocations?: ReadonlySet<str
     }
     return { op, to: raw.to };
   }
-  // expectFloor
+  // expectFloor: a step may gate one leg with its own key; the task's own key is the fallback.
+  const titleKey = raw.titleKey;
+  if (titleKey !== undefined && (typeof titleKey !== 'string' || !TITLE_KEY.test(titleKey))) {
+    return problem('bad-title-key', `${where}: titleKey`);
+  }
   const timeoutMs = raw.timeoutMs;
   if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || (timeoutMs as number) < 1)) {
     return problem('bad-timeout', `${where}: timeoutMs`);
   }
-  return timeoutMs === undefined ? { op: 'expectFloor' } : { op: 'expectFloor', timeoutMs: timeoutMs as number };
+  return {
+    op: 'expectFloor',
+    ...(titleKey === undefined ? {} : { titleKey: titleKey as string }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }),
+  };
 }
 
 function parseScript(raw: unknown, name: string, knownLocations?: ReadonlySet<string>): TaskScript | Problem {
@@ -146,7 +157,7 @@ export function parseTask(text: string, knownLocations?: ReadonlySet<string>): T
   if (typeof raw.label !== 'string' || raw.label.length === 0) return problem('missing-field', 'label');
 
   if (!isObject(raw.floor)) return problem('missing-field', 'floor');
-  if (typeof raw.floor.titleKey !== 'string' || !/^[0-9a-f]{32}$/.test(raw.floor.titleKey)) {
+  if (typeof raw.floor.titleKey !== 'string' || !TITLE_KEY.test(raw.floor.titleKey)) {
     return problem('bad-title-key', 'floor.titleKey');
   }
 

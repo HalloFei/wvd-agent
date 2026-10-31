@@ -26,7 +26,7 @@ import type {
   Point,
 } from '../src/contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
-import { acceptChestPrompt, cancelQte, DISARM_SCAN, enableBattleAuto, reenterChest } from '../src/actions/chest.ts';
+import { acceptChestPrompt, cancelQte, DISARM_SCAN, enableBattleAuto, reenterChest, tapLoot } from '../src/actions/chest.ts';
 import { timeQte, type QteTimer, type QteTimingOptions } from '../src/actions/qte.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { MAX_PRESS_HOLD_MS } from '../src/contracts.ts';
@@ -377,6 +377,7 @@ function makeWorld(options: {
       automoveToTile: (at) => automoveToTile(actuator, at, cfg.pressHoldMs),
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
+      tapLoot: () => tapLoot(actuator),
       enableBattleAuto: () => enableBattleAuto(actuator),
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
@@ -587,6 +588,47 @@ describe('the chest QTE', () => {
     // A resolved pass is not a stop: the tick that follows asks the sub-loop again.
     await world.tick();
     expect(calls).toBeGreaterThanOrEqual(2);
+    expect(world.isRunning()).toBe(true);
+  });
+
+  it('presses the bar as the last attempt after the reroll budget is spent', async () => {
+    let calls = 0;
+    const timing: QteTimer = async (options) => {
+      calls += 1;
+      if (calls === 1) return { ok: false, reason: 'no-better-pass' };
+      // The budget is spent, but a plan exists: the bar is taken as the last attempt.
+      expect(options.choosePass?.({ windowMs: 1, speedPxPerS: 1200 })).toBe('press');
+      const pressed = await options.press();
+      return pressed.ok
+        ? { ok: true, v: 0, atMs: 0, target: 0, tapX: 0, restX: null, restSettled: false }
+        : { ok: false, reason: 'press-refused' };
+    };
+    const { world, host, actuator } = makeWorld({ observation: qteBar, timing });
+    await started(world, host);
+
+    await world.tick();                 // the budget is spent; the bar is left for this tick
+    await world.tick();                 // the next tick presses it anyway
+    expect(actuator.calls).toEqual([`key ${DISARM_SCAN} ${WVD_DEFAULTS.pressHoldMs}`]);
+    expect(world.isRunning()).toBe(true);
+  });
+
+  it('taps the loot card at its measured point, once per interval', async () => {
+    const loot: Observation = { screen: 'loot', atMs: 120, confidence: 0.6 };
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: loot });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,510']);
+    clock.advance(100);
+    await world.tick();                 // inside lootTapIntervalMs: no second tap
+    expect(actuator.calls).toEqual(['tap 960,510']);
+    clock.advance(400);
+    await world.tick();                 // the interval has passed: one more tap
+    expect(actuator.calls).toEqual(['tap 960,510', 'tap 960,510']);
+
+    perceiver.observation = dungeonMap; // the card left; the route moves on
+    clock.advance(100);
+    await world.tick();
     expect(world.isRunning()).toBe(true);
   });
 
@@ -1418,11 +1460,12 @@ describe('the opener click', () => {
     expect(actuator.calls).toEqual(['tap 963,784']);
 
     // The screen after the panel is whatever follows: loot, for an untrapped chest (chest §3a). The
-    // loop does not wait for a QTE bar that may never appear; it simply re-perceives.
+    // loop does not wait for a QTE bar that may never appear; it taps the loot card at its measured
+    // centre — not a second opener click — and re-perceives.
     perceiver.observation = { screen: 'loot', atMs: 200, confidence: 1 };
     clock.advance(100);
     await world.tick();
-    expect(actuator.calls).toEqual(['tap 963,784']);
+    expect(actuator.calls).toEqual(['tap 963,784', 'tap 960,510']);
     expect(world.isRunning()).toBe(true);
   });
 
