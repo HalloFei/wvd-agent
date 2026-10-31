@@ -148,6 +148,10 @@ This turns the hardest case — a fast bar with a long lead — into a retry ins
 - The class sets the attempts.
 - A character with 陷阱恐惧 cannot be chosen; one close to 60 willpower should not be, unless
   nothing better is left.
+- The main character's card draws **no heart and no numeral** — the game does not display 心 for 主人公.
+  The floor cannot be applied to a number that is not on the screen, so that card is **accepted**
+  (operator rule 2026-10-31): not treated as maximum, not refused. 陷阱恐惧 still applies to them in
+  game; the panel renders it for nobody, so the floor is a proxy for the fear check, never the check.
 
 Rank by disarm first, then attempts, then willpower headroom.
 
@@ -168,9 +172,13 @@ fields therefore fail differently:
 
 - **陷阱发现 / 陷阱解除** rank every card. If either cannot be read the panel is refused and the loop
   escalates: a ranking built from a guessed number is worse than no action.
-- **The heart numeral (willpower)** only ever disqualifies its own card. An unread numeral, like a
-  card that draws no heart at all, is recorded as `NaN`, that member is ineligible, and the remaining
-  cards are still ranked. On the live panel that opens the chest with 薇薇安娜DEX6, slot 6.
+- **The heart numeral (willpower)** only ever disqualifies its own card. A numeral that is drawn but
+  unread is recorded as `NaN`, that member is ineligible, and the remaining cards are still ranked:
+  on the live panel that is 爱丽丝's 90, which GDI+ renders below the heart atlas's floor.
+- **A card with no heart at all** is the main character: recorded as `null` and accepted by the
+  policy, because there is no number to hold against the floor. On the live FFXI panel that card holds
+  the best 陷阱解除 (DragonSlayer, 106), so the chest is opened by the main character rather than by
+  the best card whose heart could be read.
 
 ## 6. Failure semantics the policy relies on
 

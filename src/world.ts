@@ -952,12 +952,12 @@ export class WvdWorld implements World {
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen !== 'combat') this.#battleAutoOn = false;
     if (observation.screen === 'chest-open') {
-      // An unread willpower (a card that draws no heart) is not a spendable number: it is left out
-      // of the budget rather than counted as zero or as a substitute, so "every member is at zero"
-      // still means every *read* value is at zero.
+      // A willpower the panel did not show (the main character draws no heart) or could not read is
+      // not a spendable number: it is left out of the budget rather than counted as zero or as a
+      // substitute, so "every member is at zero" still means every *read* value is at zero.
       this.#willpower = observation.opener.members
         .map((member) => member.willpower)
-        .filter((willpower) => Number.isFinite(willpower));
+        .filter((willpower): willpower is number => willpower !== null && Number.isFinite(willpower));
     }
     if (observation.screen === 'dungeonmap') {
       // The map is the only chest count the loop has: what the map still shows is the budget.
@@ -1614,7 +1614,7 @@ export class WvdWorld implements World {
         if (choice === null) {
           // Nobody may open it: do not click. Say why, and ask — the next card choice is the model's
           // or the operator's, not a guess here.
-          const unread = panel.members.filter((member) => !Number.isFinite(member.willpower)).length;
+          const unread = panel.members.filter((member) => member.willpower === null || !Number.isFinite(member.willpower)).length;
           this.#openerRefusal = unread > 0
             ? `${unread} of ${panel.members.length} cards show no willpower, and no member with a readable `
               + `willpower is at or above the ${this.#cfg.willpowerFloor} willpower floor`

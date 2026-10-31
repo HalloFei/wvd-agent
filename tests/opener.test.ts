@@ -112,9 +112,9 @@ interface MeasuredMember {
   readonly willpower: number | null;
 }
 
-/** The JSON's willpower column, with `null` (no heart) as the parser's `NaN` (unread). */
-function expectedWillpower(members: readonly MeasuredMember[]): number[] {
-  return members.map((member) => member.willpower ?? Number.NaN);
+/** The JSON's willpower column as the parser records it: `null` = no heart drawn, a number = read. */
+function expectedWillpower(members: readonly MeasuredMember[]): Array<number | null> {
+  return members.map((member) => member.willpower);
 }
 
 let measuredMembers: Promise<readonly MeasuredMember[]> | null = null;
@@ -148,14 +148,15 @@ describe('parseOpener — the 由谁打开? panel', () => {
     expect(panel!.members.map((member) => member.name)).toEqual(['#1', '#2', '#3', '#4', '#5', '#6']);
   });
 
-  it('reads the heart numeral as willpower, and leaves the card with no heart unread', async () => {
+  it('reads the heart numeral as willpower, and records a card with no heart as absent', async () => {
     const expected = await measured();
     const panel = await parseOpener(await jpegFrame('panel-00.jpg'));
 
     expect(panel!.members.map((member) => member.willpower)).toEqual(expectedWillpower(expected));
-    // DragonSlayer (card 4) is the one card with no heart: no numeral is drawn, so the value is
-    // unread — `NaN`, never a substitute. Nothing may be inferred from the other cards' hearts.
-    expect(Number.isNaN(panel!.members[3]!.willpower)).toBe(true);
+    // DragonSlayer (card 4) draws no heart at all: that is the main character, whose willpower the
+    // game never displays, so the value is `null` — eligible, and distinguishable from a heart that
+    // is drawn but unreadable (`NaN`). Nothing is inferred from the other cards' hearts.
+    expect(panel!.members[3]!.willpower).toBeNull();
     expect(panel!.members[0]!.willpower).toBe(100);
     expect(panel!.members[4]!.willpower).toBe(90);
   });
@@ -212,8 +213,9 @@ describe('parseOpener — the 由谁打开? panel', () => {
     expect(panel).not.toBeNull();
     expect(Number.isNaN(panel!.members[0]!.willpower)).toBe(true);
     expect(panel!.members[1]!.willpower).toBe(100);
-    // No substitution: the unread card cannot win, and the choice is the measured one (index 5).
-    expect(chooseOpener(panel!)!.index).toBe(5);
+    // No substitution: the unread card cannot win. The choice is still DragonSlayer (index 3), whose
+    // card draws no heart at all — the main character is eligible without a displayed willpower.
+    expect(chooseOpener(panel!)!.index).toBe(3);
   });
 
   it('records a heart digit the atlas has never seen as unread, and names the other five', async () => {
@@ -232,14 +234,16 @@ describe('parseOpener — the 由谁打开? panel', () => {
     if (!parsed.ok) return;
     expect(Number.isNaN(parsed.panel.members[0]!.willpower)).toBe(true);
     // #4 draws no heart at all, so it is unread too; #5 and #6 keep their measured numerals.
-    expect(parsed.panel.members.slice(1).map((member) => member.willpower)).toEqual([100, 100, NaN, 90, 100]);
+    expect(parsed.panel.members.slice(1).map((member) => member.willpower)).toEqual([100, 100, null, 90, 100]);
   });
 
-  it('parses a panel whose hearts are all unreadable, and the policy then chooses nobody', async () => {
-    // A field that only disqualifies its own card may degrade to unread; a field every card is ranked
-    // by may not. Paint out every heart the panel draws: it is still the panel (six cards, six 陷阱
-    // pairs) and every member is ineligible, so the World asks instead of clicking a card it cannot
-    // justify.
+  it('reads a panel with every heart erased as six absent cards, and still has a card to click', async () => {
+    // Not a state the game draws (a party has one main character, and only their card omits the
+    // heart): erasing a heart removes the numeral *and* the glyph, so every slot reads as absent
+    // (`null`), not unread (`NaN`). An absent heart is the one case the floor cannot rule on, so the
+    // policy still clicks the best 陷阱解除 rather than asking about a panel it can rank. The
+    // degradation that matters is pinned above: one card's drawn heart failing to read costs that
+    // card only.
     const image = copyOf(await jpegImage('panel-00.jpg'));
     for (const slot of OPENER_SLOTS) {
       if (slot.index === 3) continue; // DragonSlayer draws no heart, so there is nothing to erase.
@@ -248,10 +252,10 @@ describe('parseOpener — the 由谁打开? panel', () => {
     const panel = await parseOpener(frameOf(image, 1_000));
 
     expect(panel).not.toBeNull();
-    expect(panel!.members.map((member) => Number.isFinite(member.willpower))).toEqual([
-      false, false, false, false, false, false,
-    ]);
-    expect(chooseOpener(panel!)).toBeNull();
+    expect(panel!.members.map((member) => member.willpower)).toEqual([null, null, null, null, null, null]);
+    const choice = chooseOpener(panel!);
+    expect(choice?.index).toBe(3);
+    expect(choice!.member.disarm).toBe(105);
   });
 
   it('refuses a number whose digits are not where the numerals start', async () => {
@@ -386,17 +390,18 @@ function panelOf(...members: OpenerMember[]): OpenerPanel {
 }
 
 describe('chooseOpener', () => {
-  it('chooses 薇薇安娜DEX6 on the fixture panel, because the best card has no willpower', async () => {
+  it('chooses the main character on the fixture panel, whose card draws no heart at all', async () => {
     const panel = (await parseOpener(await jpegFrame('panel-00.jpg')))!;
     const choice = chooseOpener(panel);
 
     expect(choice).not.toBeNull();
-    // The fixture's highest 陷阱解除 is DragonSlayer's 105, but his card draws no heart: his willpower
-    // is unread (`NaN`) and he is ineligible. The best fully-read card is 薇薇安娜DEX6, 79, index 5.
-    expect(choice!.index).toBe(5);
-    expect(choice!.member.disarm).toBe(79);
-    expect(choice!.member).toBe(panel.members[5]);
-    expect(Number.isNaN(panel.members[3]!.willpower)).toBe(true);
+    // The fixture's highest 陷阱解除 is DragonSlayer's 105, and his card draws no heart: that is the
+    // main character, whose willpower the game does not display (contracts §OpenerMember). The floor
+    // cannot be checked against a number that is not on the screen, so he is eligible and wins.
+    expect(choice!.index).toBe(3);
+    expect(choice!.member.disarm).toBe(105);
+    expect(choice!.member).toBe(panel.members[3]);
+    expect(panel.members[3]!.willpower).toBeNull();
   });
 
   it('skips a member whose heart did not parse even when it would win on 陷阱解除', () => {
@@ -583,13 +588,15 @@ describe('parseOpener — through the native decoder', () => {
     if (!parsed.ok) return;
     expect(parsed.panel.members.map((member) => member.detect)).toEqual([38, 28, 34, 93, 62, 78]);
     expect(parsed.panel.members.map((member) => member.disarm)).toEqual([49, 50, 38, 106, 43, 81]);
-    expect(parsed.panel.members.map((member) => member.willpower).map((value) => (Number.isNaN(value) ? 'unread' : value)))
-      .toEqual([100, 100, 100, 'unread', 'unread', 100]);
+    expect(parsed.panel.members.map((member) => member.willpower)
+      .map((value) => (value === null ? 'absent' : Number.isNaN(value) ? 'unread' : value)))
+      .toEqual([100, 100, 100, 'absent', 'unread', 100]);
 
-    // DragonSlayer (no heart) and 爱丽丝 (unreadable heart) are ineligible; 薇薇安娜DEX6 at slot 6 wins.
+    // DragonSlayer (no heart: the main character) holds the best 陷阱解除 (106) and is eligible;
+    // 爱丽丝 (heart drawn, unreadable) stays ineligible, so the choice is the bottom-left card.
     const choice = chooseOpener(parsed.panel);
-    expect(choice?.index).toBe(5);
-    expect(openerSlot(choice!.index)!.id).toBe('bottom-right');
-    expect(openerCardCentre(choice!.index)).toEqual({ x: 1_139, y: 908 });
+    expect(choice?.index).toBe(3);
+    expect(openerSlot(choice!.index)!.id).toBe('bottom-left');
+    expect(openerCardCentre(choice!.index)).toEqual({ x: 786, y: 908 });
   });
 });

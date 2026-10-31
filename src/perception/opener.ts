@@ -15,8 +15,10 @@
  * **Two kinds of field, two kinds of failure.** A 陷阱 numeral ranks *every* card, so a numeral that
  * cannot be read refuses the whole panel — the ranking would otherwise be a guess. The heart numeral
  * only ever disqualifies *its own* card (the policy skips an unread willpower), so an unreadable heart
- * is recorded as `NaN`: that card is ineligible and the other cards still stand. A card that draws no
- * heart at all is `NaN` for the same reason. This distinction is what makes the live panel openable:
+ * is recorded as `NaN`: that card is ineligible and the other cards still stand. A card that draws
+ * **no heart at all** is a third case — the main character, whose willpower the game does not display
+ * — and is recorded as `null`, which the gate accepts. This distinction is what makes the live panel
+ * openable:
  * through GDI+ its 爱丽丝 card (90) renders below the heart atlas's identity floor, and refusing the
  * whole panel would block a chest whose other five cards are fully readable.
  *
@@ -570,17 +572,19 @@ function readTrapNumber(data: Uint8Array, width: number, slot: number, field: 'd
  * draws **no heart and no numeral at all** on DragonSlayer's card (Lv.48, silver gem), while the other
  * five show 100, 100, 100, 90 and 100.
  *
- * **An unread willpower is unreadable, not fillable.** The closed contract has no absent value for
- * `willpower`, so the absence is recorded as `NaN` — a number that can never pass a floor — and
- * `chooseOpener` treats a non-finite value as **ineligible**, exactly like a feared member. Nothing
- * is substituted: a member whose willpower was not displayed cannot be shown to satisfy the floor,
- * and the card with the highest 陷阱解除 is precisely where a fabricated value would do the most
- * damage.
+ * **That absence is the main character, not a failed read.** The game never displays 心 for 主人公,
+ * so the card carries no heart and no numeral; `parseOpenerImage` records `null` and `chooseOpener`
+ * accepts the member, because the floor cannot be checked against a number that was never on the
+ * screen (operator rule 2026-10-31). It is not a claim that their willpower is at maximum: 陷阱恐惧
+ * still applies to them in game, it is simply never drawn in this panel.
  *
- * A numeral that *is* there but below the atlas's identity floor is `unreadable`, and that too only
- * costs its own card: `parseOpenerImage` writes `NaN`. The heart is the one field whose absence does
- * not change how the other cards rank — the 陷阱 numerals do, which is why those still refuse the
- * panel — so keeping the other five readable is what lets a live panel with one lit card be opened.
+ * **A numeral that is drawn but below the atlas's identity floor is a different fact**, and it costs
+ * its own card only: `parseOpenerImage` writes `NaN` and the member stays ineligible, because the
+ * numeral might have been under the floor itself. Nothing is ever substituted for either case.
+ *
+ * The heart is the one field whose absence does not change how the other cards rank — the 陷阱
+ * numerals do, which is why those still refuse the panel — so keeping the other five readable is what
+ * lets a live panel with one ineligible card be opened.
  */
 type HeartReading =
   | { readonly kind: 'absent' }
@@ -679,10 +683,12 @@ function parseOpenerImage(image: RgbaImage): OpenerParse {
       name: `#${index + 1}`,
       detect: value.detect,
       disarm: value.disarm,
-      // No heart drawn, or a numeral the atlas cannot read: the willpower is unknown (`NaN`), so this
-      // card is ineligible and `chooseOpener` will not choose it. The other cards still stand — the
-      // heart is the only field that can degrade, because it only ever rules its own card out.
-      willpower: reading.kind === 'read' ? reading.value : Number.NaN,
+      // Two different absences, two different answers. A numeral the atlas cannot read is `NaN`: the
+      // card is ineligible, because the value might have been under the floor. A card that draws no
+      // heart at all is `null`: that is the main character, whose willpower the game never displays
+      // (operator rule 2026-10-31), and the floor cannot be checked against a number that is not on
+      // the screen. Neither is ever substituted.
+      willpower: reading.kind === 'read' ? reading.value : reading.kind === 'absent' ? null : Number.NaN,
       // 陷阱恐惧 is not rendered in this panel — the willpower floor is what protects the choice.
       feared: false,
     };

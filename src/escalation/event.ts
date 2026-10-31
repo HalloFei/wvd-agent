@@ -70,11 +70,14 @@ export function observationLine(observation: Observation): string {
       let lowest: number | null = null;
       let unread = 0;
       for (const member of members) {
-        if (!Number.isFinite(member.willpower)) {
+        const willpower = member.willpower;
+        // No heart drawn (the main character) and a heart that could not be read are both left out
+        // of the lowest: neither is a number the screen showed.
+        if (willpower === null || !Number.isFinite(willpower)) {
           unread += 1;
           continue;
         }
-        if (lowest === null || member.willpower < lowest) lowest = member.willpower;
+        if (lowest === null || willpower < lowest) lowest = willpower;
       }
       const unreadNote = unread > 0 ? `, ${unread} with no willpower shown` : '';
       return `${head}; opener panel with ${plural(members.length, 'member', 'members')}, `

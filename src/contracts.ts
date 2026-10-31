@@ -92,7 +92,14 @@ export interface OpenerMember {
   readonly name: string;
   readonly detect: number;              // 陷阱发现
   readonly disarm: number;              // 陷阱解除
-  readonly willpower: number;
+  /**
+   * 心, as the panel draws it. `null` is a card that draws **no heart at all** — the main character,
+   * whose willpower the game does not display (operator rule 2026-10-31): there is no number to hold
+   * against a floor, so an absent heart passes the opener's pick gate. A heart that *is* drawn but
+   * cannot be read is `NaN`, and that member stays ineligible — the numeral might have been below
+   * the floor. Nothing is ever substituted for either case.
+   */
+  readonly willpower: number | null;
   readonly feared: boolean;
 }
 export interface OpenerPanel { readonly members: readonly OpenerMember[] }

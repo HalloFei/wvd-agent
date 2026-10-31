@@ -284,7 +284,7 @@ const openerNobody: Observation = {
 };
 
 /**
- * The best card's heart did not parse (`NaN` = no heart drawn / unread): it is ineligible, and the
+ * The best card's heart did not parse (`NaN` = a heart was drawn but could not be read): it is
  * other member (59) is under the floor. Nobody may open the chest, and the reason must name it.
  */
 const openerUnread: Observation = {

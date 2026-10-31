@@ -127,7 +127,7 @@ export interface OpenerMember {
   readonly name: string;
   readonly detect: number;              // 陷阱发现
   readonly disarm: number;              // 陷阱解除
-  readonly willpower: number;
+  readonly willpower: number | null;    // null: no heart drawn (the main character); NaN: unread
   readonly feared: boolean;
 }
 export interface OpenerPanel { readonly members: readonly OpenerMember[] }
