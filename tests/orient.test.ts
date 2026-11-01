@@ -38,6 +38,8 @@ describe('nextOrientStep', () => {
     // The live key against the fixture key: three bits apart, the same floor (R27b).
     expect(nextOrientStep(mapOf(FARM), orient)).toEqual({ kind: 'arrived' });
     expect(nextOrientStep(mapOf('000000007f3ffe007f7efe00220ba600'), orient)).toEqual({ kind: 'arrived' });
+    // The live 2026-11-02 reading of the same floor, 9 bits from the task's key (R27b).
+    expect(nextOrientStep(mapOf('600004007f3ffe007ffefe0002032200'), orient)).toEqual({ kind: 'arrived' });
   });
 
   it('climbs from the floor that carries the measured stair-up', () => {

@@ -17,7 +17,7 @@ import {
   type TaskScript,
 } from '../contracts.ts';
 import { travelTo } from '../actions/worldmap.ts';
-import { runSteps, TASK_KEYS } from './steps.ts';
+import { CAPTURE_ATTEMPTS, CAPTURE_RETRY_MS, runSteps, TASK_KEYS } from './steps.ts';
 
 export interface TaskRunnerDeps {
   readonly task: TaskDefinition;
@@ -60,10 +60,24 @@ export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
     };
   };
 
+  /**
+   * One screen probe. The capture is retried on the same policy every step uses: the engine answers
+   * `stale-frame` while its worker recovers, and a single such reply must not refuse the exit (live
+   * 2026-11-02: it ended a session at the exit on one stale frame).
+   */
   const screenScan = async (): Promise<string> => {
-    const frame = await deps.source.capture();
-    const observation = await deps.perceiver.observe(frame);
-    return observation.screen;
+    let failure: unknown = null;
+    for (let attempt = 0; attempt < CAPTURE_ATTEMPTS; attempt += 1) {
+      try {
+        const frame = await deps.source.capture();
+        const observation = await deps.perceiver.observe(frame);
+        return observation.screen;
+      } catch (error) {
+        failure = error;
+        await env().sleep(CAPTURE_RETRY_MS);
+      }
+    }
+    throw failure instanceof Error ? failure : new Error(String(failure));
   };
 
   /**

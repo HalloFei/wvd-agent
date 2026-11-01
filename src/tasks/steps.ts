@@ -36,12 +36,17 @@ export const TASK_KEYS: Readonly<Record<TaskKeyName, number>> = {
 };
 
 /**
- * How many of the fingerprint's 128 bits may differ and still be the same floor (R27b). The FFXI
- * collab draws its map translucent over a lit 3D scene; the glow shifts a couple of bits in the
- * title profile (measured: 2 bits between two captures of the same floor) while two different
- * floors differ in roughly half of them.
+ * How many of the fingerprint's 128 bits may differ and still be the same floor (R27b).
+ *
+ * The FFXI collab draws its map translucent over a lit 3D scene, and the title strip carries the
+ * scene behind it, so the profile moves with the camera and the room. Measured 2026-11-02 on the
+ * farm floor itself: the 第四区-城内2F深处- map, re-opened from the menu, read
+ * `600004007f3ffe007ffefe0002032200` against the task's `000000007f3ffe007ffeff00220bb600` —
+ * **9 bits** on the same floor. Two *different* collab floors measured 30 and 31 bits apart on the
+ * same day, and the Latin floors of the base game differ in roughly half of the 128 bits. 16 keeps
+ * the observed noise with a 2× margin to the nearest different floor.
  */
-const FLOOR_KEY_TOLERANCE_BITS = 8;
+const FLOOR_KEY_TOLERANCE_BITS = 16;
 
 /** Hamming distance over the 32-hex fingerprint. A malformed key matches nothing. */
 export function floorKeyDistance(a: string, b: string): number {

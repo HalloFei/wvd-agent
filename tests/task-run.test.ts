@@ -6,7 +6,7 @@ import type {
 } from '../src/contracts.ts';
 import { createTaskPolicy } from '../src/tasks/policy.ts';
 import { createTaskRunner } from '../src/tasks/runner.ts';
-import { isExpectedFloor, runSteps, TASK_KEYS } from '../src/tasks/steps.ts';
+import { floorKeyDistance, isExpectedFloor, runSteps, TASK_KEYS } from '../src/tasks/steps.ts';
 import { routePolicy } from '../src/policy/route.ts';
 
 const frame = (atMs = 0): Frame => ({
@@ -232,6 +232,32 @@ describe('createTaskRunner', () => {
     expect(recorder.calls).toEqual(['key 1 60']);
   });
 
+  it('survives one stale frame while it probes for the open map', async () => {
+    // Live 2026-11-02: a single `stale-frame` reply from the engine made the probe refuse, and the
+    // session ended at the exit every cycle. The probe retries like every other capture does.
+    const { env, recorder } = makeEnv({ observations: [mapObservation(), screen('dungeon')] });
+    let failures = 1;
+    const source = {
+      capture: async () => {
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error('capture timeout: stale-frame');
+        }
+        return env.capture();
+      },
+    };
+    const created = createTaskRunner({
+      task: task(),
+      source,
+      perceiver: { observe: env.observe },
+      actuator: env.actuator,
+      log: () => {},
+    });
+
+    expect(await created.runScript('exit')).toMatchObject({ ok: true });
+    expect(recorder.calls).toEqual(['key 1 60', 'tap 7,8']);
+  });
+
   it('does nothing for a script the task does not carry', async () => {
     const { created, recorder } = runner([screen('dungeon')], task({ exit: undefined }));
     expect(await created.runScript('exit')).toEqual({ ok: true, steps: 0, ms: 0 });
@@ -309,13 +335,28 @@ describe('createTaskPolicy', () => {
     expect(stopped.reason).toContain('0'.repeat(32));
   });
 
-  it('accepts the task floor within the 8-bit tolerance', () => {
+  it('accepts the task floor within the tolerance (R27b: 16 bits, measured 2026-11-02)', () => {
     // Two captures of 第三区-城内2F-, with and without the harken's glow behind the map.
     const clean = '0c0280000d6ff0000d7ffc0008c37000';
     const glow = '0c0280000d6ff8000d7ffc0008437000';
     const policy = createTaskPolicy(() => ({ id: 't', label: 't', floor: { titleKey: clean }, entry: script([]) }));
     expect(policy.next(state('dungeonmap', 2, glow)))
       .toEqual(routePolicy.next(state('dungeonmap', 2, glow)));
+  });
+
+  it('accepts the live 4F key the same floor produced from another camera, and still refuses 第三区', () => {
+    // 2026-11-02: the farm floor's map, re-opened from the menu, read 9 bits from the task's own key
+    // (the title strip carries the scene behind the translucent panel). The two collab floors read
+    // 30-31 bits apart on the same day, which is the gap the tolerance has to stay under.
+    const farm = '000000007f3ffe007ffeff00220bb600';
+    const live = '600004007f3ffe007ffefe0002032200';
+    const climb = '0c0280000d6ff0000d7ffc0008c37000';
+    expect(floorKeyDistance(farm, live)).toBe(9);
+    expect(floorKeyDistance(farm, climb)).toBe(31);
+
+    const policy = createTaskPolicy(() => ({ id: 't', label: 't', floor: { titleKey: farm }, entry: script([]) }));
+    expect(policy.next(state('dungeonmap', 2, live))).toEqual(routePolicy.next(state('dungeonmap', 2, live)));
+    expect(policy.next(state('dungeonmap', 2, climb))).toMatchObject({ kind: 'stop' });
   });
 
   it('turns the exit intent into the task script when there is one', () => {

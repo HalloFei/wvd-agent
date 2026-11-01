@@ -111,7 +111,7 @@ A gated "expect town" would time out on every session.
 So an entry script is executed *blind* — waits between taps — and the **floor gate is the only
 permission to farm**. It is enforced by the loop, not by the script: the map is the only surface
 that prints the floor and the loop is what opens it, so `createTaskPolicy` checks every map read
-against `floor.titleKey` (8-bit tolerance, R27b) and stops the session before the move it would
+against `floor.titleKey` (R27b's tolerance: 16 bits since 2026-11-02) and stops the session before the move it would
 authorize. The script proves the route up to the stair; the loop waits out the game-driven walk the
 last step started (its own arrival rule) and takes the gate from there. If the run lands anywhere
 but the expected floor, the gate fails and the session stops; it never sends a farm input. The
@@ -303,7 +303,7 @@ script a task may name.
 
 `createTaskPolicy(task, inner = routePolicy)`:
 
-1. **Floor gate** — if the observation is a `dungeonmap` whose `titleKey` is not the task's (8-bit
+1. **Floor gate** — if the observation is a `dungeonmap` whose `titleKey` is not the task's (16-bit
    tolerance), return `{ kind: 'stop', reason }` naming both keys. This runs on the frame the loop
    would steer from, before `inner.next` can yield a `move`.
 2. `inner.next(state)` — unchanged, so every existing test keeps its meaning.
@@ -349,7 +349,7 @@ the package root; an absolute path is taken as-is. Read per session, not at cons
   another tick; a stop during `enter` aborts it; the entry's walk holds the loop's first command
   until the scene stands still for `automoveStillSeconds` (`#handOffEntry`).
 - `tests/task-run.test.ts` (extend) — the decorator stops on a map that is not the task floor and
-  names both keys, accepts the task floor within the 8-bit tolerance, and passes everything else
+  names both keys, accepts the task floor within the tolerance, and passes everything else
   through unchanged.
 
 ### 7.13 Live proof (acceptance)
