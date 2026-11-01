@@ -240,17 +240,39 @@ describe('createTaskRunner', () => {
 });
 
 describe('createTaskPolicy', () => {
-  const state = (id: Observation['screen'], chests: number) => ({
-    observation: id === 'dungeonmap' ? mapObservation() : screen(id),
+  // A real 32-hex fingerprint: 'k' is not a hex digit and would read as a mismatch on its own.
+  const KEY = 'a'.repeat(32);
+  const state = (id: Observation['screen'], chests: number, mapKey = KEY) => ({
+    observation: id === 'dungeonmap' ? mapObservation(mapKey) : screen(id),
     willpower: [100],
     chestsRemaining: chests,
   });
 
-  it('passes every non-exit intent through unchanged', () => {
-    const withTask = createTaskPolicy(() => ({ id: 't', label: 't', floor: { titleKey: 'k' }, entry: script([]) }));
+  it('passes every non-exit intent through unchanged on the task floor', () => {
+    const withTask = createTaskPolicy(() => ({ id: 't', label: 't', floor: { titleKey: KEY }, entry: script([]) }));
     for (const id of ['dungeon', 'dungeonmap', 'combat', 'chest-qte', 'unknown'] as const) {
       expect(withTask.next(state(id, 2))).toEqual(routePolicy.next(state(id, 2)));
     }
+  });
+
+  it('stops on a map that is not the task floor, before the route can act on it', () => {
+    const withTask = createTaskPolicy(() => ({ id: 't', label: 't', floor: { titleKey: '0'.repeat(32) }, entry: script([]) }));
+    const stopped = withTask.next(state('dungeonmap', 2));
+    expect(stopped.kind).toBe('stop');
+    if (stopped.kind !== 'stop') return;
+    // Both keys are named, so the console says which floor it is standing on.
+    expect(stopped.reason).toContain('not the task floor');
+    expect(stopped.reason).toContain(KEY);
+    expect(stopped.reason).toContain('0'.repeat(32));
+  });
+
+  it('accepts the task floor within the 8-bit tolerance', () => {
+    // Two captures of 第三区-城内2F-, with and without the harken's glow behind the map.
+    const clean = '0c0280000d6ff0000d7ffc0008c37000';
+    const glow = '0c0280000d6ff8000d7ffc0008437000';
+    const policy = createTaskPolicy(() => ({ id: 't', label: 't', floor: { titleKey: clean }, entry: script([]) }));
+    expect(policy.next(state('dungeonmap', 2, glow)))
+      .toEqual(routePolicy.next(state('dungeonmap', 2, glow)));
   });
 
   it('turns the exit intent into the task script when there is one', () => {

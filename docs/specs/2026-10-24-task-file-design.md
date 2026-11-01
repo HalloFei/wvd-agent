@@ -109,10 +109,15 @@ depends on it.
 A gated "expect town" would time out on every session.
 
 So an entry script is executed *blind* — waits between taps — and the **floor gate is the only
-permission to farm**. If the run lands anywhere but the expected floor, the gate fails and the
-session stops; it never sends a farm input. The accepted risk is a mis-tap on the way in (the
-2026-10-24 miss-click landed on 诺森霍洛村 and was recoverable). Two mitigations: `dryRun`
-(config) logs every step without sending input, and the console shows the step index as it runs.
+permission to farm**. It is enforced by the loop, not by the script: the map is the only surface
+that prints the floor and the loop is what opens it, so `createTaskPolicy` checks every map read
+against `floor.titleKey` (8-bit tolerance, R27b) and stops the session before the move it would
+authorize. The script proves the route up to the stair; the loop waits out the game-driven walk the
+last step started (its own arrival rule) and takes the gate from there. If the run lands anywhere
+but the expected floor, the gate fails and the session stops; it never sends a farm input. The
+accepted risk is a mis-tap on the way in (the 2026-10-24 miss-click landed on 诺森霍洛村 and was
+recoverable). Two mitigations: `dryRun` (config) logs every step without sending input, and the
+console shows the step index as it runs.
 
 This is deliberately *not* "add a town recogniser" — that is a perceiver task with its own fixtures,
 and pretending otherwise would stall the task-file work behind it.
@@ -291,11 +296,16 @@ export type SessionOpen =
 
 `createTaskPolicy(task, inner = routePolicy)`:
 
-1. `inner.next(state)` — unchanged, so every existing test keeps its meaning.
-2. If the intent is `exit` and the task has an exit script → `{ kind: 'run-script', name: 'exit' }`.
-3. Otherwise pass the intent through.
+1. **Floor gate** — if the observation is a `dungeonmap` whose `titleKey` is not the task's (8-bit
+   tolerance), return `{ kind: 'stop', reason }` naming both keys. This runs on the frame the loop
+   would steer from, before `inner.next` can yield a `move`.
+2. `inner.next(state)` — unchanged, so every existing test keeps its meaning.
+3. If the intent is `exit` and the task has an exit script → `{ kind: 'run-script', name: 'exit' }`.
+4. Otherwise pass the intent through.
 
-No other rule; the floor gate ran in `enter`, and the session ends when the exit script returns.
+No other rule; the session ends when the exit script returns. The gate is not in `enter` because a
+blind script cannot wait out a game-driven walk, a fight or the 打开 prompt, and the map it would
+have to read is opened by the loop afterwards (see §7.2).
 
 ### 7.10 Config
 
@@ -329,7 +339,11 @@ the package root; an absolute path is taken as-is. Read per session, not at cons
   `town` fails `expect-timeout`; capture retried three times then `capture-unavailable`.
 - `tests/world.test.ts` (extend) — `enter` runs before the first capture; a failing `enter` pushes
   exactly one `wvd.stopped` and no tick; a successful exit ends the session `task-complete` without
-  another tick; a stop during `enter` aborts it.
+  another tick; a stop during `enter` aborts it; the entry's walk holds the loop's first command
+  until the scene stands still for `automoveStillSeconds` (`#handOffEntry`).
+- `tests/task-run.test.ts` (extend) — the decorator stops on a map that is not the task floor and
+  names both keys, accepts the task floor within the 8-bit tolerance, and passes everything else
+  through unchanged.
 
 ### 7.13 Live proof (acceptance)
 

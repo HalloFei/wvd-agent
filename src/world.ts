@@ -812,12 +812,42 @@ export class WvdWorld implements World {
           );
           return false;
         }
+        // The entry may end with a game-driven walk still under way (the 3F stair walks the party to
+        // 第四区). The loop may not command a walking party, so the hand-off starts the arrival
+        // bookkeeping with that walk: the first command waits for the scene to stand still.
+        this.#handOffEntry(this.#now());
       }
       if (this.#autoTick) this.#schedule();
       return true;
     } finally {
       this.#starting = false;
     }
+  }
+
+  /**
+   * Hand the party from a task entry script to the loop.
+   *
+   * A script is blind: its last step may start a game-driven walk (`自动移动` to a stair) and return
+   * while the party is still walking. The loop's own rule is one command at a time — a `move` owns
+   * the loop until the scene stands still — and the entry's walk is the same fact, so the hand-off
+   * starts that bookkeeping with `walking: true`. The first command then waits for arrival exactly as
+   * it does after the loop's own move, bounded by `automoveArrivalTimeoutMs`. The entry is progress,
+   * so the stall clock restarts here too.
+   *
+   * Nothing is sent. If the walk was already over, the hand-off releases after the same stillness
+   * window every arrival uses.
+   */
+  #handOffEntry(now: number): void {
+    this.#lastProgressAtMs = now;
+    this.#inFlight = {
+      kind: 'move',
+      fromScreen: 'dungeon',
+      sinceMs: now,
+      evidenceAtMs: now,
+      signature: null,
+      walking: true,
+      readAtPress: null,
+    };
   }
 
   /**
@@ -1740,6 +1770,7 @@ export class WvdWorld implements World {
             );
             return;
           }
+          this.#handOffEntry(this.#now());
           this.#host?.log.info(`wvd: cycle ${this.#cyclesDone} done; re-entered for cycle ${this.#cyclesDone + 1}`);
           return;
         }

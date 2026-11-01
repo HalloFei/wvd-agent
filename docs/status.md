@@ -315,6 +315,28 @@ Measured live with the game open (1920×1080):
   branch. But `travel vnh` from the world map opened there still misses 诺森霍洛村 after 3 zoom-outs,
   44 serpentine drags and 2 zoom-ins; the town-to-map path is not yet proven. Pinned as a p1 board card.
 
+## Round 7 — the entry hands the party to the loop (2026-11-01)
+
+The 2026-10-31 entry could not satisfy its own 4F gate: `expectFloor` only matches while the map is
+open (`src/tasks/steps.ts`), and the stair's `自动移动` lands the party in the 3-D view — the live
+frames for that leg also show the 打开 prompt and a battle. A blind script cannot wait out a
+game-driven walk, fight, or dismiss a farm prompt, and the map is opened by the loop after it. So the
+gate moved to where the floor is read:
+
+- `createTaskPolicy` checks **every** `dungeonmap` read against `task.floor.titleKey` (8-bit
+  tolerance) and returns a `stop` intent naming both keys before the route can move from that map.
+- The World's `#handOffEntry` seeds the existing in-flight arrival bookkeeping with the walk the
+  entry's last step started (`walking: true`), so the loop's first command waits for stillness
+  exactly as it does after its own `move`; the entry is progress, so the stall clock restarts there.
+- `tasks/ffxi-4f.json` no longer ends with the 4F `expectFloor`; the entry ends where the stair walk
+  begins. No contract changed (`Intent.stop.reason` was already a string; the task schema is
+  unchanged).
+
+Tests: the decorator's mismatch/tolerance cases and the loop's hold-until-arrival case
+(`tests/task-run.test.ts`, `tests/world.test.ts`); the committed task file still parses
+(`tests/task-schema.test.ts`). 103 targeted tests, typecheck clean. Live session: pending — start in
+诺森霍洛村 with `worlds.wvd.taskFile = tasks/ffxi-4f.json`, `cycles = 3`.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

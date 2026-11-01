@@ -24,6 +24,7 @@ import type {
   Observation,
   Perceiver,
   Point,
+  SessionTask,
 } from '../src/contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 import { acceptChestPrompt, cancelQte, DISARM_SCAN, enableBattleAuto, reenterChest, tapLoot } from '../src/actions/chest.ts';
@@ -327,6 +328,8 @@ function makeWorld(options: {
   snapshotGate?: Promise<void>;
   /** Held open to keep two concurrent startSession calls overlapping. */
   openSessionGate?: Promise<void>;
+  /** The task a session runs, when the test exercises the entry hand-off. */
+  task?: SessionTask;
   host?: FakeHost;
   /**
    * The QTE timing sub-loop. The real one unless a test scripts it: a bar on screen would then
@@ -385,7 +388,7 @@ function makeWorld(options: {
     openSession: async () => {
       openSessionCalls += 1;
       if (options.openSessionGate) await options.openSessionGate;
-      return { ok: true, session };
+      return options.task === undefined ? { ok: true, session } : { ok: true, session, task: options.task };
     },
     autoTick: false,
     now: clock.now,
@@ -914,6 +917,52 @@ describe('the command gates', () => {
     await tick;
 
     expect(actuator.calls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The task entry hands the party to the loop
+// ---------------------------------------------------------------------------------------------
+
+describe('the task entry hand-off', () => {
+  /** An entry that starts no walk: the test walks the fake frame clock itself. */
+  const entryTask = (entered: () => void): SessionTask => ({
+    enter: async () => {
+      entered();
+      return { ok: true, steps: 1, ms: 1 };
+    },
+    runScript: async () => ({ ok: true, steps: 0, ms: 0 }),
+    abort: () => {},
+  });
+
+  it('holds the first command until the walk the entry started arrives', async () => {
+    let enters = 0;
+    const { world, host, actuator, source, clock } = makeWorld({
+      observation: dungeonView,
+      task: entryTask(() => { enters += 1; }),
+    });
+    await started(world, host);
+    expect(enters).toBe(1);
+
+    // The entry's 自动移动 is under way: every frame is a new scene, so the loop sends nothing.
+    source.moving = true;
+    await world.tick();
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual([]);
+
+    // The party stands: the stillness window starts on the frame it stopped on, and only a full
+    // automoveStillSeconds releases the walk — the same arrival rule as the loop's own move.
+    source.moving = false;
+    await world.tick();
+    clock.advance(4_900);
+    await world.tick();
+    expect(actuator.calls).toEqual([]);
+
+    clock.advance(200);
+    await world.tick();
+    // Arrival releases the hand-off and the route's first command goes out in the same tick.
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
   });
 });
 

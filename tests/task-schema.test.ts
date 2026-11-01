@@ -25,11 +25,13 @@ describe('parseTask', () => {
     // The live 2026-10-31 4F key; the older fixture key differs by three bits and is also accepted.
     expect(task.floor.titleKey).toBe('000000007f3ffe007ffeff00220bb600');
 
-    // The stair-up leg is gated on 第三区's key, the arrival on 第四区's.
+    // The stair-up leg is gated on 第三区's key. The 第四区 gate is the loop's now: the task policy
+    // checks every map read against the task floor, because a blind script cannot wait out the
+    // stair's game-driven walk and the map is opened by the loop after it. The entry ends where the
+    // walk begins.
     const threeF = '0c0280000d6ff0000d7ffc0008c37000';
-    const fourF = '000000007f3ffe007ffeff00220bb600';
     expect(task.entry.steps).toContainEqual({ op: 'expectFloor', titleKey: threeF, timeoutMs: 5000 });
-    expect(task.entry.steps.at(-1)).toEqual({ op: 'expectFloor', titleKey: fourF, timeoutMs: 15000 });
+    expect(task.entry.steps.at(-1)).toEqual({ op: 'wait', ms: 8000 });
 
     // The exit walks back through both floors, harkens out, then returns to town.
     expect(task.exit).toBeDefined();

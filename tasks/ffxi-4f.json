@@ -17,8 +17,7 @@
       { "op": "tap", "at": [960, 158] },
       { "op": "wait", "ms": 900 },
       { "op": "tap", "at": [960, 236] },
-      { "op": "wait", "ms": 8000 },
-      { "op": "expectFloor", "titleKey": "000000007f3ffe007ffeff00220bb600", "timeoutMs": 15000 }
+      { "op": "wait", "ms": 8000 }
     ]
   },
   "exit": {
