@@ -470,18 +470,42 @@ describe('the tick', () => {
     await world.tick();
     expect(actuator.calls).toEqual(walkOne());
 
-    // automoveStillSeconds passes with the screen unchanged: the command gave up and is not re-sent.
+    // automoveStillSeconds passes with the screen unchanged: the walk never started, so the chest is
+    // unreachable and the same L is not pressed again. Since 2026-11-02 the farm does not wait here —
+    // the only chest is skipped, and the next stage is the exit (operator rule).
     clock.advance(5000);
     await world.tick();
-    expect(actuator.calls).toEqual(walkOne());
+    expect(actuator.calls).toEqual([...walkOne(), `key ${SCAN.F} 60`]);
+    expect(perceiver.observes).toBe(3);
+  });
 
-    // The farm advanced — the party is somewhere else on the map — so a command may be sent again,
-    // aimed from the new readout: the chevron has scrolled with the party.
+  it('sends a command that changed nothing again once the farm advances', async () => {
+    // The guard is per screen epoch: a map that never opened is not pressed twice, but a readout that
+    // moves is the farm advancing, and a command may be sent again from it.
+    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: dungeonView });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+
+    // mapOpenTimeoutMs passes with the 3-D view still up: the map command changed nothing.
+    clock.advance(3_100);
+    await world.tick();
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+
+    // The farm advances: the map is up and the party moved. The guard clears, and the loop acts on
+    // the new readout instead of staying silent.
     const moved = { ...dungeonMap, map: { ...mapOf(dungeonMap), player: { x: 12, y: 18 } } };
     perceiver.observation = moved;
     clock.advance(100);
     await world.tick();
-    expect(actuator.calls).toEqual([...walkOne(), ...walkCalls(mapOf(moved))]);
+    expect(actuator.calls).toEqual([
+      `key ${SCAN.G} 60`,
+      `key ${SCAN.G} 60`,
+      ...walkCalls(mapOf(moved)),
+    ]);
   });
 
   it('does not open a second engine for a second concurrent startSession', async () => {
@@ -1990,5 +2014,51 @@ describe('the orientation', () => {
     await world.tick();
     expect(calls).not.toContain('enter');
     expect(travelCalls).toEqual(['ffxi-gcn']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// A chest the party cannot walk to (operator rule, 2026-11-02)
+// ---------------------------------------------------------------------------------------------
+
+describe('a chest the party cannot walk to', () => {
+  const near: Point = { x: 14, y: 18 };
+  const far: Point = { x: 10, y: 10 };
+  const twoChests: Observation = {
+    screen: 'dungeonmap',
+    atMs: 100,
+    confidence: 0.9,
+    map: {
+      floorTitle: 'B1F',
+      titleKey: '0001c00003e6c00003efe00003874000',
+      player: { x: 19, y: 21 },
+      origin: { x: 960, y: 540 },
+      icons: [{ kind: 'chest', at: near }, { kind: 'chest', at: far }],
+    },
+  };
+
+  it('skips it, aims at the next chest, and leaves when none is left', async () => {
+    const { world, host, actuator, clock } = makeWorld({ observation: twoChests });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(walkCalls(mapOf(twoChests), near));
+    clock.advance(100);
+    await world.tick(); // the stillness baseline
+    expect(actuator.calls).toEqual(walkCalls(mapOf(twoChests), near));
+
+    // The party never moves: the tap raised no 自動移動 element, so the scene stays still. The skip is
+    // acted on in the same tick: the next walk is aimed at the other chest.
+    clock.advance(5_100);
+    await world.tick();
+    expect(actuator.calls).toEqual([...walkCalls(mapOf(twoChests), near), ...walkCalls(mapOf(twoChests), far)]);
+
+    // Both are on the skip list now: the farm's next stage is the exit.
+    clock.advance(100);
+    await world.tick();
+    clock.advance(5_100);
+    await world.tick();
+    expect(actuator.calls.at(-1)).toBe(`key ${SCAN.F} 60`);
+    expect(host.logRecords.some((line) => line.message.includes('skipping it this cycle'))).toBe(true);
   });
 });

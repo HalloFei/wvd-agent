@@ -244,6 +244,12 @@ export interface RouteState {
   readonly observation: Observation;
   readonly willpower: readonly number[];
   readonly chestsRemaining: number;
+  /**
+   * The cells whose walk the farm gave up on this cycle: the tap raised no 自动移動 element and the
+   * party did not move, so the game has no path there. The route never aims at one again, and a map
+   * whose chests are all here is done — the next stage is the exit (rest, then a fresh cycle).
+   */
+  readonly unreachable: readonly Point[];
 }
 
 export interface FarmPolicy { next(state: RouteState): Intent; }

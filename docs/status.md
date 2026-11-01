@@ -441,6 +441,20 @@ read `600004007f3ffe007ffefe0002032200` against the task's `000000007f3ffe007ffe
 9 bits, outside R27b's 8; the two collab floors read 30 and 31 bits apart the same day, so the
 tolerance is 16 now. Without that, the orientation would have refused the floor it was standing on.
 
+## Unreachable chests are skipped (2026-11-02)
+
+The operator's rule, after the live walk missed on 第四区: a chest whose walk never starts — the tap
+raises no 自動移動 element and the party does not move — has no path to it, so the farm skips it and
+loots another; when none is left it takes its next stage (the exit script leaves the dungeon and
+returns to the rest town), and the next cycle tries the chest again.
+
+`RouteState.unreachable` (contracts §6) carries the cells so the route stays pure: it never aims at
+one again, and answers `exit` when a floor's chests are all on the list. `world.ts` records the cell
+when a `move` is given up (`#gaveUp`) instead of marking the command failed — which is what used to
+wedge the farm: one miss, and the loop refused to move until the farm advanced, and it never did.
+
+612 tests (`tests/route.test.ts` skip cases, `tests/world.test.ts` the skip-then-next-chest sequence,
+and the earlier "sends one command" test now ends at the exit instead of at silence), tsc clean.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

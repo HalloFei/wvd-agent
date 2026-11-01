@@ -411,6 +411,11 @@ interface InFlight {
   /** The map readout at press time, so a party walking under an open map is not "no effect". */
   readonly readAtPress: MapRead | null;
   /**
+   * The cell a `move` was aimed at. A walk that never started is a chest the game cannot path to,
+   * and this is what lets the loop name it and skip it next time (operator rule 2026-11-02).
+   */
+  readonly target: Point | null;
+  /**
    * The screens that answer this command. Absent keeps the default rule ("any screen but the one it
    * was pressed on"); present, only those screens answer — a modal sequence whose next frame is not
    * the answer, e.g. a QTE cancel answered by the 打开 prompt coming back.
@@ -483,6 +488,12 @@ export class WvdWorld implements World {
   #captureFailures = 0;
   #willpower: readonly number[] = [];
   #chestsRemaining = INITIAL_CHEST_BUDGET;
+  /**
+   * The cells whose walk was given up on this cycle: no 自動移動 element, no movement, no path
+   * (operator rule 2026-11-02). The route skips them and exits once none is left; a new cycle
+   * clears the list, so a chest that failed once is attempted again on the next visit.
+   */
+  #unreachable: Point[] = [];
   /** Rerolls spent on the chest's QTE; reset when a chest starts or ends (operator rule). */
   #qteRerolls = 0;
   /** The pass the policy saw on the last decision, recorded only while the baseline is filling. */
@@ -834,6 +845,7 @@ export class WvdWorld implements World {
       this.#captureFailures = 0;
       this.#willpower = [];
       this.#chestsRemaining = INITIAL_CHEST_BUDGET;
+      this.#unreachable = [];
       this.#inFlight = null;
       this.#failed = new Set();
       this.#openerRefusal = null;
@@ -906,6 +918,7 @@ export class WvdWorld implements World {
       signature: null,
       walking: true,
       readAtPress: null,
+      target: null,
     };
   }
 
@@ -998,6 +1011,7 @@ export class WvdWorld implements World {
       observation,
       willpower: this.#willpower,
       chestsRemaining: this.#chestsRemaining,
+      unreachable: this.#unreachable,
     };
     const spent = this.#spentThisHour(now);
     // A transition is unnamed for a few ticks and resolves by itself: the clock starts on the first
@@ -1330,11 +1344,7 @@ export class WvdWorld implements World {
         return false;
       }
       this.#inFlight = null;
-      this.#failed.add(inFlight.kind);
-      this.#host?.log.warn(
-        `wvd: ${inFlight.kind} changed nothing; not sending it again until the farm advances`,
-        { stillMs, waitedMs },
-      );
+      this.#gaveUp(inFlight, { stillMs, waitedMs });
       return false;
     }
 
@@ -1342,14 +1352,38 @@ export class WvdWorld implements World {
     const timeoutMs = isWalk ? this.#cfg.automoveArrivalTimeoutMs : this.#cfg.mapOpenTimeoutMs;
     if (waitedMs >= Math.max(1, timeoutMs)) {
       this.#inFlight = null;
-      this.#failed.add(inFlight.kind);
-      this.#host?.log.warn(
-        `wvd: ${inFlight.kind} never ${isWalk ? 'arrived' : 'opened the map'}; not sending it again until the farm advances`,
-        { waitedMs, timeoutMs },
-      );
+      this.#gaveUp(inFlight, { waitedMs, timeoutMs });
       return false;
     }
     return true;
+  }
+
+  /**
+   * A command that changed nothing. Two outcomes, and the difference is the operator's rule
+   * (2026-11-02):
+   *
+   * - a **`move` that never started** is a chest the game has no path to — the tap raised no 自動移動
+   *   element and the party did not move. Its cell goes on the cycle's skip list, so the route aims
+   *   at another chest (or exits when none is left) instead of treating the whole farm as stuck. The
+   *   command is *not* recorded failed: the next move is a different chest, not a blind retry.
+   * - every other command is recorded failed, as before: it is not re-sent until the farm advances.
+   */
+  #gaveUp(inFlight: InFlight, evidence: Record<string, number>): void {
+    const target = inFlight.target;
+    if (inFlight.kind === 'move' && target !== null) {
+      const known = this.#unreachable.some((cell) => cell.x === target.x && cell.y === target.y);
+      if (!known) this.#unreachable.push(target);
+      this.#host?.log.warn(
+        `wvd: the chest at ${target.x},${target.y} did not move the party; skipping it this cycle`,
+        evidence,
+      );
+      return;
+    }
+    this.#failed.add(inFlight.kind);
+    this.#host?.log.warn(
+      `wvd: ${inFlight.kind} changed nothing; not sending it again until the farm advances`,
+      evidence,
+    );
   }
 
   /**
@@ -1559,6 +1593,7 @@ export class WvdWorld implements World {
    */
   #resetCycle(): void {
     this.#chestsRemaining = INITIAL_CHEST_BUDGET;
+    this.#unreachable = [];
     this.#lastMapRead = null;
     this.#lastScreen = null;
     this.#inFlight = null;
@@ -1686,6 +1721,7 @@ export class WvdWorld implements World {
           signature: null,
           walking: false,
           readAtPress: null,
+          target: null,
           answers: ['chest-prompt'],
           whileWaiting: {
             when: ['dungeon', 'unknown'],
@@ -1755,7 +1791,7 @@ export class WvdWorld implements World {
           return;
         }
         const at = tileOnScreen(map, intent.target);
-        await this.#press('move', fromScreen, () => this.#commands.automoveToTile(at));
+        await this.#press('move', fromScreen, () => this.#commands.automoveToTile(at), intent.target);
         return;
       }
       case 'exit':
@@ -2009,6 +2045,7 @@ export class WvdWorld implements World {
     kind: 'open-map' | 'move' | 'exit' | 'open-chest' | 'fight',
     fromScreen: ScreenId | null,
     command: () => Promise<ActionResult>,
+    target: Point | null = null,
   ): Promise<void> {
     if (this.#cfg.dryRun) {
       this.#host?.log.info(`wvd: dry run, would ${kind}`);
@@ -2033,6 +2070,7 @@ export class WvdWorld implements World {
       // A walk pressed on the map may keep the map open (navigation §3d), so the readout it started
       // from is the second way to see the party move.
       readAtPress: kind === 'open-map' ? null : this.#lastMapRead,
+      target,
     };
   }
 

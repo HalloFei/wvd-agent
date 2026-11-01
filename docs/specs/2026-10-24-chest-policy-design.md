@@ -205,6 +205,28 @@ the battle policy rather than reporting a parse failure.
 There is nothing special: tap through the loot lines until no new loot info appears, then return to
 the route. The chest is consumed.
 
+## 8b. A chest the party cannot walk to is skipped (operator rule, 2026-11-02)
+
+The walk to a chest is the map's pointer-mode gesture: `R`, the cell, the 自動移動 element. When the
+game has no path to the cell, the element never appears, the tap lands on the map, and the party
+does not move. Measured live 2026-11-02 on 第四区: the chest cell was tapped at (924,154) and the
+element's usual 81 px rise put the second tap on the panel's title bar; nothing moved.
+
+Before this rule that single miss **wedged the farm**: the walk was recorded "changed nothing" and
+not re-sent until the farm advanced, which it never did, so the session stalled out.
+
+The rule: **a walk that never started marks its cell unreachable for the cycle.**
+
+- `RouteState.unreachable` carries the cells; the route never aims at one again.
+- The nearest *reachable* chest is the target; a floor whose chests are all unreachable is done.
+- Done means the exit: the task's exit script leaves the dungeon and returns to the rest town, and
+  the next cycle clears the list — a chest that failed once is attempted again on the next visit.
+- A command that changed nothing for any *other* reason keeps the old rule (it is not re-sent until
+  the farm advances); only a failed chest walk is a skip.
+
+The cost is deliberate: a transient miss (an input swallowed while the map fades in) also costs the
+chest for that cycle. Losing one chest for one visit is cheaper than a stuck farm.
+
 ## 8a. Detector constants learned the hard way
 
 Each of these cost a live attempt to discover, so they are recorded rather than rediscovered:

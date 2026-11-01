@@ -56,11 +56,17 @@ export function nextIntent(state: RouteState): Intent {
       return state.chestsRemaining > 0 ? { kind: 'open-map' } : { kind: 'exit' };
     case 'dungeonmap': {
       if (state.chestsRemaining <= 0) return { kind: 'exit' };
+      // A chest the farm already tried and could not walk to is not a target: the tap raised no
+      // 自动移動 element and the party never moved, so the game has no path there (operator rule
+      // 2026-11-02). Skipping it is what turns one unreachable chest from a wedge into a detour.
+      const unreachable = new Set(state.unreachable.map((cell) => `${cell.x},${cell.y}`));
       const chests = observation.map.icons
         .filter((icon) => icon.kind === 'chest')
-        .map((icon) => icon.at);
+        .map((icon) => icon.at)
+        .filter((at) => !unreachable.has(`${at.x},${at.y}`));
       if (chests.length > 0) return { kind: 'move', target: nearest(observation.map.player, chests) };
-      // the floor shows no chest although one is budgeted: the exit is the next information source
+      // No reachable chest left — the floor shows none, or every one it shows is unreachable: the
+      // exit is the next stage, exactly as it is when the chest budget is spent.
       return { kind: 'exit' };
     }
     case 'town':

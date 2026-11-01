@@ -315,6 +315,7 @@ describe('createTaskPolicy', () => {
     observation: id === 'dungeonmap' ? mapObservation(mapKey) : screen(id),
     willpower: [100],
     chestsRemaining: chests,
+    unreachable: [],
   });
 
   it('passes every non-exit intent through unchanged on the task floor', () => {

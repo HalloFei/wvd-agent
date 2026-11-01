@@ -5,8 +5,8 @@ import { nextIntent, routePolicy } from '../src/policy/route.ts';
 const AT = 1_000;
 const CONFIDENCE = 0.9;
 
-function routeState(observation: Observation, willpower: number[], chestsRemaining: number): RouteState {
-  return { observation, willpower, chestsRemaining };
+function routeState(observation: Observation, willpower: number[], chestsRemaining: number, unreachable: Point[] = []): RouteState {
+  return { observation, willpower, chestsRemaining, unreachable };
 }
 
 /** A screen with no payload, at any confidence. */
@@ -109,6 +109,30 @@ describe('the FFXI 4F route state machine', () => {
   it('leaves by the exit when the map shows no chest although one is budgeted', () => {
     expect(nextIntent(routeState(map({ x: 10, y: 10 }, []), [80], 1)))
       .toEqual({ kind: 'exit' });
+  });
+
+  // --- a chest the party cannot walk to (operator rule, 2026-11-02) -----------------------
+
+  it('never aims at a chest the farm found unreachable', () => {
+    const near = { kind: 'chest', at: { x: 11, y: 11 } } as const;
+    const far = { kind: 'chest', at: { x: 19, y: 21 } } as const;
+    // The nearer one is on the skip list, so the walk is aimed at the other.
+    expect(nextIntent(routeState(map({ x: 10, y: 10 }, [far, near]), [80], 2, [near.at])))
+      .toEqual({ kind: 'move', target: far.at });
+  });
+
+  it('leaves by the exit once every chest the map shows is unreachable', () => {
+    const a = { kind: 'chest', at: { x: 11, y: 11 } } as const;
+    const b = { kind: 'chest', at: { x: 19, y: 21 } } as const;
+    expect(nextIntent(routeState(map({ x: 10, y: 10 }, [a, b]), [80], 2, [a.at, b.at])))
+      .toEqual({ kind: 'exit' });
+  });
+
+  it('keeps the skip list to cells: one blocked chest does not hide another cell', () => {
+    const a = { kind: 'chest', at: { x: 11, y: 11 } } as const;
+    const b = { kind: 'chest', at: { x: 11, y: 12 } } as const;
+    expect(nextIntent(routeState(map({ x: 10, y: 10 }, [a, b]), [80], 2, [a.at])))
+      .toEqual({ kind: 'move', target: b.at });
   });
 
   it('fights on a combat screen', () => {
