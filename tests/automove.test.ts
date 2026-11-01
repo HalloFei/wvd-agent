@@ -1,5 +1,7 @@
+import { readFile } from 'node:fs/promises';
+import jpeg from 'jpeg-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ActionResult, Actuator, Point } from '../src/contracts.ts';
+import type { ActionResult, Actuator, Frame, Point } from '../src/contracts.ts';
 import { SCAN, automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 
 /** One `holdKey` call, as the fake actuator saw it. */
@@ -178,5 +180,52 @@ describe('the automove command chain (navigation §3d)', () => {
       { scan: SCAN.exit, holdMs: configured },
       { scan: SCAN.pointer, holdMs: configured },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The 自動移動 element: the walk looks at it instead of assuming where it is (2026-11-02)
+// ---------------------------------------------------------------------------------------------
+
+describe('the 自動移動 element', () => {
+  /** A frame from a committed live capture. */
+  async function liveFrame(path: string): Promise<Frame> {
+    const bytes = await readFile(new URL(path, import.meta.url));
+    const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+    const image = { data: new Uint8Array(decoded.data), width: decoded.width, height: decoded.height };
+    return { atMs: 1_000, width: decoded.width, height: decoded.height, toRgba: async () => image };
+  }
+
+  it('taps the pill where the game drew it, not 81 px above the cell', async () => {
+    // Live 2026-11-02, the cell north of the party: a tap at (1248,766) raised the pill, whose glyph
+    // sits 36 px left of and 78 px above the tap. The old fixed rise would have tapped (1248,685).
+    const frame = await liveFrame('../testdata/nav-2026-11-02-automove/element-over-neighbour-cell.jpg');
+    const actuator = fakeActuator();
+    const tile = { x: 1_248, y: 766 };
+
+    const result = await automoveToTile(actuator, tile, PRESS_MS, {
+      capture: async () => frame,
+      waitMs: 60,
+      pollMs: 10,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(actuator.taps).toEqual([tile, { x: 1_212, y: 690 }]);
+  });
+
+  it('refuses a cell whose tap raised no element, and never taps a second time', async () => {
+    // The same map with no pill: the chest cell at (924,154) is 18 rows up, the game has no path.
+    const frame = await liveFrame('../testdata/nav-2026-11-02-4f-top-edge/map-player-20-5.jpg');
+    const actuator = fakeActuator();
+    const tile = { x: 1_248, y: 766 };
+
+    const result = await automoveToTile(actuator, tile, PRESS_MS, {
+      capture: async () => frame,
+      waitMs: 30,
+      pollMs: 10,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'timeout' });
+    expect(actuator.taps).toEqual([tile]);
   });
 });

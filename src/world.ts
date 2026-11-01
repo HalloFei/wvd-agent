@@ -1371,17 +1371,26 @@ export class WvdWorld implements World {
   #gaveUp(inFlight: InFlight, evidence: Record<string, number>): void {
     const target = inFlight.target;
     if (inFlight.kind === 'move' && target !== null) {
-      const known = this.#unreachable.some((cell) => cell.x === target.x && cell.y === target.y);
-      if (!known) this.#unreachable.push(target);
-      this.#host?.log.warn(
-        `wvd: the chest at ${target.x},${target.y} did not move the party; skipping it this cycle`,
-        evidence,
-      );
+      this.#skip(target, 'the walk never started', evidence);
       return;
     }
     this.#failed.add(inFlight.kind);
     this.#host?.log.warn(
       `wvd: ${inFlight.kind} changed nothing; not sending it again until the farm advances`,
+      evidence,
+    );
+  }
+
+  /**
+   * A cell the game will not walk to goes on this cycle's skip list (operator rule, 2026-11-02): the
+   * route aims at the next chest, and a floor whose chests are all here is done — the exit is the next
+   * stage. It is not a failed command: the next `move` is a different chest, not a blind retry.
+   */
+  #skip(target: Point, why: string, evidence: Record<string, number> = {}): void {
+    const known = this.#unreachable.some((cell) => cell.x === target.x && cell.y === target.y);
+    if (!known) this.#unreachable.push(target);
+    this.#host?.log.warn(
+      `wvd: the chest at ${target.x},${target.y} cannot be walked to (${why}); skipping it this cycle`,
       evidence,
     );
   }
@@ -2053,6 +2062,14 @@ export class WvdWorld implements World {
     }
     const result = await command();
     if (!result.ok) {
+      // A walk the game refuses is a cell it has no path to — no 自動移動 element was raised
+      // (measured 2026-11-02). Skip it and aim elsewhere; do not mark `move` failed, which is what
+      // used to wedge the farm until the next advancement.
+      if (kind === 'move' && target !== null) {
+        const why = result.detail ?? result.reason;
+        this.#skip(target, why);
+        return;
+      }
       this.#failed.add(kind);
       this.#host?.log.warn(`wvd: could not ${kind}`, { reason: result.reason, detail: result.detail ?? null });
       return;

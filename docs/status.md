@@ -455,6 +455,34 @@ wedge the farm: one miss, and the loop refused to move until the farm advanced, 
 
 612 tests (`tests/route.test.ts` skip cases, `tests/world.test.ts` the skip-then-next-chest sequence,
 and the earlier "sends one command" test now ends at the exit instead of at silence), tsc clean.
+## The 自動移動 element is found, not assumed (2026-11-02)
+
+The walk tapped a fixed 81 px above the clicked cell. On 第四区 that was wrong twice over: a tile near
+the panel's top edge put the tap on the title bar, and a cell the game has no path to raises no
+element at all. Both looked the same to the loop — the command "changed nothing" — which is what
+stalled every live run tonight.
+
+Measured with a new burst probe (`scripts/automove-burst.ts`: one process, tap, then six frames at
+~120 ms, which the per-command CLI could never do): tapping the cell north of the party at (1248,766)
+raised the pill over (1182,672)-(1322,706), its glyph 36 px left and 78 px above the tap at
+(1212,690), and clicking the glyph walked the party. Tapping the chest cell at (924,154) raised
+**nothing**.
+
+`perception/automove.ts` matches that glyph — 28x28, generated from the frame by
+`scripts/extract-automove-template.ts`, scoring 1.0 with the pill and at most 0.28 without, floor 0.7 —
+in a band around the clicked tile. `automoveToTile` taps the element where the game drew it (the 81 px
+rise stays as the fallback for a caller with no frame source) and returns a typed failure when none
+appears. The World turns that failure into the same skip the 2026-11-02 rule uses, so an unreachable
+chest costs one tick instead of a stalled session. 615 tests, tsc clean.
+
+**Live, same night.** The World skipped the chest at 12,19 twice —
+`the chest at 12,19 cannot be walked to (the tile raised no 自動移動 element); skipping it this cycle`
+— and went to the exit. The harken's 归还 needed a **second tap** (the first only focused the row),
+so `tasks/ffxi-4f.json` now taps it, waits 800 ms and taps again; after that the party reached
+Dungeon Select and `travel vnh` returned it to the rest town.
+
+Two perception gaps met on the way and are pinned separately: the G-menu 3-D view is `unknown`
+(`t-mvy23qe2-nszsfl`) and the rest town's arrival dialogue is named `loot` (`t-mvy4482...`).
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

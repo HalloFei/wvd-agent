@@ -203,7 +203,15 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     commands: {
       // `pressHoldMs` is read per command, like every other key this World owns (§0.3).
       openMap: () => openMap(actuator, pressHoldMs()),
-      automoveToTile: (at) => automoveToTile(actuator, at, pressHoldMs()),
+      // The walk finds the 自動移動 element instead of tapping a fixed 81 px above the cell: near the
+      // panel's top edge that rise lands on the title bar, and a cell with no path raises nothing
+      // (measured 2026-11-02). The frame comes from the live session, like the orientation's travel.
+      automoveToTile: (at) => {
+        const session = live;
+        return automoveToTile(actuator, at, pressHoldMs(), session === null
+          ? undefined
+          : { capture: () => session.source.capture() });
+      },
       automoveToExit: () => automoveToExit(actuator, pressHoldMs()),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),

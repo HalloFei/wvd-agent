@@ -23,7 +23,8 @@
  * `ActionResult` unchanged: a `rejected` press (the game is not foreground) stops the chain and is
  * handed back as the answer, never retried and never thrown.
  */
-import type { ActionResult, Actuator, Point } from '../contracts.ts';
+import type { ActionResult, Actuator, Frame, Point } from '../contracts.ts';
+import { findAutoMoveElement } from '../perception/automove.ts';
 
 /** The scan codes the dungeon map's legend prints (navigation §3d), as Windows set-1 codes. */
 export const SCAN = {
@@ -60,10 +61,27 @@ const POINTER_SETTLE_MS = 100;
 const POPUP_SETTLE_MS = 100;
 
 /**
- * How far above the clicked tile the 自动移动 element is drawn, in device pixels: 79–84 measured on
- * 2026-10-24. The mid-point keeps the tap inside the element for every measured instance.
+ * How far above the clicked tile the 自动移动 element was drawn, in device pixels: 79-84 measured on
+ * 2026-10-24 on mid-panel tiles. It is only the fallback for a caller that cannot look now: the
+ * command finds the element itself (perception/automove.ts, measured 2026-11-02).
  */
 const POPUP_RISE_PX = 81;
+
+/**
+ * What the walk needs to see the element instead of assuming where it is: one capture of the map,
+ * and how long it may take to be drawn. No element means the cell has no path — the game only
+ * raises the pill for a cell it can walk to (measured 2026-11-02).
+ */
+export interface AutoMoveProbe {
+  readonly capture: () => Promise<Frame>;
+  /** How long the pill may take to appear. Measured: present 120 ms after the tap. */
+  readonly waitMs?: number;
+  readonly pollMs?: number;
+}
+
+/** How long to look for the element, and how often: four polls inside half a second. */
+const ELEMENT_WAIT_MS = 450;
+const ELEMENT_POLL_MS = 100;
 
 /** Resolve after `ms`. The only timing this module owns; it reads no clock and imports none. */
 function settle(ms: number): Promise<void> {
@@ -105,6 +123,7 @@ export async function automoveToTile(
   actuator: Actuator,
   at: Point,
   holdMs: number = DEFAULT_HOLD_MS,
+  probe?: AutoMoveProbe,
 ): Promise<ActionResult> {
   const pointer = await press(actuator, SCAN.pointer, holdMs);
   if (!pointer.ok) return pointer;
@@ -112,9 +131,36 @@ export async function automoveToTile(
 
   const tile = await actuator.tap(at);
   if (!tile.ok) return tile;
-  await settle(POPUP_SETTLE_MS);
+  if (probe === undefined) {
+    // A caller that cannot look keeps the measured rise: blind, but it is all it has.
+    await settle(POPUP_SETTLE_MS);
+    return actuator.tap({ x: at.x, y: at.y - POPUP_RISE_PX });
+  }
+  // The element's own position, not a fixed rise: a cell near the panel's top edge has no room
+  // above it, and a cell the game cannot walk to raises no element at all (live, 2026-11-02). Both
+  // answer the same way — the walk is refused, and the World skips that chest.
+  const element = await waitForElement(probe, at);
+  if (element === null) {
+    return { ok: false, reason: 'timeout', detail: 'the tile raised no 自动移動 element' };
+  }
+  return actuator.tap(element);
+}
 
-  return actuator.tap({ x: at.x, y: at.y - POPUP_RISE_PX });
+/** The element the tap raised, or null if none was drawn before the deadline. */
+async function waitForElement(probe: AutoMoveProbe, near: Point): Promise<Point | null> {
+  const deadline = Date.now() + Math.max(1, probe.waitMs ?? ELEMENT_WAIT_MS);
+  const pollMs = Math.max(1, probe.pollMs ?? ELEMENT_POLL_MS);
+  for (;;) {
+    try {
+      const frame = await probe.capture();
+      const element = findAutoMoveElement(await frame.toRgba(), near);
+      if (element !== null) return element.at;
+    } catch {
+      // A frame nobody could capture is not "no element": keep looking until the deadline.
+    }
+    if (Date.now() >= deadline) return null;
+    await settle(pollMs);
+  }
 }
 
 /**

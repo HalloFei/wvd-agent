@@ -34,7 +34,9 @@
       { "op": "key", "key": "f" },
       { "op": "wait", "ms": 8000 },
       { "op": "tap", "at": [960, 714] },
-      { "op": "expect", "screen": "dungeon-select", "timeoutMs": 15000 },
+      { "op": "wait", "ms": 800 },
+      { "op": "tap", "at": [960, 714] },
+      { "op": "expect", "screen": "dungeon-select", "timeoutMs": 20000 },
       { "op": "travel", "to": "vnh" },
       { "op": "expect", "screen": "town", "timeoutMs": 30000 }
     ]

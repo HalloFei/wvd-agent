@@ -171,8 +171,9 @@ The path that answers is **§3c's pointer mode**, now measured end to end:
 1. `R` (切换指针模式). Without it a tile click is ignored — §3c's first correction still holds.
 2. Click a **walkable black tile** (the dark cells are road; the white lines are walls, and a click
    on anything else does nothing).
-3. The `自动移动` element appears **79–84 px above the clicked tile** (three instances, 2026-10-24;
-   the earlier top-left observation in §3c was a different frame). Click it.
+3. The `自动移动` element appears **79-84 px above the clicked tile** (three instances, 2026-10-24;
+   the earlier top-left observation in §3c was a different frame). Click it. Since 2026-11-02 the
+   command finds the element instead of assuming that rise — see the last bullet below.
 4. The map closes and the party walks. The game paths, fights what it meets and never leaves the
    floor — the same guarantees §3d records for `L`.
 
@@ -182,11 +183,16 @@ Two consequences for the build, and both are now in the code:
   chevron is the only absolute point: contracts §3 gained `MapState.origin` (the chevron's own
   screen point), and `tileOnScreen` inverts the icon transform from it. The route keeps speaking
   grid cells; the loop converts once, at the seam, and hands `automoveToTile` a screen point.
-- **The element is assumed, not detected.** Its position is the measured rise, not a template
-  match. A tile that is not walkable raises nothing, so the confirming tap lands on the map and
-  pointer mode ignores it: the walk simply does not start, and the loop's in-flight rules record
-  that as "changed nothing" and do not retry until the farm advances. A detector is the upgrade if
-  that failure ever costs a session; it is deliberately not on the critical path.
+- **The element is detected since 2026-11-02.** `perception/automove.ts` matches the pill's glyph
+  (28x28, `scripts/extract-automove-template.ts`) in a band around the clicked tile and taps where
+  the game drew it; the 81 px rise stays only as the fallback for a caller with no frame source.
+  The measurement that forced it: on 第四区 at party X:21 Y:1 a tap on the cell north of the party
+  raised the pill 78 px above and 36 px left, with the glyph at (1212,690), while a tap on the chest
+  cell 18 rows up raised **nothing** — no element, so no walk, and the old fixed tap landed on the
+  panel's title bar. A tile that raises no element is now a typed failure, and the World puts that
+  cell on the cycle's skip list (`RouteState.unreachable`, operator rule 2026-11-02): the farm aims
+  at another chest, and a floor with none left takes its next stage — the exit script.
+  Measured cost of the detector: one small-band match of a 240x170 band, run once per walk.
 
 `L` is therefore no longer pressed by the World. It stays in the legend (contracts §4's `SCAN`)
 and a task file may press it, but no route intent depends on it.

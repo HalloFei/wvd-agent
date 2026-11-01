@@ -341,6 +341,8 @@ function makeWorld(options: {
   policy?: FarmPolicy;
   /** What the orientation's world-map travel answers. */
   travelResult?: { ok: true } | { ok: false; reason: 'location-not-found' | 'unknown-location'; detail?: string };
+  /** What a tile walk answers, when a test needs the game to refuse it (an unreachable cell). */
+  moveResult?: ActionResult;
   host?: FakeHost;
   /**
    * The QTE timing sub-loop. The real one unless a test scripts it: a bar on screen would then
@@ -389,7 +391,7 @@ function makeWorld(options: {
       // `main.ts` reads `pressHoldMs` per command; the harness does the same, so a configured hold
       // that the loop ignored would show up here (Important 2).
       openMap: () => openMap(actuator, cfg.pressHoldMs),
-      automoveToTile: (at) => automoveToTile(actuator, at, cfg.pressHoldMs),
+      automoveToTile: (at) => Promise.resolve(options.moveResult ?? automoveToTile(actuator, at, cfg.pressHoldMs)),
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
@@ -2060,5 +2062,25 @@ describe('a chest the party cannot walk to', () => {
     await world.tick();
     expect(actuator.calls.at(-1)).toBe(`key ${SCAN.F} 60`);
     expect(host.logRecords.some((line) => line.message.includes('skipping it this cycle'))).toBe(true);
+  });
+
+  it('skips the cell at once when the tile raises no 自動移動 element, and then leaves', async () => {
+    // The walk refuses as soon as the game raises no element (2026-11-02): no five-second wait, no
+    // pressed L, and the farm moves on to the other chest in the next tick.
+    const { world, host, actuator } = makeWorld({
+      observation: twoChests,
+      moveResult: { ok: false, reason: 'timeout', detail: 'the tile raised no 自動移動 element' },
+    });
+    await started(world, host);
+
+    await world.tick();
+    await world.tick();
+    await world.tick();
+
+    // Both walks were refused before a key was pressed; with no chest left the farm leaves by the exit.
+    expect(actuator.calls).toEqual([`key ${SCAN.F} 60`]);
+    const skips = host.logRecords.filter((line) => line.message.includes('cannot be walked to'));
+    expect(skips).toHaveLength(2);
+    expect(skips[0]!.message).toContain('the tile raised no 自動移動 element');
   });
 });

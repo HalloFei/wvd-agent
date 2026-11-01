@@ -96,7 +96,13 @@ export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
       await env().sleep(MAP_CLOSE_SETTLE_MS);
       const deadline = Date.now() + MAP_CLOSE_TIMEOUT_MS;
       for (;;) {
-        if (await screenScan() !== 'dungeonmap') return true;
+        if (await screenScan() !== 'dungeonmap') {
+          // The map's closing fade is still running on the frames the script is about to press
+          // into: a minimap tap right after the esc is swallowed, and the exit then stops at its
+          // first `expect dungeonmap` (live 2026-11-02). Give the fade the same settle the steps use.
+          await env().sleep(MAP_CLOSE_SETTLE_MS);
+          return true;
+        }
         if (Date.now() >= deadline) {
           deps.log('wvd: the map stayed open; the exit script will not press its keys blind');
           return false;
