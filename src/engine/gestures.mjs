@@ -29,10 +29,16 @@ export const PRESS_MS = 60;
  */
 export const MAX_DRAG_MS = 500;
 
-/** The drag's move count and the most it may take: 25 ms per move, clamp 4..20. */
-const DRAG_MOVE_MS = 25;
+/**
+ * The drag's move cadence: one move per 10 ms, clamp 4..60. The game samples the pointer at its own
+ * 30 fps and reads the world-map pan from the motion it sees between samples; at 25 ms per move it
+ * saw about one event per frame and the pan was not repeatable (measured 2026-11-01). A finer
+ * cadence, and a press held for PRESS_MS before the first move, makes the gesture look like a human
+ * drag instead of a click that ends somewhere else.
+ */
+const DRAG_MOVE_MS = 10;
 const DRAG_MIN_MOVES = 4;
-const DRAG_MAX_MOVES = 20;
+const DRAG_MAX_MOVES = 60;
 
 /**
  * `device` is the Win32 surface:
@@ -85,6 +91,9 @@ export function createGestures(device) {
     device.mouseDown();
     held.mouse++;
     try {
+      // Hold the press a beat before moving: the map reads a press that is already down as a drag,
+      // and a press-then-immediate-move as a click.
+      await device.sleep(PRESS_MS);
       for (let step = 1; step <= steps; step += 1) {
         await device.sleep(total / steps);
         device.moveToClient(

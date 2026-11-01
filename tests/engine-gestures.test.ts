@@ -164,8 +164,9 @@ describe('drag gesture', () => {
 
     await gestures.drag(1, 0, 0, 0, 0, 10_000);
     const longMoves = device.events.filter((event) => event.startsWith('move:')).length;
-    expect(longMoves).toBeGreaterThanOrEqual(5);
-    expect(longMoves).toBeLessThanOrEqual(21);
+    // clamped to MAX_DRAG_MS (500 ms) at one move per 10 ms, so 51 moves: the press plus 50 steps
+    expect(longMoves).toBeGreaterThanOrEqual(40);
+    expect(longMoves).toBeLessThanOrEqual(52);
 
     device.events.length = 0;
     await gestures.drag(1, 0, 0, 10, 0, 1);
