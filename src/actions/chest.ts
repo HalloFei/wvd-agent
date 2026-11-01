@@ -126,3 +126,18 @@ export const LOOT_COLLECT_AT: Point = { x: 960, y: 510 };
 export async function tapLoot(actuator: Actuator): Promise<ActionResult> {
   return actuator.tap(LOOT_COLLECT_AT);
 }
+
+/**
+ * The result banner's only control: the small continue arrow at the client's bottom right.
+ *
+ * **Measured live (2026-11-01).** After the card was collected the game drew `获得了北穿幽冥城的三彩
+ * 杂物 × 2！！` over the opened chest; a tap at the card centre did nothing, and one tap at (1203,1040)
+ * dismissed it and returned to the 3-D view. The card and the banner are one screen (`loot`); this is
+ * the banner's own point.
+ */
+export const LOOT_DISMISS_AT: Point = { x: 1_203, y: 1_040 };
+
+/** Dismiss the loot result banner with one tap at its continue arrow. */
+export async function dismissLoot(actuator: Actuator): Promise<ActionResult> {
+  return actuator.tap(LOOT_DISMISS_AT);
+}

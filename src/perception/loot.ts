@@ -106,7 +106,7 @@ export class LootPerceiver implements Perceiver {
       return refusal(frame, 0);
     }
     if (isFlat(image)) return refusal(frame, 0);
-    if (!isLootOverlay(image)) return refusal(frame, UNNAMED_CONFIDENCE);
+    if (!isLootOverlay(image) && !isResultBanner(image)) return refusal(frame, UNNAMED_CONFIDENCE);
     return { screen: 'loot', atMs: frame.atMs, confidence: LOOT_CONFIDENCE };
   }
 }
@@ -156,6 +156,50 @@ function isLootOverlay(image: RgbaImage): boolean {
     if (interior.spread > INTERIOR_SPREAD_MAX) return false;
   }
   return captionInk(image) >= CAPTION_INK_MIN;
+}
+
+/**
+ * The result banner: the same `获得了…` caption, but the contents card's UI is gone and the opened
+ * chest is 3-D art behind the text. Measured live 2026-11-01 (1920x1080): the caption ink is present
+ * (407 px at 1280x720 on the card frame, 100+ here) where the card's border rows are not, and the
+ * small AUTO label sits at x 0.33-0.42, y 0.91-0.97 — the card's AUTO, over the 3-D view.
+ *
+ * Without this branch the composite named the banner `chest-opening` 0.60, the route waited, and the
+ * farm stood on a screen that needs exactly one tap at the bottom-right continue arrow.
+ */
+function isResultBanner(image: RgbaImage): boolean {
+  if (captionInk(image) < CAPTION_INK_MIN) return false;
+  const box = autoLabel(image);
+  // The banner sits on the dark 3-D floor, so the AUTO box is mostly dark with a dim label in it:
+  // measured live, 2 % of the box is over luma 40 against 100 % on an opening frame (the lit chest
+  // fills it) and 36 % on the 3-D view after a QTE cancel (HUD text, 596 bright px against 0 here).
+  if (box.over40 > box.count * 0.15) return false;
+  if (box.bright > Math.max(2, Math.round(box.count * 0.02))) return false;
+  return box.ink >= Math.max(12, Math.round(40 * (image.width * image.height) / (1_920 * 1_080)));
+}
+
+/** The small AUTO label at the banner's bottom left, measured over luma 40 and against bright ink. */
+function autoLabel(image: RgbaImage): { ink: number; bright: number; over40: number; count: number } {
+  const x0 = Math.round(image.width * 0.33);
+  const x1 = Math.round(image.width * 0.42);
+  const y0 = Math.round(image.height * 0.91);
+  const y1 = Math.round(image.height * 0.97);
+  let ink = 0;
+  let bright = 0;
+  let over40 = 0;
+  let count = 0;
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const o = (y * image.width + x) * 4;
+      const r = image.data[o]!;
+      const g = image.data[o + 1]!;
+      const b = image.data[o + 2]!;
+      count += 1;
+      if ((r + g + b) / 3 > 40) { ink += 1; over40 += 1; }
+      if (r > 150 && g > 150 && b > 150) bright += 1;
+    }
+  }
+  return { ink, bright, over40, count };
 }
 
 /** One border line: its row as a fraction of the height, its brightness, and its gain over the band's surroundings. */

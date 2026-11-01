@@ -27,7 +27,7 @@ import type {
   SessionTask,
 } from '../src/contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
-import { acceptChestPrompt, cancelQte, DISARM_SCAN, enableBattleAuto, reenterChest, tapLoot } from '../src/actions/chest.ts';
+import { acceptChestPrompt, cancelQte, DISARM_SCAN, dismissLoot, enableBattleAuto, reenterChest, tapLoot } from '../src/actions/chest.ts';
 import { timeQte, type QteTimer, type QteTimingOptions } from '../src/actions/qte.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { MAX_PRESS_HOLD_MS } from '../src/contracts.ts';
@@ -381,6 +381,7 @@ function makeWorld(options: {
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
+      dismissLoot: () => dismissLoot(actuator),
       enableBattleAuto: () => enableBattleAuto(actuator),
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),

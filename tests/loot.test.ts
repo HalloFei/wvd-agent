@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import type { ActionResult, Actuator, Frame, Point, RgbaImage } from '../src/contracts.ts';
-import { LOOT_COLLECT_AT, tapLoot } from '../src/actions/chest.ts';
+import { dismissLoot, LOOT_COLLECT_AT, LOOT_DISMISS_AT, tapLoot } from '../src/actions/chest.ts';
 import { LootPerceiver } from '../src/perception/loot.ts';
 
 /**
@@ -160,5 +160,27 @@ describe('tapLoot', () => {
     const actuator = recordingActuator(rejected);
     await expect(tapLoot(actuator)).resolves.toBe(rejected);
     expect(actuator.taps).toHaveLength(1);
+  });
+});
+
+/**
+ * The result banner: the card is collected and the game draws `获得了…` over the opened chest.
+ * Live 2026-11-01 the composite named that frame `chest-opening` 0.60 (the opening's warm-mass and
+ * no-HUD gates both pass on it), the route's answer to an opening is wait, and the farm stood on the
+ * one screen that needs a single tap — the continue arrow at (1203, 1040).
+ */
+const BANNER = new URL('../testdata/chest/2026-11-01-loot-banner/', import.meta.url);
+
+describe('the loot result banner', () => {
+  it('is named loot, so the route has a rule for it', async () => {
+    const observation = await new LootPerceiver().observe(frameOf(await image('result.jpg', BANNER)));
+    expect(observation.screen).toBe('loot');
+  });
+
+  it('is dismissed with one tap at the measured continue arrow', async () => {
+    const actuator = recordingActuator();
+    await expect(dismissLoot(actuator)).resolves.toEqual({ ok: true });
+    expect(actuator.taps).toEqual([{ x: 1_203, y: 1_040 }]);
+    expect(LOOT_DISMISS_AT).toEqual({ x: 1_203, y: 1_040 });
   });
 });

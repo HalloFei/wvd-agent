@@ -112,6 +112,8 @@ export interface RouteCommands {
   acceptChestPrompt(): Promise<ActionResult>;
   /** Collect the chest loot card with one tap at its measured centre. */
   tapLoot(): Promise<ActionResult>;
+  /** Dismiss the loot result banner (the card's own continue arrow) when the card taps do not leave it. */
+  dismissLoot(): Promise<ActionResult>;
   /** Press 倍速 then 自动 once, for the battle on screen. */
   enableBattleAuto(): Promise<ActionResult>;
   /**
@@ -470,6 +472,8 @@ export class WvdWorld implements World {
   /** The loot card's tap clock and count, so a modal that never leaves is bounded (lootTap*). */
   #lootTapAtMs: number | null = null;
   #lootTaps = 0;
+  /** The result banner's continue arrow was sent for this visit to the loot screen. */
+  #lootDismissed = false;
   /** Commands sent and waiting for their screen to answer (one at a time). */
   #inFlight: InFlight | null = null;
   /** Commands that changed nothing on this screen epoch: never re-sent until the farm advances. */
@@ -1007,6 +1011,7 @@ export class WvdWorld implements World {
     if (observation.screen !== 'loot') {
       this.#lootTapAtMs = null;
       this.#lootTaps = 0;
+      this.#lootDismissed = false;
     }
     if (observation.screen === 'chest-open') {
       // A willpower the panel did not show (the main character draws no heart) or could not read is
@@ -1734,7 +1739,17 @@ export class WvdWorld implements World {
         if (this.#lootTapAtMs !== null
           && tappedAt - this.#lootTapAtMs < Math.max(1, this.#cfg.lootTapIntervalMs)) return;
         if (this.#lootTaps >= Math.max(1, this.#cfg.lootTapMax)) {
-          this.#host?.log.warn('wvd: the loot card did not leave after the configured taps');
+          // The card is gone and the result banner is up: it has its own continue arrow, and the
+          // card's centre does nothing on it (measured live 2026-11-01). One tap, once per screen.
+          if (this.#lootDismissed) {
+            this.#host?.log.warn('wvd: the loot screen did not leave after the configured taps');
+            return;
+          }
+          this.#lootDismissed = true;
+          this.#lootTapAtMs = tappedAt;
+          const dismissed = await this.#commands.dismissLoot();
+          if (!dismissed.ok) this.#host?.log.warn(`wvd: could not dismiss the loot banner (${dismissed.reason})`);
+          else this.#host?.log.info('wvd: dismissed the loot result banner');
           return;
         }
         this.#lootTapAtMs = tappedAt;

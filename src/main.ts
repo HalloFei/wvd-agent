@@ -23,7 +23,7 @@ import {
   type Point,
 } from './contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
-import { acceptChestPrompt, cancelQte, enableBattleAuto, reenterChest, tapLoot } from './actions/chest.ts';
+import { acceptChestPrompt, cancelQte, dismissLoot, enableBattleAuto, reenterChest, tapLoot } from './actions/chest.ts';
 import { timeQte } from './actions/qte.ts';
 import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
@@ -105,12 +105,13 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     { perceiver: new ChestPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new MapPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new ChestPromptPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    // The loot screen comes before the opening: the result banner (`获得了…` over the opened chest)
+    // also clears the opening's gates — live 2026-11-01 it was named `chest-opening` 0.60 and the
+    // loop waited on it — while the loot recogniser's caption + AUTO test separates the two.
+    { perceiver: new LootPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The opening is named after the prompt: both draw no HUD, and only the prompt's own recogniser
     // can tell the 打开 menu from the lid lifting.
     { perceiver: new ChestOpeningPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The loot card is the next screen after the QTE or an untrapped open; its own recogniser is the
-    // only one that names it (the opening perceiver excludes it on the warm-fraction gate).
-    { perceiver: new LootPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new CombatPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new HudPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The HUD refuses both of these at 0.2; they run last so a dungeon frame never pays for them.
@@ -198,6 +199,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       automoveToExit: () => automoveToExit(actuator, pressHoldMs()),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
+      dismissLoot: () => dismissLoot(actuator),
       enableBattleAuto: () => enableBattleAuto(actuator),
       // The attempt-vs-reroll policy's action: leave the QTE (free, chest §4) and re-click a card.
       cancelQte: () => cancelQte(actuator),
