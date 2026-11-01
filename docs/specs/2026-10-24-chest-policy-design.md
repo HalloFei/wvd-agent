@@ -270,7 +270,28 @@ Each of these cost a live attempt to discover, so they are recorded rather than 
 6. If combat: hand off.
 7. Tap through loot until it stops changing.
 
-## 10. Resolved by the operator
+## 10. The cycle pipeline (operator rule, 2026-11-02)
+
+The loop runs one command at a time. When several obligations are live, this is their order, and each
+step is pinned by a test:
+
+1. **Heal.** A pending heal outranks every route command: it is spent on the first 3-D view tick with
+   nothing in flight, and that tick sends nothing else (`tests/world.test.ts`, "puts the heal before
+   the next command in the cycle pipeline"). The flag is set by a battle *and* by a loot screen, so
+   the party is healed after every fight and every chest — and therefore before the next engagement,
+   which always starts from the 3-D view. A battle met *during* a walk is fought first: the heal can
+   only be sent from the 3-D view, and one command at a time is the loop's older rule.
+2. **Claim.** With the heal spent, the route walks to the nearest reachable chest (`move`), and the
+   chest cycle runs: 打开 prompt -> 由谁打开? panel -> opening -> loot.
+3. **Skip.** A chest whose walk the game refuses (no 自動移動 element) goes on `RouteState.unreachable`
+   for the cycle; the route aims at the next one, and a floor whose chests are all there is done.
+4. **Rest.** Done means the exit: the task's exit script walks the floors out, harkens 归还 (two taps —
+   the first only focuses the row), returns to Dungeon Select and travels to the rest town. A new
+   cycle re-orients from wherever that left the party.
+
+The priorities are not a separate scheduler: they fall out of the tick's order (in-flight -> heal ->
+route) and of the route's own filtering, and the tests in `tests/world.test.ts` pin each boundary.
+## 11. Resolved by the operator
 
 1. Cancelling a floor chest's QTE costs **no attempt**. The reroll is free, so a lead wider than the
    zone is always rerolled rather than gambled.

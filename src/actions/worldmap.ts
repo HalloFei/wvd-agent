@@ -1116,9 +1116,11 @@ async function tapNodeAndWait(env: WorldMapEnv, entry: LocationEntry, at: Point,
 /**
  * Tap a floor row on the Dungeon Select screen by its label.
  *
- * The screen is not a `ScreenId` and nothing drives it: the party arrives by tapping the dungeon's
- * node on the world map, and the only decision left is where the row is. So this action positions
- * one click and returns — the task's own `expect` steps judge what happened.
+ * The party arrives by tapping the dungeon's node on the world map; the row is a `dungeon-select`
+ * screen the perceiver names, so this action can wait for its own effect: it taps the row and does
+ * not return until the list is gone. A travel that returned on the tap alone was read as "still on
+ * the list" by the caller, which asked again — live 2026-11-02 the orientation tapped 第三区 three
+ * times in a row and the third tap failed on the loading list.
  *
  * Measured 2026-10-25 on the live 1920×1080 frame: 第三区-城内2F- scores 0.781 at scale 0.70 and
  * 第一区-城外- 0.762 at 0.66; the rows sit 56 px apart, and the fixed tap this replaces (1082,535)
@@ -1153,6 +1155,10 @@ async function selectDungeon(entry: LocationEntry, env: WorldMapEnv): Promise<Tr
   const pressed = await env.actuator.tap(centre(match, entry.anchor));
   if (!pressed.ok) return failure(pressed.reason, pressed.detail);
   env.log?.(`wvd: selected ${entry.label} on the Dungeon Select list`);
+  // The tap is not the travel: wait until the list is gone, the way the site travel waits for the
+  // world map to leave. The load that follows is the caller's settle to watch.
+  const left = await poll(env, (screen) => screen !== 'dungeon-select', LEAVE_TIMEOUT_MS, now, 'location-not-found');
+  if (!left.ok) return left;
   return { ok: true };
 }
 

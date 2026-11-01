@@ -528,6 +528,8 @@ export class WvdWorld implements World {
   #orientClimbs = 0;
   /** Until this instant the loop only watches: a travel or a climb just landed on a loading fade. */
   #settleUntilMs = 0;
+  /** The screen the settle started from: the frame that still shows it is not the load finishing. */
+  #settleFrom: ScreenId | null = null;
   /** The loot card's tap clock and count, so a modal that never leaves is bounded (lootTap*). */
   #lootTapAtMs: number | null = null;
   #lootTaps = 0;
@@ -989,7 +991,10 @@ export class WvdWorld implements World {
     // A black frame here is the transition itself, not a screen nobody could perceive — but the
     // window is bounded, so a load that never ends falls through to the classifier's stop.
     if (now < this.#settleUntilMs) {
-      if (observation.confidence <= 0) return;
+      // A named frame ends the window — unless it is the very screen the command was sent from,
+      // which is the tap that has not landed yet (live 2026-11-02: the still-visible Dungeon Select
+      // list re-armed the travel three times).
+      if (observation.confidence <= 0 || observation.screen === this.#settleFrom) return;
       this.#settleUntilMs = 0;
     }
 
@@ -2056,6 +2061,7 @@ export class WvdWorld implements World {
         // so the hand-off starts the same arrival book-keeping the entry's walk uses. The load that
         // follows the walk gets the same settle a travel does.
         this.#settleUntilMs = this.#now() + ORIENT_SETTLE_MS;
+        this.#settleFrom = this.#lastScreen;
         this.#handOffEntry(this.#now());
         return;
       }
@@ -2072,6 +2078,7 @@ export class WvdWorld implements World {
           this.#orientTravelFailures = 0;
           this.#lastProgressAtMs = this.#now();
           this.#settleUntilMs = this.#now() + ORIENT_SETTLE_MS;
+          this.#settleFrom = this.#lastScreen;
           return;
         }
         this.#orientTravelFailures += 1;

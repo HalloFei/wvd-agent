@@ -914,6 +914,36 @@ describe('a walk stays in flight through the screens it produces', () => {
     ]);
   });
 
+  it('puts the heal before the next command in the cycle pipeline', async () => {
+    // Operator rule 2026-11-02, priority 1: safe before battle and after it. The battle sets the heal;
+    // the next 3-D view tick spends it and sends nothing else, so the party is healed before the loop
+    // asks it to open the map for the next chest. Priorities 2-4 (claim, skip, rest) come after.
+    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: combatView });
+    await started(world, host);
+    const healed = () => host.logRecords.filter((record) => record.message.includes('healed the party')).length;
+
+    await world.tick();
+    const fightCalls = actuator.calls.length;
+    expect(fightCalls).toBeGreaterThan(0);
+
+    // The battle leaves: the fight stays in flight until its screen answers (arrival), then the heal
+    // is that tick's one command — no route command rides along with it.
+    perceiver.observation = dungeonView;
+    let callsAtHeal = -1;
+    for (let index = 0; index < 14 && callsAtHeal < 0; index += 1) {
+      clock.advance(500);
+      await world.tick();
+      if (healed() === 1) callsAtHeal = actuator.calls.length;
+    }
+    expect(healed()).toBe(1);
+    expect(callsAtHeal).toBe(fightCalls);
+
+    // The next tick is the route's: with the heal spent, the map opens for the next chest.
+    clock.advance(500);
+    await world.tick();
+    expect(actuator.calls.slice(fightCalls)).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+  });
+
   it('heals once after a battle, and again after a chest, and not twice on the same view', async () => {
     const { world, host, perceiver, clock } = makeWorld({ observation: dungeonView });
     await started(world, host);
@@ -1960,8 +1990,10 @@ describe('the orientation', () => {
     expect(calls).toEqual(['climb']);
     expect(actuator.calls).toEqual([]);
 
-    // The climb ends by starting a game-driven walk: the loop commands nothing until it stands. The
-    // first named frame (dungeon) closes the load window the climb opened.
+    // The climb's last press closes the map and starts a game-driven walk: the loop commands nothing
+    // until the party stands. The first named frame that is not the climb's screen (dungeon) closes
+    // the load window the climb opened.
+    perceiver.observation = dungeonView;
     clock.advance(600);
     await world.tick();
     expect(actuator.calls).toEqual([]);
