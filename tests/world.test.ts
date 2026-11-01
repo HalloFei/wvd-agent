@@ -472,13 +472,19 @@ describe('the tick', () => {
     await world.tick();
     expect(actuator.calls).toEqual(walkOne());
 
-    // automoveStillSeconds passes with the screen unchanged: the walk never started, so the chest is
-    // unreachable and the same L is not pressed again. Since 2026-11-02 the farm does not wait here —
-    // the only chest is skipped, and the next stage is the exit (operator rule).
+    // automoveStillSeconds passes with the screen unchanged: the walk never started. Since 2026-11-02
+    // the farm does not wait here — it retries the cell once (the first refusal is often the map's
+    // fade), and only a second refusal makes it unreachable, at which point the exit is the next stage.
     clock.advance(5000);
     await world.tick();
-    expect(actuator.calls).toEqual([...walkOne(), `key ${SCAN.F} 60`]);
-    expect(perceiver.observes).toBe(3);
+    expect(actuator.calls).toEqual([...walkOne(), ...walkOne()]);
+
+    // The retry is refused as well: the chest is skipped, and with none left the farm leaves.
+    clock.advance(100);
+    await world.tick();
+    clock.advance(5000);
+    await world.tick();
+    expect(actuator.calls).toEqual([...walkOne(), ...walkOne(), `key ${SCAN.F} 60`]);
   });
 
   it('sends a command that changed nothing again once the farm advances', async () => {
@@ -2121,20 +2127,19 @@ describe('a chest the party cannot walk to', () => {
     expect(actuator.calls).toEqual(walkCalls(mapOf(twoChests), near));
     clock.advance(100);
     await world.tick(); // the stillness baseline
-    expect(actuator.calls).toEqual(walkCalls(mapOf(twoChests), near));
 
-    // The party never moves: the tap raised no 自動移動 element, so the scene stays still. The skip is
-    // acted on in the same tick: the next walk is aimed at the other chest.
+    // The party never moves. The first refusal is retried on the settled map, not acted on.
     clock.advance(5_100);
     await world.tick();
-    expect(actuator.calls).toEqual([...walkCalls(mapOf(twoChests), near), ...walkCalls(mapOf(twoChests), far)]);
+    expect(actuator.calls).toEqual([...walkCalls(mapOf(twoChests), near), ...walkCalls(mapOf(twoChests), near)]);
 
-    // Both are on the skip list now: the farm's next stage is the exit.
+    // The second refusal makes the cell unreachable in the same tick: the next walk is the other chest.
     clock.advance(100);
     await world.tick();
     clock.advance(5_100);
     await world.tick();
-    expect(actuator.calls.at(-1)).toBe(`key ${SCAN.F} 60`);
+    expect(actuator.calls.slice(-3)).toEqual(walkCalls(mapOf(twoChests), far));
+    expect(host.logRecords.some((line) => line.message.includes('trying once more'))).toBe(true);
     expect(host.logRecords.some((line) => line.message.includes('skipping it this cycle'))).toBe(true);
   });
 
@@ -2147,14 +2152,15 @@ describe('a chest the party cannot walk to', () => {
     });
     await started(world, host);
 
-    await world.tick();
-    await world.tick();
-    await world.tick();
+    for (let index = 0; index < 5; index += 1) await world.tick();
 
-    // Both walks were refused before a key was pressed; with no chest left the farm leaves by the exit.
+    // Each chest is refused twice before it is skipped: the first refusal is often the map's fade,
+    // and the operator's rule is to claim every chest that is available. With both skipped, the farm
+    // leaves by the exit.
     expect(actuator.calls).toEqual([`key ${SCAN.F} 60`]);
     const skips = host.logRecords.filter((line) => line.message.includes('cannot be walked to'));
-    expect(skips).toHaveLength(2);
+    expect(skips.filter((line) => line.message.includes('trying once more'))).toHaveLength(2);
+    expect(skips.filter((line) => line.message.includes('skipping it this cycle'))).toHaveLength(2);
     expect(skips[0]!.message).toContain('the tile raised no 自動移動 element');
   });
 });

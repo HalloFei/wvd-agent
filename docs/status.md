@@ -483,6 +483,38 @@ Dungeon Select and `travel vnh` returned it to the rest town.
 
 Two perception gaps met on the way and are pinned separately: the G-menu 3-D view is `unknown`
 (`t-mvy23qe2-nszsfl`) and the rest town's arrival dialogue is named `loot` (`t-mvy4482...`).
+## The cycle pipeline, and the first live chest (2026-11-02)
+
+The operator set the cycle's priorities: **1. healed before and after a battle, 2. claim every chest
+available, 3. skip the ones that are not, 4. return to town and rest at the end of each cycle.** The
+order was already the tick's (in-flight -> heal -> route) and the route's, so it is pinned rather than
+rewritten: a world test proves the heal preempts the route's next command, and the chest-policy design
+records the four steps and where each is enforced. One rule was added to serve 2 and 3 together: a
+refused walk is **retried once** on the settled map, and only a second refusal marks the cell
+unreachable — the first refusal is often the map's own fade, and a chest that is available must not be
+dropped for it.
+
+**Live, 02:35 — the first run to claim a chest end to end:**
+
+```
+18:35:45 open-map -> climbing (attempt 1)                    <- the goal form's climb, from 第三区
+18:35:56 climb script finished (7 steps, 11036 ms)
+18:36:02 on the farm floor; the farm takes over
+18:36:03 move took effect: the party is moving on the map   <- the element detector's walk
+18:36:10 move arrived: the screen is chest-prompt
+18:36:11 opening the chest with #4 (陷阱解除 114) at the bottom-left card
+18:36:14 chest QTE pressed: v=564 delayMs=77 target=1111     <- the first live QTE press
+18:36:18 collected the loot card
+18:36:24 unknown -> escalate
+```
+
+Fixed on the way (committed): the exit script's map-close settle, the harken's second 归还 tap,
+`selectDungeon` waiting for its row's effect (it was tapped three times in a row), and the load window
+that ended on the old screen still showing.
+
+**What stopped this one:** the frame after the loot — the encounter intro (camera on the opened chest,
+enemy names and an HP bar, no HUD, a ✕ at the bottom right) is named by nothing, so the loop escalated
+after 5 s and paused for its 90 s question. Pinned as `t-mvy4p2vz-...`; the party stands at that chest.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

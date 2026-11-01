@@ -256,6 +256,13 @@ const ORIENT_TRAVEL_TRIES = 2;
 const ORIENT_CLIMB_TRIES = 2;
 
 /**
+ * How many refusals before a cell is called unreachable. Two: the first walk after the map is named
+ * can be eaten by the map's fade (live 2026-11-02), and the operator's rule is to claim every chest
+ * that is available — the retry runs on a settled map and costs one tick.
+ */
+const WALK_RETRIES = 2;
+
+/**
  * How long the game may take to load after an orientation travel or a climb. The travel returns when
  * the world map leaves — or the Dungeon Select row is accepted — and the frames after it are the
  * load's own fade: black, or a flat colour, at confidence 0. The session classifier must stop on
@@ -507,6 +514,12 @@ export class WvdWorld implements World {
    * clears the list, so a chest that failed once is attempted again on the next visit.
    */
   #unreachable: Point[] = [];
+  /**
+   * How many times a walk to a cell has been refused. A tile is only *unreachable* after two: the
+   * first refusal is often the map's own fade eating the pointer gesture (live 2026-11-02), and the
+   * operator's rule is to claim every chest that is available, skip only the ones that are not.
+   */
+  #walkFailures = new Map<string, number>();
   /** Rerolls spent on the chest's QTE; reset when a chest starts or ends (operator rule). */
   #qteRerolls = 0;
   /** The pass the policy saw on the last decision, recorded only while the baseline is filling. */
@@ -865,6 +878,7 @@ export class WvdWorld implements World {
       this.#willpower = [];
       this.#chestsRemaining = INITIAL_CHEST_BUDGET;
       this.#unreachable = [];
+      this.#walkFailures = new Map();
       this.#inFlight = null;
       this.#failed = new Set();
       this.#openerRefusal = null;
@@ -1434,6 +1448,20 @@ export class WvdWorld implements World {
    * stage. It is not a failed command: the next `move` is a different chest, not a blind retry.
    */
   #skip(target: Point, why: string, evidence: Record<string, number> = {}): void {
+    const key = `${target.x},${target.y}`;
+    const failures = (this.#walkFailures.get(key) ?? 0) + 1;
+    this.#walkFailures.set(key, failures);
+    // One refusal is often the map's fade eating the pointer gesture (the map is read on its first
+    // named frame, the walk follows within ~200 ms). The rule is to claim every chest that is
+    // available and skip only the ones that are not, so a cell is marked unreachable on the second
+    // refusal — the retry runs on a settled map and costs one tick.
+    if (failures < WALK_RETRIES) {
+      this.#host?.log.warn(
+        `wvd: the chest at ${target.x},${target.y} cannot be walked to (${why}); trying once more`,
+        evidence,
+      );
+      return;
+    }
     const known = this.#unreachable.some((cell) => cell.x === target.x && cell.y === target.y);
     if (!known) this.#unreachable.push(target);
     this.#host?.log.warn(
@@ -1650,6 +1678,7 @@ export class WvdWorld implements World {
   #resetCycle(): void {
     this.#chestsRemaining = INITIAL_CHEST_BUDGET;
     this.#unreachable = [];
+    this.#walkFailures = new Map();
     this.#lastMapRead = null;
     this.#lastScreen = null;
     this.#inFlight = null;
