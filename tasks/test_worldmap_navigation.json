@@ -1,0 +1,102 @@
+{
+  "id": "test-worldmap-navigation",
+  "label": "[Test] 世界地图导航 — 王城 → 北穿幽冥城 → 诺森霍洛村 → 王城 ×3",
+  "floor": {
+    "titleKey": "000000007f3ffe007ffeff00220bb600"
+  },
+  "entry": {
+    "timeoutMs": 900000,
+    "steps": [
+      {
+        "op": "travel",
+        "to": "city-royal"
+      },
+      {
+        "op": "expect",
+        "screen": "town",
+        "timeoutMs": 45000
+      },
+      {
+        "op": "travel",
+        "to": "ffxi-gcn"
+      },
+      {
+        "op": "expect",
+        "screen": "dungeon-select",
+        "timeoutMs": 60000
+      },
+      {
+        "op": "travel",
+        "to": "vnh"
+      },
+      {
+        "op": "expect",
+        "screen": "town",
+        "timeoutMs": 60000
+      },
+      {
+        "op": "travel",
+        "to": "city-royal"
+      },
+      {
+        "op": "expect",
+        "screen": "town",
+        "timeoutMs": 60000
+      },
+      {
+        "op": "travel",
+        "to": "ffxi-gcn"
+      },
+      {
+        "op": "expect",
+        "screen": "dungeon-select",
+        "timeoutMs": 60000
+      },
+      {
+        "op": "travel",
+        "to": "vnh"
+      },
+      {
+        "op": "expect",
+        "screen": "town",
+        "timeoutMs": 60000
+      },
+      {
+        "op": "travel",
+        "to": "city-royal"
+      },
+      {
+        "op": "expect",
+        "screen": "town",
+        "timeoutMs": 60000
+      },
+      {
+        "op": "travel",
+        "to": "ffxi-gcn"
+      },
+      {
+        "op": "expect",
+        "screen": "dungeon-select",
+        "timeoutMs": 60000
+      },
+      {
+        "op": "travel",
+        "to": "vnh"
+      },
+      {
+        "op": "expect",
+        "screen": "town",
+        "timeoutMs": 60000
+      },
+      {
+        "op": "travel",
+        "to": "city-royal"
+      },
+      {
+        "op": "expect",
+        "screen": "town",
+        "timeoutMs": 60000
+      }
+    ]
+  }
+}
