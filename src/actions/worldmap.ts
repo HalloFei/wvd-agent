@@ -18,13 +18,13 @@ import { LOCATIONS, type LocationEntry } from '../perception/locations.ts';
 import { findTemplate, type Match, type MatchTemplate } from '../perception/match.ts';
 import {
   LABEL_ANCHORS,
+  MAP_PAN_GAIN,
   MAP_STRIP,
+  MAP_ZOOM,
   MAP_ZOOM_KEYS,
-  SAFE_TAP,
-  insideSafeTap,
+  WORLD_MAP_SIZE,
   offsetFromMatch,
   panDragFor,
-  screenPointOf,
   siteById,
   type WorldMapSite,
 } from '../perception/worldmap-atlas.ts';
@@ -344,40 +344,181 @@ async function openFrom(
 // ------------------------------------------------------------------------------------------------
 // Travel by the stored world map
 //
-// The atlas (src/perception/worldmap-atlas.ts) knows every catalogued site's coordinate on the map
-// and one label banner per site whose banner the game draws at max zoom-out. That is enough to stop
-// hunting: zoom the map to its clamp, match *one* banner to learn the view's atlas offset, project
-// the target site, confirm the node's own icon template at the projected point, and tap it. The
-// template is the confirmation, exactly as the template search is the fallback when the atlas has
-// no entry for the destination.
+// The atlas (src/perception/worldmap-atlas.ts) knows every catalogued site's coordinate and the
+// label banners the game draws at max zoom-out. A travel is: open the map, clamp the zoom out,
+// locate the view from the banners — or, when none is drawn, from the pan clamp at the map's
+// north-west corner — pan the site near the aim point at max zoom-out, zoom in, confirm the node's
+// own icon at the projected point, and tap. The atlas says where to look; the frame decides
+// everything that can be wrong.
+//
+// Measured 2026-11-01, and each one shapes a parameter below:
+//
+// - the old park point (200,540) is a map control that slides the view ~270 px over 750 ms;
+//   (200,120) and (200,960) are inert, and a measurement must be taken on a still frame;
+// - zoom is anchored on the view centre: a point at the centre stays, every other point moves away
+//   from it by 1.34x per step, which is the prediction this file uses;
+// - a drag moves the map ~2.2 px per pointer px at max zoom-out and is ignored at max zoom-in, so
+//   all panning happens at max zoom-out;
+// - 5-6 of the 8 banners match in one frame and agree within 6 px: one frame is enough to locate;
+// - the game culls colliding labels (北穿幽冥城 has none at max zoom-out) and a node whose label is
+//   culled does not take the tap — hence the zoom-in before the tap.
 // ------------------------------------------------------------------------------------------------
 
 /** A label banner scores far above this at max zoom-out; measured 0.93-0.99 on the live frames. */
 const ATLAS_LABEL_FLOOR = 0.8;
-/** The node icon, drawn at ~0.45 of the legacy art; the sweep covers the measured range. */
+/** The node icon, drawn at ~0.45 of the legacy art at max zoom-out; the sweep covers the measured range. */
 const ATLAS_ICON_SCALES = [0.40, 0.42, 0.44, 0.46, 0.48, 0.50] as const;
 const ATLAS_ICON_FLOOR = 0.75;
 /** Where the legacy art's label band starts, as a fraction of its height (locations.ts's rule). */
 const LEGACY_LABEL_BAND_TOP = 0.687;
 const ATLAS_ZOOM_PRESSES = 8;
 const ATLAS_ZOOM_SETTLE_MS = 420;
-const ATLAS_VERIFY_RADIUS = 80;
-const ATLAS_PAN_ATTEMPTS = 3;
-/** Drag origins tried in turn: empty parchment, away from the nodes near the map's centre. */
-const ATLAS_PAN_STARTS: readonly Point[] = [
-  { x: 600, y: 150 },
-  { x: 1_000, y: 840 },
-  { x: 600, y: 840 },
-  { x: 1_000, y: 150 },
-];
-/**
- * Where the pointer is parked before a measurement. The pointer is drawn into the frame, and a drag
- * leaves it exactly where the pan ended — on the node being verified. A tap on the black pillar is
- * inert on this screen (measured 2026-11-01: the strip is unchanged and the screen stays worldmap),
- * and it parks the pointer outside the map.
- */
-const ATLAS_PARK_POINT: Point = { x: 200, y: 540 };
-const ATLAS_PARK_SETTLE_MS = 140;
+/** Where a tap is safe, in strip pixels: the parchment, clear of the pillars and the bottom band. */
+const ATLAS_TAP_AREA = { x: 12, y: 30, width: MAP_STRIP.width - 24, height: 870 } as const;
+/** The point the placement aims at: the middle of the tap area, not the strip's centre. */
+const ATLAS_AIM: Point = { x: ATLAS_TAP_AREA.x + ATLAS_TAP_AREA.width / 2, y: ATLAS_TAP_AREA.y + ATLAS_TAP_AREA.height / 2 };
+
+/** A point on the stored map, or a catalogued site that names one. */
+export type AtlasTarget =
+  | { readonly kind: 'site'; readonly id: string }
+  | {
+      readonly kind: 'point';
+      readonly x: number;
+      readonly y: number;
+      readonly label?: string;
+      readonly templateId?: string;
+    };
+
+/** How a view of unknown position is placed before the pan. */
+export type AtlasLocator = 'anchor' | 'clamp' | 'anchor-then-clamp';
+
+/** What has to match at the projected point before a tap is sent. */
+export type AtlasConfirm = 'icon' | 'label' | 'either' | 'none';
+
+/** How far to zoom in: auto climbs one step at a time, max goes straight to the clamp. */
+export type AtlasZoom = 'none' | 'in' | number | 'max' | 'auto';
+
+export interface AtlasTiming {
+  readonly zoomSettleMs: number;
+  readonly dragSettleMs: number;
+  readonly parkSettleMs: number;
+}
+
+export interface AtlasPolicy {
+  /**
+   * Optional pointer refuge. Default null: every pillar point tried (200,540), (200,120), (200,20),
+   * (1720,20) moved the map by 14-270 px on a tap (measured 2026-11-01), so the pointer is left where
+   * the pan drag ended instead, and the drag is aimed away from the target.
+   */
+  readonly parkPoint: Point | null;
+  /** One drag's pointer displacement; also the clamp's step. */
+  readonly dragStepPx: number;
+  /** Only the first guess: the pan loop measures the gain after every drag and adapts (it ranged 0.3-2.5 live). */
+  readonly panGain: number;
+  /** Drags allowed before the north-west clamp is declared reached. */
+  readonly clampDrags: number;
+  /** Half-size of the window the confirmation searches around the projected point. */
+  readonly verifyRadiusPx: number;
+}
+
+export interface AtlasTravelOptions {
+  /** What must confirm at the projected point. Default icon. */
+  readonly confirm?: AtlasConfirm;
+  /** The icon template; defaults to the site's own templateId. */
+  readonly templateId?: string;
+  /** Confirmation floor. Default 0.75 (the icon floor). */
+  readonly minScore?: number;
+  /**
+   * Half-size of the confirmation window, strip px. Default 180: the node art is anchored at the
+   * node point, not centred on it, so the icon drawn at max zoom-in sits tens of px from the
+   * atlas coordinate (the screenshot of the first successful zoom put 北穿 near y 193, not 119).
+   */
+  readonly windowPx?: number;
+  /** Pin the locator to one banner (the 诺森霍洛村 relay); default: any banner. */
+  readonly anchor?: string;
+  /** How an unknown view is placed. Default anchor-then-clamp. */
+  readonly locate?: AtlasLocator;
+  /** Zoom plan. Default max — the tap is taken at the zoom where the label is drawn. */
+  readonly zoom?: AtlasZoom;
+  /** Pan corrections before giving up. Default 3. */
+  readonly maxCorrections?: number;
+  readonly timing?: Partial<AtlasTiming>;
+  readonly policy?: Partial<AtlasPolicy>;
+  /** Return the measurements. */
+  readonly trace?: boolean;
+}
+
+export interface AtlasTrace {
+  readonly target: Point;
+  readonly located?: {
+    readonly by: 'anchor' | 'clamp';
+    readonly anchor?: string;
+    readonly offset: Point;
+    readonly anchors?: number;
+    readonly spreadPx?: number;
+  };
+  readonly placed?: { readonly offset: Point; readonly level: number; readonly predicted: Point };
+  readonly corrections: number;
+  readonly zooms: number;
+  readonly confirmed?: { readonly by: 'icon' | 'label'; readonly score: number; readonly scale: number };
+  readonly tapped?: Point;
+}
+
+export type AtlasTravelResult =
+  | { readonly ok: true; readonly trace?: AtlasTrace }
+  | { readonly ok: false; readonly reason: TravelReason; readonly detail?: string; readonly trace?: AtlasTrace };
+
+const ATLAS_TIMING: AtlasTiming = { zoomSettleMs: ATLAS_ZOOM_SETTLE_MS, dragSettleMs: 300, parkSettleMs: 240 };
+const ATLAS_POLICY: AtlasPolicy = {
+  parkPoint: null,
+  dragStepPx: 320,
+  panGain: 1,
+  clampDrags: 8,
+  verifyRadiusPx: 180,
+};
+
+function clampNumber(value: number, low: number, high: number): number {
+  return Math.max(low, Math.min(high, value));
+}
+
+/** Strip coordinates a map point occupies at a zoom level, given the max-out offset. */
+function placementAt(point: Point, offset: Point, level: number): Point {
+  const factor = Math.pow(MAP_ZOOM.stepScale, level);
+  const centre = { x: MAP_STRIP.width / 2, y: MAP_STRIP.height / 2 };
+  return {
+    x: Math.round(centre.x + factor * (point.x - offset.x - centre.x)),
+    y: Math.round(centre.y + factor * (point.y - offset.y - centre.y)),
+  };
+}
+
+/** The offset that puts the point on the aim point when the view is zoomed to the level. */
+function offsetThatAims(point: Point, level: number): Point {
+  const factor = Math.pow(MAP_ZOOM.stepScale, level);
+  const centre = { x: MAP_STRIP.width / 2, y: MAP_STRIP.height / 2 };
+  const before = {
+    x: centre.x + (ATLAS_AIM.x - centre.x) / factor,
+    y: centre.y + (ATLAS_AIM.y - centre.y) / factor,
+  };
+  return {
+    x: clampNumber(Math.round(point.x - before.x), 0, WORLD_MAP_SIZE.width - MAP_STRIP.width),
+    y: clampNumber(Math.round(point.y - before.y), 0, WORLD_MAP_SIZE.height - MAP_STRIP.height),
+  };
+}
+
+function insideAtlasTap(point: Point): boolean {
+  return point.x >= ATLAS_TAP_AREA.x
+    && point.x <= ATLAS_TAP_AREA.x + ATLAS_TAP_AREA.width
+    && point.y >= ATLAS_TAP_AREA.y
+    && point.y <= ATLAS_TAP_AREA.y + ATLAS_TAP_AREA.height;
+}
+
+/** The highest zoom level at which the point still lands in the tap area. */
+function chooseLevel(point: Point, limit: number): number {
+  for (let level = limit; level >= 1; level -= 1) {
+    if (insideAtlasTap(placementAt(point, offsetThatAims(point, level), level))) return level;
+  }
+  return 0;
+}
 
 /** A coarse luma signature of the strip, for the zoom clamp's "did this press change anything" test. */
 function stripSignature(image: RgbaImage): Float64Array {
@@ -405,8 +546,37 @@ function signatureDiff(left: Float64Array, right: Float64Array): number {
   return sum / left.length;
 }
 
+/** One 放大 press, verified against the strip signature; a press that changed nothing is retried. */
+async function zoomInOneStep(env: WorldMapEnv, timing: AtlasTiming, log?: (line: string) => void): Promise<TravelResult> {
+  let previous: Float64Array | null = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (previous === null) {
+      const before = await captureAndObserve(env);
+      if (!before.ok) return before;
+      const image = await decode(before.frame);
+      if (image === null) return { ok: false, reason: 'unavailable', detail: 'frame did not decode' };
+      previous = stripSignature(image);
+    }
+    const sent = await env.actuator.holdKey(MAP_ZOOM_KEYS.in, PRESS_MS);
+    if (!sent.ok) return failure(sent.reason, sent.detail);
+    await pause(env, timing.zoomSettleMs);
+    const view = await captureAndObserve(env);
+    if (!view.ok) return view;
+    if (view.observation.screen !== 'worldmap') {
+      return { ok: false, reason: 'location-not-found', detail: 'the map closed while zooming in' };
+    }
+    const image = await decode(view.frame);
+    if (image === null) return { ok: false, reason: 'unavailable', detail: 'frame did not decode' };
+    const signature = stripSignature(image);
+    if (signatureDiff(previous, signature) >= 0.6) return { ok: true };
+    previous = signature;
+    log?.('wvd: the zoom press changed nothing; repeating it');
+  }
+  return { ok: true };
+}
+
 /**
- * Zoom out to the map's own clamp. The game has no zoom readout, so the clamp *is* the zoom state:
+ * Zoom out to the map's own clamp. The game has no zoom readout, so the clamp is the zoom state:
  * press Q until two presses in a row leave the strip unchanged.
  */
 async function zoomToMaxOut(env: WorldMapEnv): Promise<TravelResult> {
@@ -430,20 +600,58 @@ async function zoomToMaxOut(env: WorldMapEnv): Promise<TravelResult> {
 }
 
 /**
- * The view's atlas offset, from the first label banner that matches. The banner is screen-space art,
- * so its crop from the atlas matches a live frame unchanged; the match's top-left and the banner's
- * atlas top-left give the offset directly.
+ * Pan the content right and down until the map refuses to move: the view is then at the map's
+ * north-west corner, which is atlas (0,0) — verified on the saved corner frame (5 banners, 0 px
+ * spread). A clamp is exact whatever the drag gain does, which is why it is the fallback locator.
  */
-function locateAtlas(image: RgbaImage): { offset: Point; anchor: string } | null {
+async function clampToNorthWest(env: WorldMapEnv, policy: AtlasPolicy, timing: AtlasTiming, log?: (line: string) => void): Promise<TravelResult> {
+  const from = { x: 760, y: 420 };
+  const to = { x: 760 + policy.dragStepPx, y: 420 + policy.dragStepPx };
+  let previous: Float64Array | null = null;
+  for (let drag = 0; drag < policy.clampDrags; drag += 1) {
+    const sent = await env.actuator.drag(from, to, 300);
+    if (!sent.ok) return failure(sent.reason, sent.detail);
+    await pause(env, timing.dragSettleMs);
+    const view = await captureAndObserve(env);
+    if (!view.ok) return view;
+    if (view.observation.screen !== 'worldmap') {
+      return { ok: false, reason: 'location-not-found', detail: 'the map closed while clamping' };
+    }
+    const image = await decode(view.frame);
+    if (image === null) return { ok: false, reason: 'unavailable', detail: 'frame did not decode' };
+    const signature = stripSignature(image);
+    if (previous !== null && signatureDiff(previous, signature) < 0.6) {
+      log?.('wvd: the view is at the map north-west corner after ' + (drag + 1) + ' drags');
+      return { ok: true };
+    }
+    previous = signature;
+  }
+  return { ok: true };
+}
+
+/**
+ * The view's atlas offset from the label banners in one frame: every banner whose atlas rectangle is
+ * known votes, and the largest cluster within 6 px wins. Null when none is drawn.
+ */
+function locateView(image: RgbaImage, anchorId?: string): { offset: Point; anchor: string; anchors: number; spreadPx: number } | null {
+  const votes: { id: string; x: number; y: number }[] = [];
   for (const anchor of LABEL_ANCHORS) {
+    if (anchorId !== undefined && anchor.id !== anchorId) continue;
     const match = findTemplate(image, MAP_STRIP, anchor.template, { scales: [1], minScore: ATLAS_LABEL_FLOOR });
     if (match === null) continue;
-    return {
-      offset: offsetFromMatch(anchor, { x: match.at.x - MAP_STRIP.x, y: match.at.y }),
-      anchor: anchor.id,
-    };
+    const offset = offsetFromMatch(anchor, { x: match.at.x - MAP_STRIP.x, y: match.at.y });
+    votes.push({ id: anchor.id, x: offset.x, y: offset.y });
   }
-  return null;
+  if (votes.length === 0) return null;
+  let best = votes;
+  for (const vote of votes) {
+    const group = votes.filter((other) => Math.abs(other.x - vote.x) <= 6 && Math.abs(other.y - vote.y) <= 6);
+    if (group.length > best.length) best = group;
+  }
+  const x = Math.round(best.reduce((sum, vote) => sum + vote.x, 0) / best.length);
+  const y = Math.round(best.reduce((sum, vote) => sum + vote.y, 0) / best.length);
+  const spreadPx = Math.max(...best.map((vote) => Math.max(Math.abs(vote.x - x), Math.abs(vote.y - y))));
+  return { offset: { x, y }, anchor: best[0]!.id, anchors: best.length, spreadPx };
 }
 
 /** The icon part of a catalogued node: the top 68.7% of the legacy art (locations.ts's band). */
@@ -456,101 +664,294 @@ function iconTemplateFor(locationId: string): MatchTemplate | null {
 }
 
 /**
- * Confirm a site at the projected point by matching its own icon template there, and return the
- * matched icon's centre in strip coordinates. Null when the icon is not where the atlas says it is —
- * a stale atlas must not become a blind click.
+ * The icon's drawn scale at a zoom level: ~0.45 of the legacy art at max-out, 1.34x per step, with a
+ * +-15% sweep. Measured live: 0.917 at scale 0.96 on the max zoom-in frame.
  */
-function confirmSite(image: RgbaImage, site: WorldMapSite, projected: Point): Point | null {
-  if (site.templateId === undefined) return null;
-  const template = iconTemplateFor(site.templateId);
-  if (template === null) return null;
-  const area = {
-    x: MAP_STRIP.x + projected.x - ATLAS_VERIFY_RADIUS,
-    y: projected.y - ATLAS_VERIFY_RADIUS,
-    width: ATLAS_VERIFY_RADIUS * 2,
-    height: ATLAS_VERIFY_RADIUS * 2,
-  };
-  const match = findTemplate(image, area, template, { scales: ATLAS_ICON_SCALES, minScore: ATLAS_ICON_FLOOR });
-  if (match === null) return null;
-  return {
-    x: match.at.x + Math.round(match.width / 2) - MAP_STRIP.x,
-    y: match.at.y + Math.round(match.height / 2),
-  };
+function iconScalesAt(level: number): number[] {
+  const centre = 0.45 * Math.pow(MAP_ZOOM.stepScale, level);
+  return [0.85, 0.92, 1, 1.08, 1.15].map((fraction) => Math.round(centre * fraction * 100) / 100);
+}
+
+/** The banner's drawn scale at a zoom level (screen-space art scaled with the map). */
+function labelScalesAt(level: number): number[] {
+  const factor = Math.pow(MAP_ZOOM.stepScale, level);
+  return [0.94, 1, 1.06].map((scale) => Math.round(factor * scale * 100) / 100);
+}
+
+interface ConfirmSpec {
+  readonly by: AtlasConfirm;
+  readonly templateId: string | null;
+  readonly minScore: number;
+  readonly windowPx: number;
+  readonly site: WorldMapSite | null;
+}
+
+interface Confirmed {
+  readonly point: Point;
+  readonly by: 'icon' | 'label';
+  readonly score: number;
+  readonly scale: number;
 }
 
 /**
- * Travel to a site by its stored coordinate: open the map, zoom to the clamp, locate the view by a
- * label banner, pan the target into the safe area, confirm its icon, and tap. Every step that can
- * be wrong is re-measured from the frame instead of assumed.
+ * Confirm the node at the projected point and return its tap point in strip coordinates. The icon
+ * is checked first (it is drawn at every zoom); the label is the fallback and is placed relative to
+ * the icon through the atlas band, scaled by the level.
  */
-export async function travelViaAtlas(site: WorldMapSite, env: WorldMapEnv): Promise<TravelResult> {
-  const now = env.now ?? (() => Date.now());
-  const opened = await openWorldMap(env);
-  if (!opened.ok) return opened;
-  const zoomed = await zoomToMaxOut(env);
-  if (!zoomed.ok) return zoomed;
-
-  let lastReason: TravelResult = { ok: false, reason: 'location-not-found', detail: 'no attempt ran' };
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    if (env.abort?.aborted) return { ok: false, reason: 'cancelled' };
-    // Park the pointer first: it is drawn into the frame, and a drag leaves it on the node itself.
-    const parked = await env.actuator.tap(ATLAS_PARK_POINT);
-    if (!parked.ok) return failure(parked.reason, parked.detail);
-    await pause(env, ATLAS_PARK_SETTLE_MS);
-    const view = await captureAndObserve(env);
-    if (!view.ok) return view;
-    if (view.observation.screen !== 'worldmap') {
-      return { ok: false, reason: 'location-not-found', detail: 'the map closed while placing the site' };
-    }
-    const image = await decode(view.frame);
-    if (image === null) return { ok: false, reason: 'unavailable', detail: 'frame did not decode' };
-    const located = locateAtlas(image);
-    if (located === null) {
-      return { ok: false, reason: 'world-map-control-not-found', detail: 'no atlas label was in view' };
-    }
-    const target = screenPointOf(site, located.offset);
-    env.log?.('wvd: atlas ' + site.id + ' at ' + target.x + ',' + target.y
-      + ' (anchor ' + located.anchor + ', offset ' + located.offset.x + ',' + located.offset.y + ')');
-
-    if (insideSafeTap(target)) {
-      const confirmed = confirmSite(image, site, target);
-      if (confirmed === null) {
-        lastReason = {
-          ok: false,
-          reason: 'location-not-found',
-          detail: site.label + ' is not at its atlas point ' + target.x + ',' + target.y,
+function confirmAt(image: RgbaImage, level: number, projected: Point, spec: ConfirmSpec): Confirmed | null {
+  if (spec.by === 'none') return { point: projected, by: 'icon', score: 1, scale: 1 };
+  const radius = spec.windowPx;
+  if (spec.by !== 'label' && spec.templateId !== null) {
+    const template = iconTemplateFor(spec.templateId);
+    if (template !== null) {
+      const area = { x: MAP_STRIP.x + projected.x - radius, y: projected.y - radius, width: radius * 2, height: radius * 2 };
+      const match = findTemplate(image, area, template, { scales: iconScalesAt(level), minScore: spec.minScore });
+      if (match !== null) {
+        return {
+          point: { x: match.at.x + Math.round(match.width / 2) - MAP_STRIP.x, y: match.at.y + Math.round(match.height / 2) },
+          by: 'icon',
+          score: match.score,
+          scale: match.scale,
         };
-        env.log?.('wvd: the atlas placed ' + site.id + ' at ' + target.x + ',' + target.y + ' but its icon template did not match there');
-        return lastReason;
       }
-      const pressed = await env.actuator.tap({ x: MAP_STRIP.x + confirmed.x, y: confirmed.y });
-      if (!pressed.ok) return failure(pressed.reason, pressed.detail);
-      const left = await poll(env, (screen) => screen !== 'worldmap', LEAVE_TIMEOUT_MS, now, 'location-not-found');
-      if (left.ok) return { ok: true };
-      // A tap can be swallowed by a map that is still settling; re-place once before giving up.
-      lastReason = left;
-      continue;
     }
-
-    // The target is outside the safe area: pan it in, then measure the new view next pass.
-    const pan = attempt;
-    const desired = Math.max(SAFE_TAP.x + 140, Math.min(SAFE_TAP.x + SAFE_TAP.width - 140, target.x));
-    const drag = panDragFor(desired - target.x);
-    if (Math.abs(drag) < 20) {
-      return { ok: false, reason: 'location-not-found', detail: site.label + ' is outside the reachable map' };
-    }
-    const start = ATLAS_PAN_STARTS[pan % ATLAS_PAN_STARTS.length]!;
-    const from = {
-      x: Math.max(MAP_STRIP.x + 40, Math.min(MAP_STRIP.x + MAP_STRIP.width - 40 - drag, start.x)),
-      y: start.y,
-    };
-    env.log?.('wvd: panning the map by ' + drag + ' px to bring ' + site.label + ' into reach');
-    const dragged = await env.actuator.drag(from, { x: from.x + drag, y: from.y }, DRAG_MS);
-    if (!dragged.ok) return failure(dragged.reason, dragged.detail);
-    await pause(env, DRAG_SETTLE_MS);
-    lastReason = { ok: false, reason: 'location-not-found', detail: site.label + ' was not reachable after panning' };
   }
-  return lastReason;
+  const site = spec.site;
+  if (spec.by !== 'icon' && site !== null && site.labelBand !== undefined) {
+    const anchor = LABEL_ANCHORS.find((candidate) => candidate.id === site.id);
+    if (anchor !== undefined) {
+      const factor = Math.pow(MAP_ZOOM.stepScale, level);
+      const band = site.labelBand;
+      const at = {
+        x: Math.round(projected.x + factor * (band.x - site.x)),
+        y: Math.round(projected.y + factor * (band.y - site.y)),
+      };
+      const area = { x: MAP_STRIP.x + at.x - radius, y: at.y - radius, width: radius * 2, height: radius * 2 };
+      const match = findTemplate(image, area, anchor.template, { scales: labelScalesAt(level), minScore: ATLAS_LABEL_FLOOR });
+      if (match !== null) {
+        const topLeft = { x: match.at.x - MAP_STRIP.x, y: match.at.y };
+        return {
+          point: {
+            x: Math.round(topLeft.x + factor * (site.x - band.x)),
+            y: Math.round(topLeft.y + factor * (site.y - band.y)),
+          },
+          by: 'label',
+          score: match.score,
+          scale: match.scale,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+interface MapView {
+  readonly ok: true;
+  readonly image: RgbaImage;
+}
+interface MapViewFailure {
+  readonly ok: false;
+  readonly failure: TravelResult;
+}
+
+/** Let the map settle and hand back the decoded strip. No tap: every pillar point pans it. */
+async function lookAtMap(env: WorldMapEnv, policy: AtlasPolicy, timing: AtlasTiming): Promise<MapView | MapViewFailure> {
+  if (policy.parkPoint !== null) {
+    const parked = await env.actuator.tap(policy.parkPoint);
+    if (!parked.ok) return { ok: false, failure: failure(parked.reason, parked.detail) };
+  }
+  await pause(env, timing.parkSettleMs);
+  const view = await captureAndObserve(env);
+  if (!view.ok) return { ok: false, failure: view };
+  if (view.observation.screen !== 'worldmap') {
+    return { ok: false, failure: { ok: false, reason: 'location-not-found', detail: 'the map closed while placing the site' } };
+  }
+  const image = await decode(view.frame);
+  if (image === null) return { ok: false, failure: { ok: false, reason: 'unavailable', detail: 'frame did not decode' } };
+  return { ok: true, image };
+}
+
+function resolveAtlasTarget(target: AtlasTarget): { point: Point; site: WorldMapSite | null } | null {
+  if (target.kind === 'point') return { point: { x: target.x, y: target.y }, site: null };
+  const site = siteById(target.id);
+  return site === null ? null : { point: { x: site.x, y: site.y }, site };
+}
+
+function zoomLimitFor(zoom: AtlasZoom | undefined): number {
+  if (zoom === 'none') return 0;
+  if (zoom === 'in') return Math.min(1, MAP_ZOOM.steps);
+  if (typeof zoom === 'number') return clampNumber(Math.round(zoom), 0, MAP_ZOOM.steps);
+  return MAP_ZOOM.steps;
+}
+
+/**
+ * Travel to a stored coordinate: open the map, clamp the zoom out, locate the view, pan the site to
+ * the aim point, zoom in, confirm the node, tap it, and wait until the map is gone.
+ */
+export async function travelViaAtlas(
+  target: AtlasTarget,
+  env: WorldMapEnv,
+  options: AtlasTravelOptions = {},
+): Promise<AtlasTravelResult> {
+  const resolved = resolveAtlasTarget(target);
+  if (resolved === null) {
+    return { ok: false, reason: 'unknown-location', detail: target.kind === 'site' ? target.id : 'point' };
+  }
+  const policy: AtlasPolicy = { ...ATLAS_POLICY, ...options.policy };
+  const timing: AtlasTiming = { ...ATLAS_TIMING, ...options.timing };
+  const trace: {
+    target: Point;
+    corrections: number;
+    zooms: number;
+    located?: AtlasTrace['located'];
+    placed?: AtlasTrace['placed'];
+    confirmed?: AtlasTrace['confirmed'];
+    tapped?: Point;
+  } = { target: resolved.point, corrections: 0, zooms: 0 };
+  const finish = (result: TravelResult): AtlasTravelResult => {
+    const carried: AtlasTrace | undefined = options.trace === true ? { ...trace } : undefined;
+    return result.ok
+      ? { ok: true, trace: carried }
+      : { ok: false, reason: result.reason, detail: result.detail, trace: carried };
+  };
+  const spec: ConfirmSpec = {
+    by: options.confirm ?? 'icon',
+    templateId: options.templateId ?? resolved.site?.templateId ?? (target.kind === 'point' ? target.templateId ?? null : null),
+    minScore: options.minScore ?? ATLAS_ICON_FLOOR,
+    windowPx: options.windowPx ?? policy.verifyRadiusPx,
+    site: resolved.site,
+  };
+
+  const opened = await openWorldMap(env);
+  if (!opened.ok) return finish(opened);
+  const clamped = await zoomToMaxOut(env);
+  if (!clamped.ok) return finish(clamped);
+
+  // 1. Where is the view? One frame of banners is enough; the clamp is the fallback.
+  const first = await lookAtMap(env, policy, timing);
+  if (!first.ok) return finish(first.failure);
+  const located = locateView(first.image, options.anchor);
+  let offset: Point;
+  if (located !== null) {
+    offset = located.offset;
+    trace.located = { by: 'anchor', anchor: located.anchor, offset: located.offset, anchors: located.anchors, spreadPx: located.spreadPx };
+    env.log?.('wvd: atlas located by ' + located.anchor + ' at ' + located.offset.x + ',' + located.offset.y
+      + ' (' + located.anchors + ' anchors, spread ' + located.spreadPx + ' px)');
+  } else if ((options.locate ?? 'anchor-then-clamp') === 'anchor') {
+    return finish({ ok: false, reason: 'location-not-found', detail: 'no atlas label was in view' });
+  } else {
+    const corner = await clampToNorthWest(env, policy, timing, env.log);
+    if (!corner.ok) return finish(corner);
+    offset = { x: 0, y: 0 };
+    trace.located = { by: 'clamp', offset };
+  }
+
+  // 2. Plan: the highest level the placement can still put inside the tap area.
+  const limit = zoomLimitFor(options.zoom);
+  const level = chooseLevel(resolved.point, limit);
+  const desired = offsetThatAims(resolved.point, level);
+  const predicted = placementAt(resolved.point, desired, level);
+  trace.placed = { offset: desired, level, predicted };
+
+  // 3. Pan at max zoom-out: drag, measure the view again, and learn the gain from what actually
+  //    moved. The gain is not a constant (0.32 horizontally and 1.72 vertically on one live run,
+  //    2.2 on another), so a fixed constant would overshoot or crawl.
+  let gainX = policy.panGain;
+  let gainY = policy.panGain;
+  const corrections = options.maxCorrections ?? 8;
+  for (let step = 0; ; step += 1) {
+    if (env.abort?.aborted) return finish({ ok: false, reason: 'cancelled' });
+    const deltaX = desired.x - offset.x;
+    const deltaY = desired.y - offset.y;
+    // 16 atlas px is 38 strip px at max zoom-in — well inside the 80 px confirmation window.
+    if (Math.abs(deltaX) <= 16 && Math.abs(deltaY) <= 16) break;
+    if (step >= corrections) {
+      return finish({ ok: false, reason: 'location-not-found', detail: 'the map stayed ' + deltaX + ',' + deltaY + ' px from the planned offset' });
+    }
+    const drag = {
+      x: clampNumber(Math.round(-deltaX / Math.max(0.15, gainX)), -policy.dragStepPx, policy.dragStepPx),
+      y: clampNumber(Math.round(-deltaY / Math.max(0.15, gainY)), -policy.dragStepPx, policy.dragStepPx),
+    };
+    // Leave the pointer away from the projected target: the cursor is drawn into the frame and the
+    // confirmation looks in an 80 px window around it.
+    // Both ends stay inside the strip: a drag that starts on the black pillar is ignored (measured —
+    // three such drags moved the map 13, 0 and 0 px). The pointer ends on the side the drag travels
+    // toward, which is the side away from the target for the pan that brings the target in.
+    const end = {
+      x: drag.x >= 0 ? MAP_STRIP.x + MAP_STRIP.width - 40 : MAP_STRIP.x + 40,
+      y: drag.y >= 0 ? 960 : 60,
+    };
+    const start = {
+      x: clampNumber(end.x - drag.x, MAP_STRIP.x + 20, MAP_STRIP.x + MAP_STRIP.width - 20),
+      y: clampNumber(end.y - drag.y, 20, 1_040),
+    };
+    const actual = { x: end.x - start.x, y: end.y - start.y };
+    drag.x = actual.x;
+    drag.y = actual.y;
+    env.log?.('wvd: panning ' + drag.x + ',' + drag.y + ' to place ' + (resolved.site?.id ?? 'the point'));
+    const sent = await env.actuator.drag(start, end, 300);
+    if (!sent.ok) return finish(failure(sent.reason, sent.detail));
+    await pause(env, timing.dragSettleMs);
+    trace.corrections += 1;
+    const again = await lookAtMap(env, policy, timing);
+    if (!again.ok) return finish(again.failure);
+    const relocated = locateView(again.image, options.anchor);
+    if (relocated === null) {
+      const corner = await clampToNorthWest(env, policy, timing, env.log);
+      if (!corner.ok) return finish(corner);
+      offset = { x: 0, y: 0 };
+    } else {
+      const before = offset;
+      offset = relocated.offset;
+      const movedX = offset.x - before.x;
+      const movedY = offset.y - before.y;
+      // offset moves against the pointer, so the gain is -moved/drag. A sample that started or ended
+      // on a pan clamp is a truncated move and says nothing about the gain — the live run read 2.28
+      // from one that had hit the corner, which then overshot on the next drag.
+      const edge = (value: number, limit: number): boolean => value <= 1 || value >= limit - 1;
+      const maxX = WORLD_MAP_SIZE.width - MAP_STRIP.width;
+      const maxY = WORLD_MAP_SIZE.height - MAP_STRIP.height;
+      if (Math.abs(drag.x) >= 30 && Math.abs(movedX) >= 4 && !edge(before.x, maxX) && !edge(offset.x, maxX)) {
+        gainX = clampNumber(-movedX / drag.x, 0.15, 6);
+      }
+      if (Math.abs(drag.y) >= 30 && Math.abs(movedY) >= 4 && !edge(before.y, maxY) && !edge(offset.y, maxY)) {
+        gainY = clampNumber(-movedY / drag.y, 0.15, 6);
+      }
+      env.log?.('wvd: pan moved ' + movedX + ',' + movedY + ' for a ' + drag.x + ',' + drag.y + ' px drag (gain '
+        + gainX.toFixed(2) + ',' + gainY.toFixed(2) + ')');
+    }
+  }
+
+  // 4. Zoom to the planned level and confirm the node at the projected point. Each press is checked:
+  //    a swallowed E leaves the map at the previous level and the icon then matches at the wrong scale.
+  let levelNow = 0;
+  while (levelNow < level) {
+    const zoomed = await zoomInOneStep(env, timing, env.log);
+    if (!zoomed.ok) return finish(zoomed);
+    levelNow += 1;
+    trace.zooms += 1;
+  }
+  const view = await lookAtMap(env, policy, timing);
+  if (!view.ok) return finish(view.failure);
+  const confirmed = confirmAt(view.image, levelNow, predicted, spec);
+  if (confirmed === null) {
+    return finish({
+      ok: false,
+      reason: 'location-not-found',
+      detail: (resolved.site?.label ?? (target.kind === 'point' ? target.label ?? 'the point' : target.id))
+        + ' did not confirm at ' + predicted.x + ',' + predicted.y + ' (zoom ' + levelNow + ')',
+    });
+  }
+  trace.confirmed = { by: confirmed.by, score: confirmed.score, scale: confirmed.scale };
+  const tapPoint = { x: MAP_STRIP.x + confirmed.point.x, y: confirmed.point.y };
+  trace.tapped = tapPoint;
+  env.log?.('wvd: tapping ' + (resolved.site?.id ?? 'the point') + ' at ' + tapPoint.x + ',' + tapPoint.y
+    + ' (' + confirmed.by + ' ' + confirmed.score.toFixed(3) + ' @ ' + confirmed.scale + ')');
+  const pressed = await env.actuator.tap(tapPoint);
+  if (!pressed.ok) return finish(failure(pressed.reason, pressed.detail));
+  const left = await poll(env, (screen) => screen !== 'worldmap', LEAVE_TIMEOUT_MS, env.now ?? (() => Date.now()), 'location-not-found');
+  if (!left.ok) return finish(left);
+  return finish({ ok: true });
 }
 
 /**
@@ -568,8 +969,8 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
   // for destinations the atlas does not know.
   const atlasSite = env.atlas === true ? siteById(id) : null;
   if (atlasSite !== null) {
-    const viaAtlas = await travelViaAtlas(atlasSite, env);
-    if (viaAtlas.ok) return viaAtlas;
+    const viaAtlas = await travelViaAtlas({ kind: 'site', id }, env);
+    if (viaAtlas.ok) return { ok: true };
     env.log?.('wvd: the atlas could not place ' + entry.label + ' (' + viaAtlas.reason + '); falling back to the template search');
   }
 

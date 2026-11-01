@@ -36,7 +36,7 @@ import { TownPerceiver, WorldMapPerceiver } from '../src/perception/location.ts'
 import { DungeonSelectPerceiver } from '../src/perception/dungeon-select.ts';
 import { TRAVEL_IDS, LOCATIONS } from '../src/perception/locations.ts';
 import { MapPerceiver, readMapDetailed } from '../src/perception/map.ts';
-import { travelTo, zoomWorldMap, type WorldMapEnv } from '../src/actions/worldmap.ts';
+import { travelTo, travelViaAtlas, zoomWorldMap, type WorldMapEnv } from '../src/actions/worldmap.ts';
 import { createTaskRunner } from '../src/tasks/runner.ts';
 import { parseTask } from '../src/tasks/schema.ts';
 
@@ -118,6 +118,7 @@ function help(): void {
       drag: 'drag x1 y1 x2 y2 [ms] — the world-map pan',
       travel: 'travel <id> — open the world map and click a catalogued node',
       zoom: 'zoom <in|out> [times] — zoom the open world map, one step per press',
+      atlas: 'atlas <id> — travel by the stored atlas only (no template fallback), trace included',
       entry: 'entry [task.json] — run a task file\'s entry script',
     },
     destinations: [...TRAVEL_IDS],
@@ -243,6 +244,15 @@ try {
       if (!(await take())) break;
       const result = await travelTo(id, mapEnv());
       out({ ...result, command: 'travel', to: id });
+      if (!result.ok) process.exitCode = 1;
+      break;
+    }
+    case 'atlas': {
+      const id = args[0];
+      if (id === undefined) throw new Error('atlas needs a catalogued site id');
+      if (!(await take())) break;
+      const result = await travelViaAtlas({ kind: 'site', id }, mapEnv(), { trace: true });
+      out({ ...result, command: 'atlas', to: id });
       if (!result.ok) process.exitCode = 1;
       break;
     }
