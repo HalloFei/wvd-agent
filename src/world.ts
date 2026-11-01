@@ -256,14 +256,17 @@ const ORIENT_TRAVEL_TRIES = 2;
 const ORIENT_CLIMB_TRIES = 2;
 
 /**
- * How long the game needs after an orientation travel or a climb before its frame means anything. The
- * travel returns when the world map leaves, and the next frame is the load's own fade — a black frame
- * nobody perceived, which the session classifier must stop on. Live 2026-11-02: it ended a session
- * that had just landed 北穿幽冥城 at `unknown` confidence 0. During the settle the loop perceives and
- * keeps its stall clock, but takes no verdict and sends nothing. The entry script's `wait` is the
- * same fact stated in data.
+ * How long the game may take to load after an orientation travel or a climb. The travel returns when
+ * the world map leaves — or the Dungeon Select row is accepted — and the frames after it are the
+ * load's own fade: black, or a flat colour, at confidence 0. The session classifier must stop on
+ * such a frame, and live 2026-11-02 it ended two runs that had just arrived (北穿幽冥城, then 第三区).
+ *
+ * So the window is a *watch*: while it is open the loop keeps perceiving and keeps its stall clock,
+ * but takes no verdict and sends nothing. The first named frame closes it early; the bound is what
+ * keeps a load that never ends fatal. The entry script's `wait` + `expect dungeon` is the same fact
+ * stated in data.
  */
-const ORIENT_SETTLE_MS = 5_000;
+const ORIENT_SETTLE_MS = 20_000;
 /** The intents that send one command, as opposed to the ones that only hand the decision back. */
 const COMMAND_KINDS: ReadonlySet<Intent['kind']> = new Set<Intent['kind']>([
   'open-map',
@@ -978,10 +981,14 @@ export class WvdWorld implements World {
     this.#track(observation);
     this.#measureProgress(observation, now);
 
-    // A travel or a climb just landed: the game is in its load, and a black frame in that window is
-    // not a screen nobody could perceive — it is the transition itself. Watch, send nothing, take no
-    // verdict; the stall clock keeps running, so a load that never ends still stops the session.
-    if (now < this.#settleUntilMs) return;
+    // A travel or a climb just landed: the game is in its load. A named frame means the load is over
+    // and the loop carries on in this same tick; while the frame is nameless the loop only watches.
+    // A black frame here is the transition itself, not a screen nobody could perceive — but the
+    // window is bounded, so a load that never ends falls through to the classifier's stop.
+    if (now < this.#settleUntilMs) {
+      if (observation.confidence <= 0) return;
+      this.#settleUntilMs = 0;
+    }
 
     if (this.#cfg.sessionMaxMinutes > 0 && now - this.#sessionStartedAtMs >= this.#cfg.sessionMaxMinutes * 60_000) {
       await this.#endSession('the session time limit was reached', { report: true });

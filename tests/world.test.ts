@@ -1942,9 +1942,9 @@ describe('the orientation', () => {
     expect(calls).toEqual(['climb']);
     expect(actuator.calls).toEqual([]);
 
-    // The climb lands in the game's own load: the settle window watches it, then the hand-off waits
-    // for the walk the climb started — the loop commands nothing until the party stands.
-    clock.advance(5_100);
+    // The climb ends by starting a game-driven walk: the loop commands nothing until it stands. The
+    // first named frame (dungeon) closes the load window the climb opened.
+    clock.advance(600);
     await world.tick();
     expect(actuator.calls).toEqual([]);
 
@@ -1995,8 +1995,8 @@ describe('the orientation', () => {
     await world.tick();
     expect(world.isRunning()).toBe(true);
 
-    // The window is a wait, not a shield: the screen it lands on is acted on once it has passed.
-    clock.advance(5_000);
+    // The window is a wait, not a shield: the first named frame closes it and the loop acts at once.
+    clock.advance(500);
     perceiver.observation = { screen: 'dungeon-select', atMs: 100, confidence: 0.9 } as Observation;
     await world.tick();
     expect(travelCalls).toEqual(['ffxi-gcn', 'ffxi-zone3']);
