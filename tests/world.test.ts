@@ -851,6 +851,31 @@ describe('a walk stays in flight through the screens it produces', () => {
     ]);
   });
 
+  it('answers a walk with the chest prompt, whose animation defeats the stillness rule', async () => {
+    // The live failure of 2026-11-01: the prompt appeared 4 s into the walk, its highlight animates
+    // (two captures 0.5 s apart differed on 394k pixels), the scene never stood still, the walk
+    // never arrived, and the loop escalated instead of pressing 打开.
+    const { world, host, perceiver, actuator, source, clock } = makeWorld();
+    await started(world, host);
+    await world.tick();
+    expect(actuator.calls).toEqual(walkOne());
+
+    perceiver.observation = dungeonView;
+    source.moving = true;
+    for (let index = 0; index < 6; index += 1) {
+      clock.advance(500);
+      await world.tick();
+    }
+    expect(actuator.calls).toEqual(walkOne());
+
+    // Every frame is still different (the prompt animates), yet the screen is the arrival evidence.
+    perceiver.observation = chestPrompt;
+    clock.advance(100);
+    await world.tick();
+    expect(host.logRecords.some((record) => record.message.includes('arrived: the screen is chest-prompt'))).toBe(true);
+    expect(actuator.calls.at(-1)).toBe('tap 955,858');
+  });
+
   it('treats a readout that moves under an open map as the walk starting, not as arrival', async () => {
     // navigation §3d: automove does not care whether the map is open, so the party can walk with the
     // map up. The readout moving is the walk, and arrival is the scene standing still.

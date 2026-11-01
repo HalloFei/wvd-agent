@@ -1,0 +1,66 @@
+#!/usr/bin/env tsx
+/**
+ * Run the World itself for one farm cycle (the FFXI 4F task by default).
+ *
+ *   node ../Coopanion/node_modules/tsx/dist/cli.mjs scripts/world-run.ts
+ *
+ * Builds the production composition root (createWvdWorld) with a host stub, starts the console,
+ * and prints a state line whenever the World's own status changes. The World keeps its own stall
+ * detection (stallStopSeconds) and its session limit; this harness adds a wall-clock stop so a
+ * wedged run cannot hold the machine forever.
+ */
+import { createWvdWorld } from '../src/main.ts';
+import { WVD_DEFAULTS } from '../src/config.ts';
+
+const TASK = process.env.WVD_TASK ?? 'tasks/ffxi-4f.json';
+const WALL_MS = Number(process.env.WVD_WALL_MS ?? 45 * 60_000);
+const cfg = {
+  ...WVD_DEFAULTS,
+  enabled: true,
+  taskFile: TASK,
+  cycles: 1,
+  sessionMaxMinutes: 40,
+  stallStopSeconds: 120,
+};
+const world = createWvdWorld({ cfg, timezone: 'Asia/Shanghai' });
+const stamp = (): string => new Date().toISOString().slice(11, 19);
+const log = (level: string) => (line: string, data?: unknown): void => {
+  console.log(stamp() + ' ' + level + ' ' + line + (data === undefined ? '' : ' ' + JSON.stringify(data)));
+};
+const host = {
+  log: { info: log('info'), warn: log('warn'), error: log('error'), debug: (): void => {} },
+  pushEvent: async () => ({ cursor: 0 }),
+  pushDeferred: (): void => {},
+};
+let closing = false;
+async function finish(why: string): Promise<void> {
+  if (closing) return;
+  closing = true;
+  console.log(stamp() + ' STOP ' + why);
+  try { await world.invoke('wvd-console', 'stop'); } catch { /* already down */ }
+  const status = await world.invoke('wvd-console', 'status');
+  console.log('FINAL ' + JSON.stringify(status));
+}
+
+await world.start(host as never);
+console.log(stamp() + ' START running=' + world.isRunning());
+if (!world.isRunning()) {
+  const started = await world.invoke('wvd-console', 'start');
+  console.log(stamp() + ' START-FALLBACK ' + JSON.stringify(started));
+  if (!world.isRunning()) { console.log('DONE (the session did not start)'); process.exit(1); }
+}
+const began = Date.now();
+let last = '';
+while (Date.now() - began < WALL_MS) {
+  await new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+  const res = await world.invoke('wvd-console', 'status');
+  if (res.ok) {
+    const value = res.value as Record<string, unknown>;
+    const line = [value.state, value.screen, value.detail].filter((part) => part !== undefined && part !== '').join(' | ');
+    if (line !== last) { console.log(stamp() + ' STATE ' + line); last = line; }
+  }
+  if (!world.isRunning()) break;
+}
+await finish(world.isRunning() ? 'wall clock' : 'session ended');
+console.log('DONE');
+process.exit(0);

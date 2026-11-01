@@ -31,7 +31,10 @@ describe('parseTask', () => {
     // walk begins.
     const threeF = '0c0280000d6ff0000d7ffc0008c37000';
     expect(task.entry.steps).toContainEqual({ op: 'expectFloor', titleKey: threeF, timeoutMs: 5000 });
-    expect(task.entry.steps.at(-1)).toEqual({ op: 'wait', ms: 8000 });
+    // The entry hands over to the farm loop only once the 3-D view is named: a black transition
+    // frame as the World's first tick ended a session that had already arrived (2026-11-01).
+    expect(task.entry.steps.at(-2)).toEqual({ op: 'wait', ms: 8000 });
+    expect(task.entry.steps.at(-1)).toEqual({ op: 'expect', screen: 'dungeon', timeoutMs: 30000 });
 
     // The exit walks back through both floors, harkens out, then returns to town.
     expect(task.exit).toBeDefined();

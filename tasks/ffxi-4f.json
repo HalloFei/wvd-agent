@@ -17,7 +17,8 @@
       { "op": "tap", "at": [960, 158] },
       { "op": "wait", "ms": 900 },
       { "op": "tap", "at": [960, 236] },
-      { "op": "wait", "ms": 8000 }
+      { "op": "wait", "ms": 8000 },
+      { "op": "expect", "screen": "dungeon", "timeoutMs": 30000 }
     ]
   },
   "exit": {

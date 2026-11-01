@@ -200,6 +200,17 @@ const MOVEMENT_SCAN: Readonly<Record<string, number>> = { w: 0x11, a: 0x1e, s: 0
  * from — `F` is 移動至出口 only on the map, and 調査 in the 3D view (navigation §3d), so a blind
  * `F` is not a recovery. On the map the recovery is the exit itself (contracts §6).
  */
+/**
+ * Screens that can only be on screen while the party stands at something: the chest prompt, the
+ * opener panel, the loot card, a battle. They answer a walk by themselves, because the stillness
+ * rule cannot: the chest prompt animates its highlight (live 2026-11-01: two captures 0.5 s apart
+ * differ on 394k pixels), so the frame never stands still and a walk handed over to the prompt
+ * would never arrive — the loop then escalates instead of pressing 打开.
+ */
+const ARRIVAL_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
+  'chest-prompt', 'chest-open', 'loot', 'combat',
+]);
+
 function fallbackIntent(screen: ScreenId | null): Intent {
   return screen === 'dungeonmap' ? { kind: 'exit' } : { kind: 'open-map' };
 }
@@ -1177,6 +1188,16 @@ export class WvdWorld implements World {
     }
 
     const isWalk = inFlight.kind !== 'open-map';
+
+    // 0. A screen that can only exist when the party has stopped answers the walk itself, before
+    //    stillness is measured: those screens animate, so the stillness rule can never fire on them.
+    if (isWalk && ARRIVAL_SCREENS.has(observation.screen)) {
+      this.#inFlight = null;
+      this.#lastProgressAtMs = now;
+      this.#failed.clear();
+      this.#host?.log.info(`wvd: ${inFlight.kind} arrived: the screen is ${observation.screen}`);
+      return false;
+    }
 
     // 1. The command's own key working ------------------------------------------------------------
     if (!isWalk) {
