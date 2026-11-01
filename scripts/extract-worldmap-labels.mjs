@@ -8,15 +8,15 @@
  *
  *   node scripts/extract-worldmap-labels.mjs > src/perception/worldmap-labels.ts
  *
- * The atlas is the committed stitch `testdata/worldmap/2026-11-01/overview.jpg`; the boxes are the
+ * The atlas is the committed stitch `testdata/worldmap/2026-11-01/overview-full.jpg`; the boxes are the
  * banner rectangles measured on it (see docs/status.md, 2026-11-01).
  */
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
-const atlas = new URL('../testdata/worldmap/2026-11-01/overview.jpg', import.meta.url);
-const ATLAS_WIDTH = 1469;
-const ATLAS_HEIGHT = 1080;
+const atlas = new URL('../testdata/worldmap/2026-11-01/overview-full.jpg', import.meta.url);
+const ATLAS_WIDTH = 1360;
+const ATLAS_HEIGHT = 1496;
 /** Banner rectangles measured on the atlas, in atlas pixels: { id: [x, y, w, h] }. */
 const BOXES = [
   ['vnh', 567, 439, 153, 34],

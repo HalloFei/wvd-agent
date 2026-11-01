@@ -6,8 +6,8 @@
  *
  * - the map is drawn in a 960x1080 strip at x=480, with black pillars either side and the zoom
  *   legend on the right pillar;
- * - at max zoom-out the whole map is **1469x1080** atlas pixels: it pans at most 509 px
- *   horizontally and is exactly one screen tall, so vertical panning does not exist at that zoom;
+ * - at max zoom-out the whole map is **1360x1496** atlas pixels: it pans at most ~400 px
+ *   horizontally and ~416 px vertically, so it is one and a bit screens in each direction;
  * - zoom is discrete, **max zoom-out .. 3 steps .. max zoom-in**, about 1.34x content per step;
  * - a drag moves the map 2.05-2.48 px per px of pointer travel (the gain varies with the clamp), so
  *   a navigator pans, re-locates and corrects rather than trusting one open-loop drag;
@@ -22,7 +22,7 @@
 import { WORLD_MAP_LABELS, type WorldMapLabel } from './worldmap-labels.ts';
 
 /** The atlas's own pixel size, with its top-left corner as the origin. */
-export const WORLD_MAP_SIZE = { width: 1_469, height: 1_080 } as const;
+export const WORLD_MAP_SIZE = { width: 1_360, height: 1_496 } as const;
 
 /** Where the game draws the map: a portrait strip between the black pillars. */
 export const MAP_STRIP = { x: 480, y: 0, width: 960, height: 1_080 } as const;

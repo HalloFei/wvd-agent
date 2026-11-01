@@ -356,8 +356,11 @@ it as nominal and corrects closed-loop. 53 engine tests, typecheck clean.
   the right pillar, −/+/关闭 inside the strip's bottom band.
 - Zoom is discrete: **max zoom-out .. 3 steps .. max zoom-in**, measured **≈1.34x** content per step
   (max-out → 2 steps = 1.79x, max-out → 1 step = 1.30x, both by NCC on terrain).
-- At max zoom-out the whole map is **1469x1080** atlas pixels: it pans at most **509 px** horizontally
-  and is exactly one screen tall, so there is no vertical panning at that zoom.
+- At max zoom-out the whole map is **1360x1496** atlas pixels: it pans ~400 px horizontally and
+  ~416 px vertically. The vertical span was missed on the first pass because the capture's drag
+  out-of-bounds clamp (a negative client y) silently refused every southward drag; the corrected
+  capture reads the map's own clamp in both axes. Tiles are placed by the label offsets they report
+  (five anchors agreeing to within 6 px), not by assuming the pan distance.
 - **Labels scale with the zoom** (about 2.4x at max zoom-in), unlike the earlier note in
   `locations.ts`; at max zoom-out they are the size the templates were cropped at.
 - At max zoom-out the game **culls colliding labels** — 北穿幽冥城 is culled — while every icon is
