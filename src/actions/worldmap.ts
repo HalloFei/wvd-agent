@@ -1,5 +1,7 @@
 /**
- * Opening the world map and travelling to a catalogued node — the entry's two gestures.
+ * Opening the world map and travelling to a catalogued node — the entry's two gestures. The map's
+ * zoom steps are primitives of their own (`zoomWorldMap`), so the travel action and the operator's
+ * CLI drive the view the same way.
  *
  * Everything here is measured from the frame: the parchment control is found (or the party panel is
  * collapsed first so it appears), and the destination is the template the catalog names. A node
@@ -101,6 +103,22 @@ const MAX_DRAGS = PAN_OFFSETS.length;
 export function destinationOf(id: string): LocationEntry | null {
   const entry = LOCATIONS.get(id);
   return entry === undefined || entry.kind === 'control' ? null : entry;
+}
+
+/** The map's two zoom keys: Q 缩小 and E 放大, named the way a caller thinks of them. */
+export type ZoomDirection = 'in' | 'out';
+
+/**
+ * One zoom step on the open world map — the primitive `travelTo` and the operator's CLI share.
+ *
+ * It presses the key and waits for the view to settle; it reads no frame, so a caller that already
+ * captures between steps (the travel action) does not pay for a second decode.
+ */
+export async function zoomWorldMap(direction: ZoomDirection, env: WorldMapEnv): Promise<TravelResult> {
+  const pressed = await env.actuator.holdKey(direction === 'in' ? ZOOM_IN_SCAN : ZOOM_OUT_SCAN, PRESS_MS);
+  if (!pressed.ok) return failure(pressed.reason, pressed.detail);
+  await pause(env, ZOOM_SETTLE_MS);
+  return { ok: true };
 }
 
 /** Open the world map from whatever screen the party is on, or say why not. */
@@ -362,10 +380,9 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
 
     if (zooms < MAX_ZOOMS) {
       zooms += 1;
-      const zoomed = await env.actuator.holdKey(ZOOM_OUT_SCAN, PRESS_MS);
-      if (!zoomed.ok) return failure(zoomed.reason, zoomed.detail);
+      const zoomed = await zoomWorldMap('out', env);
+      if (!zoomed.ok) return zoomed;
       env.log?.(`wvd: ${entry.label} is not in view; zoomed out (${zooms}/${MAX_ZOOMS})`);
-      await pause(env, ZOOM_SETTLE_MS);
       continue;
     }
     if (drags < MAX_DRAGS) {
@@ -383,10 +400,9 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
       // The last drags brought 诺村's area into view; 北穿 sits next to it and can be separated by
       // zooming in. Zooming re-centres on the cursor, which the last drag left in the area.
       zoomsIn += 1;
-      const zoomed = await env.actuator.holdKey(ZOOM_IN_SCAN, PRESS_MS);
-      if (!zoomed.ok) return failure(zoomed.reason, zoomed.detail);
+      const zoomed = await zoomWorldMap('in', env);
+      if (!zoomed.ok) return zoomed;
       env.log?.(`wvd: zoomed in to separate ${entry.label} (${zoomsIn}/${MAX_ZOOM_INS})`);
-      await pause(env, ZOOM_SETTLE_MS);
       continue;
     }
     return { ok: false, reason: 'location-not-found', detail: `${entry.label} was not found on the map` };

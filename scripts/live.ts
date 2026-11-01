@@ -16,6 +16,7 @@
  *   key <g|l|q|f|r|e|tab|esc|space>  one key press
  *   drag x1 y1 x2 y2 [ms]      press, move, release (the world-map pan)
  *   travel <catalog id>        open the world map and click a destination (vnh, ffxi-gcn, ...)
+ *   zoom <in|out> [times]      zoom the open world map, one step per press
  *   entry [task.json]          run a task file's entry script (default tasks/ffxi-4f.json)
  *
  * The screen names, the live coordinates and the task-file rules are in
@@ -35,7 +36,7 @@ import { TownPerceiver, WorldMapPerceiver } from '../src/perception/location.ts'
 import { DungeonSelectPerceiver } from '../src/perception/dungeon-select.ts';
 import { TRAVEL_IDS, LOCATIONS } from '../src/perception/locations.ts';
 import { MapPerceiver, readMapDetailed } from '../src/perception/map.ts';
-import { travelTo } from '../src/actions/worldmap.ts';
+import { travelTo, zoomWorldMap, type WorldMapEnv } from '../src/actions/worldmap.ts';
 import { createTaskRunner } from '../src/tasks/runner.ts';
 import { parseTask } from '../src/tasks/schema.ts';
 
@@ -106,7 +107,7 @@ function describe(observation: Observation): Record<string, unknown> {
 function help(): void {
   out({
     ok: true,
-    usage: 'node scripts/live.mjs <status|observe|shot|focus|tap|key|drag|travel|entry>',
+    usage: 'node scripts/live.mjs <status|observe|shot|focus|tap|key|drag|travel|zoom|entry>',
     commands: {
       status: 'focus + the current screen (read-only)',
       observe: 'alias for status',
@@ -116,6 +117,7 @@ function help(): void {
       key: 'key <g|l|q|f|r|e|tab|esc|space>',
       drag: 'drag x1 y1 x2 y2 [ms] — the world-map pan',
       travel: 'travel <id> — open the world map and click a catalogued node',
+      zoom: 'zoom <in|out> [times] — zoom the open world map, one step per press',
       entry: 'entry [task.json] — run a task file\'s entry script',
     },
     destinations: [...TRAVEL_IDS],
@@ -156,6 +158,15 @@ try {
     }
     return focused;
   };
+
+  /** The world-map action's view of the machine: one helper, so travel and zoom cannot drift. */
+  const mapEnv = (): WorldMapEnv => ({
+    actuator,
+    capture: () => source.capture(),
+    observe: (frame) => see.observe(frame),
+    sleep: wait,
+    log,
+  });
 
   switch (command) {
     case 'status':
@@ -229,15 +240,34 @@ try {
       const id = args[0];
       if (id === undefined) throw new Error(`travel needs one of ${[...TRAVEL_IDS].join(', ')}`);
       if (!(await take())) break;
-      const result = await travelTo(id, {
-        actuator,
-        capture: () => source.capture(),
-        observe: (frame) => see.observe(frame),
-        sleep: wait,
-        log,
-      });
+      const result = await travelTo(id, mapEnv());
       out({ ...result, command: 'travel', to: id });
       if (!result.ok) process.exitCode = 1;
+      break;
+    }
+    case 'zoom': {
+      const direction = (args[0] ?? '').toLowerCase();
+      if (direction !== 'in' && direction !== 'out') throw new Error('zoom needs in or out');
+      const times = args[1] === undefined ? 1 : Number(args[1]);
+      if (!Number.isInteger(times) || times < 1 || times > 10) throw new Error('zoom times must be an integer 1-10');
+      if (!(await take())) break;
+      // Q and E are the map's zoom keys and nothing else's: refuse to press them on another screen.
+      const before = await see.observe(await source.capture());
+      if (before.screen !== 'worldmap') {
+        out({ ok: false, error: 'not-worldmap', screen: before.screen, confidence: Number(before.confidence.toFixed(3)) });
+        process.exitCode = 1;
+        break;
+      }
+      let zoomed = 0;
+      for (; zoomed < times; zoomed += 1) {
+        const result = await zoomWorldMap(direction, mapEnv());
+        if (!result.ok) {
+          out({ ...result, command: 'zoom', direction, step: zoomed });
+          process.exitCode = 1;
+          break;
+        }
+      }
+      if (zoomed === times) out({ ok: true, command: 'zoom', direction, times });
       break;
     }
     case 'entry': {

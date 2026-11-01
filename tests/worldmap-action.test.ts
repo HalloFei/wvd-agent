@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import type { ActionResult, Actuator, Frame, Observation, Point, RgbaImage } from '../src/contracts.ts';
-import { openWorldMap, travelTo, type WorldMapEnv } from '../src/actions/worldmap.ts';
+import { openWorldMap, travelTo, zoomWorldMap, type WorldMapEnv } from '../src/actions/worldmap.ts';
 
 async function frame(relative: string): Promise<Frame> {
   const bytes = await readFile(new URL('../' + relative, import.meta.url));
@@ -300,5 +300,28 @@ describe('travelTo', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('cancelled');
     expect(session.taps).toEqual([]);
+  });
+});
+
+describe('zoomWorldMap', () => {
+  it('presses Q to zoom out and E to zoom in, and settles after the press', async () => {
+    const fixturesNow = await fixtures();
+    const out = new Session(fixturesNow, { start: 'map' });
+    const before = out.clock;
+    expect(await zoomWorldMap('out', out)).toEqual({ ok: true });
+    expect(out.keys).toEqual([0x10]);
+    expect(out.clock).toBeGreaterThan(before);
+
+    const inMap = new Session(fixturesNow, { start: 'map' });
+    expect(await zoomWorldMap('in', inMap)).toEqual({ ok: true });
+    expect(inMap.keys).toEqual([0x12]);
+  });
+
+  it('returns a refused press unchanged, without settling', async () => {
+    const session = new Session(await fixtures(), { start: 'map' });
+    session.holdResult = { ok: false, reason: 'rejected', detail: 'not-foreground' };
+    const before = session.clock;
+    expect(await zoomWorldMap('out', session)).toEqual({ ok: false, reason: 'rejected', detail: 'not-foreground' });
+    expect(session.clock).toBe(before);
   });
 });
