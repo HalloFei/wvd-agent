@@ -114,6 +114,8 @@ export interface RouteCommands {
   tapLoot(): Promise<ActionResult>;
   /** Dismiss the loot result banner (the card's own continue arrow) when the card taps do not leave it. */
   dismissLoot(): Promise<ActionResult>;
+  /** The game's one-key heal: party card, sparkle, 恢复, close, with its own settles. */
+  healParty(): Promise<ActionResult>;
   /** Press 倍速 then 自动 once, for the battle on screen. */
   enableBattleAuto(): Promise<ActionResult>;
   /**
@@ -469,6 +471,8 @@ export class WvdWorld implements World {
   #lastQtePass: QtePass | null = null;
   /** The reroll budget is spent with nothing better: the bar is taken as the last attempt. */
   #qteGivenUp = false;
+  /** A battle or a chest happened: heal when the loop is back on the 3-D view. */
+  #healDue = false;
   /** The loot card's tap clock and count, so a modal that never leaves is bounded (lootTap*). */
   #lootTapAtMs: number | null = null;
   #lootTaps = 0;
@@ -940,6 +944,16 @@ export class WvdWorld implements World {
     // verdict is still taken — a stalled action has to be able to escalate — but nothing is sent.
     const waiting = await this.#advanceInFlight(observation, frame, now);
 
+    // The heal is the game's own quick heal, and it is only valid from the 3-D view: a battle or a
+    // chest set the flag, this tick spends it as one command (the four taps carry their own settles).
+    if (!waiting && this.#healDue && observation.screen === 'dungeon') {
+      this.#healDue = false;
+      const healed = await this.#commands.healParty();
+      if (healed.ok) this.#host?.log.info('wvd: healed the party');
+      else this.#host?.log.warn(`wvd: the heal was refused (${healed.reason})`);
+      return;
+    }
+
     const state: RouteState = {
       observation,
       willpower: this.#willpower,
@@ -1084,6 +1098,8 @@ export class WvdWorld implements World {
       this.#qteRerolls = 0;
       this.#lastQtePass = null;
       this.#qteGivenUp = false;
+      // Both are the moments after which the party is hurt: heal once the loop is back on the view.
+      this.#healDue = true;
     }
     this.#lastScreen = observation.screen;
     if (active) this.#lastProgressAtMs = now;

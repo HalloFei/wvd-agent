@@ -51,3 +51,24 @@ export async function confirmAutoHeal(actuator: Actuator): Promise<ActionResult>
 export async function closeCharacterPage(actuator: Actuator): Promise<ActionResult> {
   return actuator.tap(CHARACTER_PAGE_CLOSE_AT);
 }
+
+/** How long each screen of the heal needs before the next tap lands on it (measured live ~1 s). */
+export const HEAL_STEP_SETTLE_MS = 900;
+
+/**
+ * The whole heal in one command: party card -> sparkle -> 恢复 -> close, one tap per screen with the
+ * measured settle between them. The caller owns the decision (when a heal is due) and the guard
+ * (only from the 3-D view); a refused tap stops the sequence and is returned unchanged.
+ */
+export async function healParty(
+  actuator: Actuator,
+  sleep: (ms: number) => Promise<void>,
+): Promise<ActionResult> {
+  const steps: readonly Point[] = [CHARACTER_PAGE_AT, AUTO_HEAL_AT, AUTO_HEAL_CONFIRM_AT, CHARACTER_PAGE_CLOSE_AT];
+  for (const at of steps) {
+    const result = await actuator.tap(at);
+    if (!result.ok) return result;
+    await sleep(HEAL_STEP_SETTLE_MS);
+  }
+  return { ok: true };
+}

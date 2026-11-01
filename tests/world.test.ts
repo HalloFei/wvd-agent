@@ -273,6 +273,9 @@ const openerPanel: Observation = {
   opener: { members: [openerMember(10, 40), openerMember(10, 90)] },
 };
 
+/** The battle screen: the loop enables 倍速/自动 and waits for it to leave. */
+const combatView: Observation = { screen: 'combat', atMs: 100, confidence: 0.9 };
+
 /** The chest prompt: the 打开 button is its only command. */
 const chestPrompt: Observation = { screen: 'chest-prompt', atMs: 100, confidence: 1 };
 
@@ -382,6 +385,8 @@ function makeWorld(options: {
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
       dismissLoot: () => dismissLoot(actuator),
+      // The heal's taps are pinned in tests/heal.test.ts; the world tests only need the command.
+      healParty: async () => ({ ok: true }),
       enableBattleAuto: () => enableBattleAuto(actuator),
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
@@ -850,6 +855,34 @@ describe('a walk stays in flight through the screens it produces', () => {
       `key ${SCAN.G} 60`,
       `key ${SCAN.G} 60`,
     ]);
+  });
+
+  it('heals once after a battle, and again after a chest, and not twice on the same view', async () => {
+    const { world, host, perceiver, clock } = makeWorld({ observation: dungeonView });
+    await started(world, host);
+    const healed = () => host.logRecords.filter((record) => record.message.includes('healed the party')).length;
+
+    // A battle, then the view: the heal is the operator's after-every-battle step. The fight's own
+    // command stays in flight until its screen answers, so give the view a few ticks.
+    perceiver.observation = combatView;
+    clock.advance(100);
+    await world.tick();
+    expect(healed()).toBe(0);
+    perceiver.observation = dungeonView;
+    for (let index = 0; index < 12; index += 1) { clock.advance(500); await world.tick(); }
+    expect(healed()).toBe(1);
+
+    // The flag is spent: more view ticks do not heal again.
+    for (let index = 0; index < 6; index += 1) { clock.advance(500); await world.tick(); }
+    expect(healed()).toBe(1);
+
+    // A chest sets it again: loot, then the view.
+    perceiver.observation = { screen: 'loot', atMs: 100, confidence: 1 };
+    clock.advance(100);
+    await world.tick();
+    perceiver.observation = dungeonView;
+    for (let index = 0; index < 12; index += 1) { clock.advance(500); await world.tick(); }
+    expect(healed()).toBe(2);
   });
 
   it('answers a walk with the chest prompt, whose animation defeats the stillness rule', async () => {
