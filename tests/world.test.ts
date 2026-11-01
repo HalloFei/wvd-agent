@@ -1942,8 +1942,9 @@ describe('the orientation', () => {
     expect(calls).toEqual(['climb']);
     expect(actuator.calls).toEqual([]);
 
-    // The climb ends by starting a game-driven walk: the loop commands nothing until it stands.
-    clock.advance(600);
+    // The climb lands in the game's own load: the settle window watches it, then the hand-off waits
+    // for the walk the climb started — the loop commands nothing until the party stands.
+    clock.advance(5_100);
     await world.tick();
     expect(actuator.calls).toEqual([]);
 
@@ -1976,6 +1977,29 @@ describe('the orientation', () => {
     await world.tick();
     expect(travelCalls).toEqual([]);
     expect(actuator.calls).toHaveLength(1);
+  });
+
+  it('does not stop on the black frame a travel lands on', async () => {
+    // Live 2026-11-02: the travel to 北穿幽冥城 returned when the world map left, the next frame was
+    // the load's fade (unknown at confidence 0), and the session classifier stopped a run that had
+    // just arrived. The settle window watches that load instead of asking about it.
+    const { task } = goalTask();
+    const { world, host, perceiver, clock, travelCalls } = makeWorld({ observation: townView, task });
+    await started(world, host);
+
+    await world.tick();
+    expect(travelCalls).toEqual(['ffxi-gcn']);
+
+    perceiver.observation = { screen: 'unknown', atMs: 100, confidence: 0 } as Observation;
+    clock.advance(500);
+    await world.tick();
+    expect(world.isRunning()).toBe(true);
+
+    // The window is a wait, not a shield: the screen it lands on is acted on once it has passed.
+    clock.advance(5_000);
+    perceiver.observation = { screen: 'dungeon-select', atMs: 100, confidence: 0.9 } as Observation;
+    await world.tick();
+    expect(travelCalls).toEqual(['ffxi-gcn', 'ffxi-zone3']);
   });
 
   it('retries the world-map travel once, then stops with the reason', async () => {

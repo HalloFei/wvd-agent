@@ -254,6 +254,16 @@ const INITIAL_CHEST_BUDGET = 1;
  */
 const ORIENT_TRAVEL_TRIES = 2;
 const ORIENT_CLIMB_TRIES = 2;
+
+/**
+ * How long the game needs after an orientation travel or a climb before its frame means anything. The
+ * travel returns when the world map leaves, and the next frame is the load's own fade — a black frame
+ * nobody perceived, which the session classifier must stop on. Live 2026-11-02: it ended a session
+ * that had just landed 北穿幽冥城 at `unknown` confidence 0. During the settle the loop perceives and
+ * keeps its stall clock, but takes no verdict and sends nothing. The entry script's `wait` is the
+ * same fact stated in data.
+ */
+const ORIENT_SETTLE_MS = 5_000;
 /** The intents that send one command, as opposed to the ones that only hand the decision back. */
 const COMMAND_KINDS: ReadonlySet<Intent['kind']> = new Set<Intent['kind']>([
   'open-map',
@@ -513,6 +523,8 @@ export class WvdWorld implements World {
   #orientAbort: AbortController | null = null;
   #orientTravelFailures = 0;
   #orientClimbs = 0;
+  /** Until this instant the loop only watches: a travel or a climb just landed on a loading fade. */
+  #settleUntilMs = 0;
   /** The loot card's tap clock and count, so a modal that never leaves is bounded (lootTap*). */
   #lootTapAtMs: number | null = null;
   #lootTaps = 0;
@@ -858,6 +870,7 @@ export class WvdWorld implements World {
       this.#orientAbort = null;
       this.#orientTravelFailures = 0;
       this.#orientClimbs = 0;
+      this.#settleUntilMs = 0;
       this.#record('started', 'the session started');
       this.#unsubscribe = session.onEngineEvent?.((event) => {
         void this.onEngineEvent(event);
@@ -964,6 +977,11 @@ export class WvdWorld implements World {
     this.#lastObservation = observation;
     this.#track(observation);
     this.#measureProgress(observation, now);
+
+    // A travel or a climb just landed: the game is in its load, and a black frame in that window is
+    // not a screen nobody could perceive — it is the transition itself. Watch, send nothing, take no
+    // verdict; the stall clock keeps running, so a load that never ends still stops the session.
+    if (now < this.#settleUntilMs) return;
 
     if (this.#cfg.sessionMaxMinutes > 0 && now - this.#sessionStartedAtMs >= this.#cfg.sessionMaxMinutes * 60_000) {
       await this.#endSession('the session time limit was reached', { report: true });
@@ -1623,6 +1641,7 @@ export class WvdWorld implements World {
     this.#orienting = false;
     this.#orientTravelFailures = 0;
     this.#orientClimbs = 0;
+    this.#settleUntilMs = 0;
   }
 
   /**
@@ -2010,7 +2029,9 @@ export class WvdWorld implements World {
           return;
         }
         // The climb's last press starts a game-driven walk: the loop may not command a walking party,
-        // so the hand-off starts the same arrival book-keeping the entry's walk uses.
+        // so the hand-off starts the same arrival book-keeping the entry's walk uses. The load that
+        // follows the walk gets the same settle a travel does.
+        this.#settleUntilMs = this.#now() + ORIENT_SETTLE_MS;
         this.#handOffEntry(this.#now());
         return;
       }
@@ -2026,6 +2047,7 @@ export class WvdWorld implements World {
         if (result.ok) {
           this.#orientTravelFailures = 0;
           this.#lastProgressAtMs = this.#now();
+          this.#settleUntilMs = this.#now() + ORIENT_SETTLE_MS;
           return;
         }
         this.#orientTravelFailures += 1;
