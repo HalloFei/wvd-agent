@@ -15,7 +15,7 @@
  * The quick slots are the member's own pre-assigned skills (`技能切换`, R), so the level is whatever
  * the party configured: this module never picks a level.
  */
-import type { ActionResult, Actuator, Point } from '../contracts.ts';
+import type { ActionResult, Actuator, BattleOpener, BattleSlot, BattleTarget, Point } from '../contracts.ts';
 
 /** The four quick slots of the command phase, measured 2026-11-02 (their centres). */
 export const BATTLE_SLOTS: Readonly<Record<'左上' | '右上' | '左下' | '右下', Point>> = {
@@ -25,12 +25,7 @@ export const BATTLE_SLOTS: Readonly<Record<'左上' | '右上' | '左下' | '右
   右下: { x: 1_080, y: 700 },
 };
 
-/**
- * Where a cast is aimed. A multi-target skill resolves over its own targets, so the tap only says
- * "this side": the party (any member card — the `front` line is the front row's leftmost card) or an
- * enemy (the enemy the skill is anchored on).
- */
-export type BattleTarget = 'party-front' | 'enemy';
+
 
 /** The front row's leftmost member card: measured from the battle HUD, 2026-11-02. */
 export const PARTY_FRONT_AT: Point = { x: 787, y: 939 };
@@ -42,20 +37,20 @@ export const PARTY_FRONT_AT: Point = { x: 787, y: 939 };
  */
 export const ENEMY_TARGET_AT: Point = { x: 1_000, y: 540 };
 
-export type BattleSlot = keyof typeof BATTLE_SLOTS;
-
-export interface BattleOpener {
-  /** The member the opener belongs to; the World logs it, and the ACTIVE check is the caller's. */
-  readonly member: string;
-  readonly slot: BattleSlot;
-  readonly target: BattleTarget;
-}
+/** The operator's configuration: a list of members with their opener. */
+export const BATTLE_OPENERS: readonly BattleOpener[] = [
+  { name: '爱丽丝', slot: '右上', target: 'party-front' },
+];
 
 /**
- * The operator's configuration, for now as one constant: 爱丽丝's top-right skill, aimed at the party.
- * A second opener is a second entry when the config seam arrives (the console's config group).
+ * The filter: the opener configured for `name`, or null when the name is not on the list. A null answer
+ * (the reader could not tell, or the member has no entry) is a miss — the caller takes its default path
+ * and checks the next command phase, exactly as the operator asked.
  */
-export const BATTLE_OPENER: BattleOpener = { member: '爱丽丝', slot: '右上', target: 'party-front' };
+export function openerFor(name: string | null, openers: readonly BattleOpener[]): BattleOpener | null {
+  if (name === null) return null;
+  return openers.find((opener) => opener.name === name) ?? null;
+}
 
 /** How long the detail panel / target selection needs before the target tap lands on it. */
 export const OPENER_SETTLE_MS = 700;

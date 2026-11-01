@@ -463,6 +463,31 @@ replaces the default with a note in the commit that changes it.
 | `FarmPolicy`, `Intent` | §6 | Task 7 (`src/policy/route.ts`) |
 | `SessionVerdict` | §6 | Task 8 (`src/policy/session.ts`) |
 
+## 11. Battle openers
+
+The operator's rule (2026-11-02): a battle may open with configured skills before auto takes over.
+The config is a **list of members**; every command phase the loop reads the ACTIVE card's name and
+looks it up — on the list, that member's skill is cast (slot, then target); not on it, the loop's
+default runs and the next phase is checked. The name read is the one seam that is a stub today.
+
+```ts
+export type BattleSlot = '左上' | '右上' | '左下' | '右下';
+export type BattleTarget = 'party-front' | 'enemy';
+
+export interface BattleOpener {
+  readonly name: string;          // as the ACTIVE card draws it
+  readonly slot: BattleSlot;
+  readonly target: BattleTarget;  // multi-target: the tap names the side
+}
+
+export interface BattleMemberReader {
+  readActiveMember(frame: Frame): Promise<string | null>;
+}
+```
+
+`readActiveMember` is the space for the image read: a name template per member matched against the
+ACTIVE card's band. A null answer is a miss, never an error.
+
 ## 10. Farm tasks
 
 The task file design (`2026-10-24-task-file-design.md`) owns the rationale; this section is the

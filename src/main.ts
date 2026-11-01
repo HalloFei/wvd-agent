@@ -23,6 +23,7 @@ import {
   type Point,
 } from './contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
+import { BATTLE_OPENERS, castBattleOpener } from './actions/battle.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, enableBattleAuto, reenterChest, tapLoot } from './actions/chest.ts';
 import { healParty } from './actions/heal.ts';
 import { timeQte } from './actions/qte.ts';
@@ -218,16 +219,12 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       dismissLoot: () => dismissLoot(actuator),
       healParty: () => healParty(actuator, (ms) => new Promise((resolve) => setTimeout(resolve, ms))),
       enableBattleAuto: () => enableBattleAuto(actuator),
-      // Operator rule: 爱丽丝's top-right skill opens the battle, once, before auto takes over — but only
-      // when SHE is the ACTIVE member. That guard is not built yet (it needs a frame with her active;
-      // the captured phase had the main character active), and tapping whoever happens to be active is
-      // exactly what the operator forbade. So the command refuses, the loop logs it and auto runs; the
-      // action and its tests are ready in actions/battle.ts for the day the guard lands.
-      battleOpener: async () => ({
-        ok: false,
-        reason: 'rejected',
-        detail: 'the active-member guard is not built yet, so no slot is tapped',
-      }),
+      // The cast itself: the member's slot, then the side its skill resolves over (contracts §11).
+      battleOpener: (opener) => castBattleOpener(
+        actuator,
+        opener,
+        (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      ),
       // The attempt-vs-reroll policy's action: leave the QTE (free, chest §4) and re-click a card.
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
@@ -246,6 +243,13 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
           atlas: true,
         });
       },
+    },
+    // The opener list the operator configured, and the reader whose image templates are not built yet:
+    // it answers null, the filter takes that as a miss, and every battle falls through to auto. The
+    // space for the image read is this one object (contracts §11 `BattleMemberReader`).
+    battle: {
+      openers: BATTLE_OPENERS,
+      reader: { readActiveMember: async () => null },
     },
     openSession,
   });

@@ -63,6 +63,8 @@ import type {
   SessionTask,
   SessionVerdict,
   TravelOutcome,
+  BattleMemberReader,
+  BattleOpener,
 } from './contracts.ts';
 import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
@@ -81,6 +83,7 @@ import { tapOpenerCard } from './actions/opener.ts';
 import { bandSampler, REFERENCE_FRAME, type QteOutcome, type QteRefusal, type QteTimer } from './actions/qte.ts';
 import { openerCardCentre, openerSlot } from './perception/opener.ts';
 import { tileOnScreen } from './perception/map.ts';
+import { openerFor } from './actions/battle.ts';
 import { chooseOpener } from './policy/chest.ts';
 import { nextOrientStep, type OrientCommand } from './policy/orient.ts';
 import {
@@ -121,11 +124,10 @@ export interface RouteCommands {
   /** Press 倍速 then 自动 once, for the battle on screen. */
   enableBattleAuto(): Promise<ActionResult>;
   /**
-   * Cast the configured battle opener (one member's quick slot, then its target) — the operator's rule
-   * that 爱丽丝 opens a battle with her top-right skill before auto takes over. Only when the member it
-   * is configured for is the ACTIVE one; the command logs and refuses otherwise.
+   * Cast one configured battle opener: the member's quick slot, then the side its skill resolves over.
+   * Sent only when the filter below found that member's name on the opener list.
    */
-  battleOpener(): Promise<ActionResult>;
+  battleOpener(opener: BattleOpener): Promise<ActionResult>;
   /**
    * Leave the chest QTE without spending an attempt (chest §4): the round ✕ at the left of the
    * hotbar. Used by the attempt-vs-reroll policy, which changes the bar's speed by re-selecting the
@@ -184,6 +186,12 @@ export interface WvdWorldOptions {
   timing: QteTimer;
   /** Builds the engine for one session; absent means this World cannot farm at all. */
   openSession?: (() => Promise<SessionOpen>) | undefined;
+  /**
+   * The battle openers the operator configured, and the reader that names the member whose command
+   * phase is up (contracts §11). Absent leaves every battle to auto. A name that is not on the list —
+   * including a null from a reader that cannot tell — takes the default action and lets the battle run.
+   */
+  battle?: { readonly openers: readonly BattleOpener[]; readonly reader: BattleMemberReader } | undefined;
   /** The loop's scheduler: on in production, off in tests so a tick runs only when asked. */
   autoTick?: boolean | undefined;
   /** The one clock. `performance.now()` unless a test says otherwise. */
@@ -496,8 +504,9 @@ export class WvdWorld implements World {
   #cyclesDone = 0;
   /** 倍速 + 自动 pressed for the battle currently on screen; cleared by any other screen. */
   #battleAutoOn = false;
-  /** The opener was cast for the battle currently on screen; cleared with the battle. */
+  /** The battle's command phase was filtered for an opener; cleared with the battle. */
   #battleOpenerCast = false;
+  readonly #battle: { readonly openers: readonly BattleOpener[]; readonly reader: BattleMemberReader } | undefined;
   #unsubscribe: (() => void) | null = null;
   #running = false;
   #starting = false;
@@ -605,6 +614,7 @@ export class WvdWorld implements World {
     this.#timing = options.timing;
     this.#openSession = options.openSession;
     this.#autoTick = options.autoTick !== false;
+    this.#battle = options.battle;
     this.#now = options.now ?? (() => performance.now());
     this.#supervisor = new Supervisor(() => this.#host, this.#now);
   }
@@ -1991,13 +2001,12 @@ export class WvdWorld implements World {
           return;
         }
         this.#battleAutoOn = true;
-        // Operator rule 2026-11-02: the configured opener is cast once, before auto takes over. The
-        // command refuses when the ACTIVE member is not the one the opener is configured for.
-        if (!this.#battleOpenerCast && !this.#cfg.dryRun) {
+        // Operator rule 2026-11-02: the command phase's ACTIVE member is filtered against the configured
+        // opener list. On the list, that member's skill is cast before auto takes over; not on it — or a
+        // name the reader could not tell — the default (auto) runs and the battle carries on.
+        if (!this.#battleOpenerCast && !this.#cfg.dryRun && this.#battle !== undefined) {
           this.#battleOpenerCast = true;
-          const opener = await this.#commands.battleOpener();
-          if (opener.ok) this.#host?.log.info('wvd: cast the battle opener');
-          else this.#host?.log.warn(`wvd: the battle opener was not cast (${opener.reason}${opener.detail ? `: ${opener.detail}` : ''})`);
+          await this.#castOpener(context);
         }
         await this.#press('fight', fromScreen, () => this.#commands.enableBattleAuto());
         return;
@@ -2146,6 +2155,32 @@ export class WvdWorld implements World {
       default:
         return assertNever(command);
     }
+  }
+
+  /**
+   * The battle opener filter (contracts §11, operator rule 2026-11-02): read the ACTIVE member's name,
+   * look it up in the configured list, and cast that entry if it is there. A miss is a fallthrough —
+   * the caller goes on to auto battle — never an error and never a tap on another member's slot.
+   */
+  async #castOpener(context: TickContext | undefined): Promise<void> {
+    const battle = this.#battle;
+    if (battle === undefined || context === undefined) return;
+    let name: string | null = null;
+    try {
+      name = await battle.reader.readActiveMember(context.frame);
+    } catch (error) {
+      this.#host?.log.warn(`wvd: the active member could not be read (${message(error)})`);
+    }
+    const opener = openerFor(name, battle.openers);
+    if (opener === null) {
+      this.#host?.log.info(
+        `wvd: the active member is ${name ?? 'unreadable'}; it is not on the opener list, so the default action runs`,
+      );
+      return;
+    }
+    const cast = await this.#commands.battleOpener(opener);
+    if (cast.ok) this.#host?.log.info(`wvd: cast ${opener.name}'s ${opener.slot} opener at ${opener.target}`);
+    else this.#host?.log.warn(`wvd: ${opener.name}'s opener was not cast (${cast.reason}${cast.detail ? `: ${cast.detail}` : ''})`);
   }
 
   /**

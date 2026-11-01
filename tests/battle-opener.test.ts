@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { ActionResult, Actuator, Point } from '../src/contracts.ts';
+import type { ActionResult, Actuator, BattleOpener, Point } from '../src/contracts.ts';
 import {
-  BATTLE_OPENER, BATTLE_SLOTS, ENEMY_TARGET_AT, OPENER_SETTLE_MS, PARTY_FRONT_AT, castBattleOpener,
+  BATTLE_OPENERS, BATTLE_SLOTS, ENEMY_TARGET_AT, OPENER_SETTLE_MS, PARTY_FRONT_AT, castBattleOpener, openerFor,
 } from '../src/actions/battle.ts';
 
 /**
- * The battle opener (operator rule 2026-11-02): 爱丽丝's top-right skill, once at the start of a battle,
- * before auto takes over. Two taps and one pause — the slot, then the side the skill resolves over.
+ * The battle opener (operator rule 2026-11-02): a LIST of members with their skill and target. Every
+ * command phase filters the ACTIVE member against it; a match casts (slot -> target), a miss takes the
+ * default action and the battle carries on.
  */
 
 function fakeActuator(...results: ActionResult[]): Actuator & { readonly taps: Point[] } {
@@ -22,35 +23,53 @@ function fakeActuator(...results: ActionResult[]): Actuator & { readonly taps: P
 }
 
 const sleep = async (): Promise<void> => {};
+const alice: BattleOpener = { name: '爱丽丝', slot: '右上', target: 'party-front' };
 
-describe('the battle opener', () => {
+describe('the battle opener filter', () => {
+  it('is a list with 爱丽丝 and nobody else', () => {
+    expect(BATTLE_OPENERS).toEqual([alice]);
+  });
+
+  it('finds the entry for a listed name, and null for anything else', () => {
+    expect(openerFor('爱丽丝', BATTLE_OPENERS)).toEqual(alice);
+    expect(openerFor('本杰明', BATTLE_OPENERS)).toBeNull();
+    // A reader that cannot tell is a miss, never an error.
+    expect(openerFor(null, BATTLE_OPENERS)).toBeNull();
+  });
+
+  it('reads the slot and target from the entry, not from the member type', () => {
+    const enemy: BattleOpener = { name: '本杰明', slot: '左下', target: 'enemy' };
+    const list = [alice, enemy];
+    expect(openerFor('本杰明', list)).toEqual(enemy);
+    expect(openerFor('拉纳维尔', list)).toBeNull();
+  });
+});
+
+describe('the battle opener cast', () => {
   it('taps the configured slot, waits for its panel, then taps the party side', async () => {
     const actuator = fakeActuator();
-    const result = await castBattleOpener(actuator, BATTLE_OPENER, sleep);
+    const result = await castBattleOpener(actuator, alice, sleep);
 
     expect(result).toEqual({ ok: true });
-    // 爱丽丝's entry: her top-right slot, then the front row's card for a multi-heal.
     expect(actuator.taps).toEqual([BATTLE_SLOTS['右上'], PARTY_FRONT_AT]);
-    expect(BATTLE_OPENER).toEqual({ member: '爱丽丝', slot: '右上', target: 'party-front' });
   });
 
   it('aims an enemy-targeted opener at the enemy side', async () => {
     const actuator = fakeActuator();
-    await castBattleOpener(actuator, { ...BATTLE_OPENER, target: 'enemy' }, sleep);
+    await castBattleOpener(actuator, { ...alice, target: 'enemy' }, sleep);
 
     expect(actuator.taps).toEqual([BATTLE_SLOTS['右上'], ENEMY_TARGET_AT]);
   });
 
   it('stops at a refused slot press and never taps the target', async () => {
     const actuator = fakeActuator({ ok: false, reason: 'rejected', detail: 'not-foreground' });
-    const result = await castBattleOpener(actuator, BATTLE_OPENER, sleep);
+    const result = await castBattleOpener(actuator, alice, sleep);
 
     expect(result).toMatchObject({ ok: false, reason: 'rejected' });
     expect(actuator.taps).toHaveLength(1);
   });
 
-  it('keeps the measured geometry: the slot is the top-right one, above the tabs', async () => {
-    // Measured 2026-11-02 on the command phase: four quick slots in a 2x2 grid.
+  it('keeps the measured geometry: the slot is the top-right one, above the tabs', () => {
     expect(BATTLE_SLOTS['左上'].y).toBe(BATTLE_SLOTS['右上'].y);
     expect(BATTLE_SLOTS['左下'].y).toBe(BATTLE_SLOTS['右下'].y);
     expect(BATTLE_SLOTS['右上'].x).toBeGreaterThan(BATTLE_SLOTS['左上'].x);

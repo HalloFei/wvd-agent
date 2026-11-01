@@ -360,6 +360,38 @@ export interface ScriptEnv {
   readonly travel: (to: string) => Promise<TravelOutcome>;
 }
 
+// §11 Battle openers
+
+/** The four quick slots of the battle command phase, by their position in its 2x2 grid. */
+export type BattleSlot = '左上' | '右上' | '左下' | '右下';
+
+/**
+ * Which side a cast resolves over. A multi-target skill resolves over its own targets, so the tap only
+ * names the side: `party-front` is any party card (one tap, the heal covers the party), `enemy` is an
+ * enemy in the group (one tap, the skill hits many).
+ */
+export type BattleTarget = 'party-front' | 'enemy';
+
+/**
+ * One configured opener: a member's pre-assigned skill, cast once when that member is the one whose
+ * command phase is up. `name` is the member's name exactly as the ACTIVE card draws it; the list of
+ * openers is the operator's config, and a name that is not on it takes the default action.
+ */
+export interface BattleOpener {
+  readonly name: string;
+  readonly slot: BattleSlot;
+  readonly target: BattleTarget;
+}
+
+/**
+ * Reads the ACTIVE member's name off a battle frame, or null when it cannot tell (an unnamed frame, a
+ * member whose template is missing). This is the seam the image read lands in: the filter treats null
+ * exactly like a name that is not on the list — the default action, no slot tap.
+ */
+export interface BattleMemberReader {
+  readActiveMember(frame: Frame): Promise<string | null>;
+}
+
 /** What the loop needs from a task, and nothing else. */
 export interface SessionTask {
   enter(): Promise<ScriptResult>;

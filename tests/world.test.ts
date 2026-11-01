@@ -28,6 +28,8 @@ import type {
   Point,
   SessionTask,
   TaskDefinition,
+  BattleMemberReader,
+  BattleOpener,
 } from '../src/contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 import { acceptChestPrompt, cancelQte, DISARM_SCAN, dismissLoot, enableBattleAuto, reenterChest, tapLoot } from '../src/actions/chest.ts';
@@ -343,6 +345,8 @@ function makeWorld(options: {
   travelResult?: { ok: true } | { ok: false; reason: 'location-not-found' | 'unknown-location'; detail?: string };
   /** What a tile walk answers, when a test needs the game to refuse it (an unreachable cell). */
   moveResult?: ActionResult;
+  /** The opener list and the member reader (contracts §11); absent leaves battles to auto. */
+  battle?: { readonly openers: readonly BattleOpener[]; readonly reader: BattleMemberReader };
   host?: FakeHost;
   /**
    * The QTE timing sub-loop. The real one unless a test scripts it: a bar on screen would then
@@ -354,7 +358,7 @@ function makeWorld(options: {
   const perceiver = new ScriptedPerceiver(options.observation ?? dungeonMap);
   const actuator = options.actuator ?? new ScriptedActuator();
   const travelCalls: string[] = [];
-  let battleOpenerCalls = 0;
+  const openerCalls: string[] = [];
   const snapshotCalls: Array<number | undefined> = [];
   const shot = options.screenshot === null ? null : options.screenshot;
   const session: WvdSession = {
@@ -386,6 +390,7 @@ function makeWorld(options: {
     cfg,
     timezone: 'Asia/Shanghai',
     policy: options.policy ?? routePolicy,
+    battle: options.battle,
     classify,
     timing: options.timing ?? timeQte,
     commands: {
@@ -401,7 +406,7 @@ function makeWorld(options: {
       healParty: async () => ({ ok: true }),
       enableBattleAuto: () => enableBattleAuto(actuator),
       // The opener's taps are pinned in tests/battle-opener.test.ts; the world tests need the call.
-      battleOpener: async () => { battleOpenerCalls += 1; return { ok: true }; },
+      battleOpener: async (opener) => { openerCalls.push(opener.name); return { ok: true }; },
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
       travel: async (to) => {
@@ -419,7 +424,7 @@ function makeWorld(options: {
   });
   return {
     world, host, source, perceiver, actuator, cfg, snapshotCalls, clock, travelCalls,
-    battleOpenerCalls: () => battleOpenerCalls,
+    openerCalls,
     openSessionCalls: () => openSessionCalls,
   };
 }
@@ -924,23 +929,50 @@ describe('a walk stays in flight through the screens it produces', () => {
     ]);
   });
 
-  it('casts the battle opener once per battle, before auto', async () => {
-    // Operator rule 2026-11-02: 爱丽丝 opens every battle with her top-right skill, then auto runs. The
-    // opener is a `fight`-tick prefix, so it cannot be re-cast inside one battle; a new battle re-arms it.
-    const { world, host, actuator, perceiver, clock, battleOpenerCalls } = makeWorld({ observation: combatView });
+  it('casts a listed member\'s opener once per battle, before auto', async () => {
+    // Operator rule 2026-11-02: the ACTIVE member is filtered against the configured list; on it, the
+    // skill is cast before auto; not on it, the default runs. Alice acts first, so the first phase is hers.
+    const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
+    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
+    const { world, host, actuator, perceiver, clock, openerCalls } = makeWorld({ observation: combatView, battle });
     await started(world, host);
 
     await world.tick();
-    expect(battleOpenerCalls()).toBe(1);
+    expect(openerCalls).toEqual(['爱丽丝']);
     expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
 
-    // The battle leaves; once the fight's own wait settles, a new battle starts and re-arms the opener.
+    // The battle leaves; once the fight's own wait settles, a new battle starts and re-arms the filter.
     perceiver.observation = dungeonView;
     for (let index = 0; index < 14; index += 1) { clock.advance(500); await world.tick(); }
     perceiver.observation = combatView;
     clock.advance(500);
     await world.tick();
-    expect(battleOpenerCalls()).toBe(2);
+    expect(openerCalls).toEqual(['爱丽丝', '爱丽丝']);
+  });
+
+  it('does nothing but auto when the ACTIVE member is not on the opener list', async () => {
+    const reader: BattleMemberReader = { readActiveMember: async () => '本杰明' };
+    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
+    const { world, host, actuator, openerCalls } = makeWorld({ observation: combatView, battle });
+    await started(world, host);
+
+    await world.tick();
+    expect(openerCalls).toEqual([]);
+    // The default action is the auto battle the loop already sent.
+    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
+    expect(host.logRecords.some((line) => line.message.includes('not on the opener list'))).toBe(true);
+  });
+
+  it('treats an unreadable ACTIVE member as a miss, never a tap', async () => {
+    const reader: BattleMemberReader = { readActiveMember: async () => null };
+    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
+    const { world, host, actuator, openerCalls } = makeWorld({ observation: combatView, battle });
+    await started(world, host);
+
+    await world.tick();
+    expect(openerCalls).toEqual([]);
+    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
+    expect(host.logRecords.some((line) => line.message.includes('unreadable'))).toBe(true);
   });
 
   it('puts the heal before the next command in the cycle pipeline', async () => {
