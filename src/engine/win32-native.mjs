@@ -279,8 +279,21 @@ function absoluteMove(screenX, screenY) {
  */
 const device = {
   isForeground: (hwnd) => isForeground(hwnd),
+  /**
+   * A drag that leaves the client rectangle produces an absolute move outside the virtual screen,
+   * which Windows drops: the gesture then completes with no motion and looks like a swallowed drag
+   * (measured 2026-11-01 — a southward world-map sweep was refused this way for its whole run). The
+   * point is clamped to the client rectangle instead, so the pointer stays inside the window and the
+   * motion is always delivered. A caller's out-of-bounds point is a bug in the caller, but one that
+   * must not become silent dead input.
+   */
   moveToClient(hwnd, x, y) {
-    const point = { x: Math.round(x), y: Math.round(y) };
+    const client = clientRect(hwnd);
+    if (!client || client.width <= 0 || client.height <= 0) throw new Error('client-rect');
+    const point = {
+      x: Math.min(client.width - 1, Math.max(0, Math.round(x))),
+      y: Math.min(client.height - 1, Math.max(0, Math.round(y))),
+    };
     if (!ClientToScreen(hwnd, point)) throw new Error('client-to-screen');
     absoluteMove(point.x, point.y);
   },

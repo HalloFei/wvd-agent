@@ -18,6 +18,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import jpeg from 'jpeg-js';
 import { connectEngine, startEngine } from '../src/engine/child.ts';
 import { captureJpeg, focusGame, sendInput } from '../src/engine/win32.ts';
+import { decodeJpeg } from '../src/engine/gdiplus.mjs';
+import { WorldMapPerceiver, TownPerceiver } from '../src/perception/location.ts';
 
 const STRIP = { x: 480, y: 0, w: 960, h: 1080 };
 const args = process.argv.slice(2);
@@ -191,10 +193,41 @@ async function move(
   return null;
 }
 
+/**
+ * The screen this script is allowed to drive. The operator owns the machine and the game moves on
+ * its own, so a blind drag is not safe: the world map must be the current screen, and when the town
+ * is up the map is opened through its own button first. Anything else stops the run instead of
+ * pressing keys into an unknown screen.
+ */
+const worldMap = new WorldMapPerceiver();
+const town = new TownPerceiver();
+async function screenNow(): Promise<string> {
+  const bytes = await grabBytes();
+  const frame = { atMs: performance.now(), width: 1920, height: 1080, toRgba: async () => decodeJpeg(bytes) };
+  const map = await worldMap.observe(frame as never);
+  if (map.screen === 'worldmap') return 'worldmap';
+  return (await town.observe(frame as never)).screen;
+}
+async function grabBytes(): Promise<Uint8Array> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try { return (await captureJpeg(client)).bytes; } catch { await wait(150); }
+  }
+  throw new Error('capture never became fresh');
+}
+async function ensureWorldMap(): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const screen = await screenNow();
+    if (screen === 'worldmap') return;
+    if (screen !== 'town') throw new Error('the world map is not open (screen: ' + screen + ')');
+    await sendInput(client, { op: 'tap', x: 1_177, y: 1_012, count: 1 });
+    await wait(1_600);
+  }
+  throw new Error('the world map did not open from the town');
+}
+
 try {
   await focusGame(client);
-  // The caller opens the world map: the town's icon point sits one button-width from the map's own
-  // 关闭 button, so a blind "open" tap can close an already-open map instead.
+  await ensureWorldMap();
   const scan = zoom === 'in' ? 0x12 : 0x10;
   for (let i = 0; i < 8; i++) {
     await sendInput(client, { op: 'key', scan, holdMs: 60 });
