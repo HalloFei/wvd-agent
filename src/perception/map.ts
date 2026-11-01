@@ -493,7 +493,14 @@ function parseImage(image: RgbaImage): MapParse {
   if (!readout.ok) return readout;
 
   // 2. G2: the title bar's dark strip --------------------------------------------------------
-  if (darkFraction(data, width) < TITLE_BAR_DARK_FRACTION) return { ok: false, gate: 'title-bar-light' };
+  //    The panel is drawn translucent over the 3-D scene, so this strip is only dark when the
+  //    camera behind it is: the 2026-10-24 captures read 30-34 mean luma, a lava-lit 第四区 frame
+  //    read 64.7 (live 2026-11-01) and was refused although a human reads the same map instantly.
+  //    The title's own ink is the backdrop-independent evidence, so the strip is accepted when
+  //    either proof is there; a 3-D frame has neither.
+  if (darkFraction(data, width) < TITLE_BAR_DARK_FRACTION && titleBarInk(image) < TITLE_BAR_INK_MIN) {
+    return { ok: false, gate: 'title-bar-light' };
+  }
 
   // 3. One scan of the map panel feeds G3, G6's profiles, and both colour blobs. ---------------
   const panel = scanPanel(data, width);
@@ -605,11 +612,25 @@ interface Readout {
 type ReadoutParse = ({ readonly ok: true } & Readout) | { readonly ok: false; readonly gate: MapRefusalGate };
 
 function readReadout(data: Uint8Array, width: number): ReadoutParse {
+  // The map panel is drawn translucent over the 3-D scene: on a lava-lit floor the whole readout
+  // band sits above the ink threshold (live 2026-11-01, 第三区: every column lit through the band,
+  // so every column looked like chrome) and the absolute threshold read nothing. Shift the band
+  // down by its own median when that median is bright: the dark captures measure 20-40 and are
+  // untouched (shift 0), and a bright one lands the background back under the threshold with the
+  // glyph's contrast intact — the same frame the raw luma refused.
+  const samples: number[] = [];
+  for (let y = READOUT_Y; y < READOUT_Y + READOUT_H; y += 1) {
+    const row = y * width;
+    for (let x = 0; x < READOUT_W; x += 1) samples.push(lumaAt(data, (row + READOUT_X + x) * 4));
+  }
+  samples.sort((a, b) => a - b);
+  const bandMedian = samples[Math.floor(samples.length / 2)]!;
+  const shift = Math.max(0, Math.round(bandMedian - 70));
   const columnInk = new Uint8Array(READOUT_W);
   for (let y = READOUT_Y; y < READOUT_Y + READOUT_H; y += 1) {
     const row = y * width;
     for (let x = 0; x < READOUT_W; x += 1) {
-      if (lumaAt(data, (row + READOUT_X + x) * 4) > READOUT_INK_LUMA) columnInk[x] += 1;
+      if (lumaAt(data, (row + READOUT_X + x) * 4) - shift > READOUT_INK_LUMA) columnInk[x] += 1;
     }
   }
 
@@ -661,7 +682,7 @@ function readReadout(data: Uint8Array, width: number): ReadoutParse {
     if (to - from + 1 < READOUT_DIGIT_MIN_W || to - from + 1 > READOUT_DIGIT_MAX_W) {
       return { ok: false, gate: 'readout-digit-width' };
     }
-    const match = readDigit(data, width, from, to);
+    const match = readDigit(data, width, from, to, shift);
     if (!match) return { ok: false, gate: 'readout-digit-unmatched' };
     digits.push(match.digit);
     margins.push(match.margin);
@@ -684,11 +705,12 @@ function readDigit(
   width: number,
   from: number,
   to: number,
+  shift: number,
 ): { digit: string; margin: number } | null {
   for (let trim = 0; trim <= 5; trim += 1) {
     const end = to - trim;
     if (end - from + 1 < READOUT_DIGIT_MIN_W) return null;
-    const feature = glyphFeature(data, width, READOUT_X + from, READOUT_X + end);
+    const feature = glyphFeature(data, width, READOUT_X + from, READOUT_X + end, shift);
     if (!feature) continue;
     const match = matchDigit(feature);
     if (match) return match;
@@ -728,13 +750,14 @@ function glyphFeature(
   width: number,
   x0: number,
   x1: number,
+  shift: number,
 ): Float64Array | null {
   const sourceW = x1 - x0 + 1;
   const source = new Float64Array(READOUT_H * sourceW);
   for (let y = 0; y < READOUT_H; y += 1) {
     const row = (READOUT_Y + y) * width;
     for (let x = 0; x < sourceW; x += 1) {
-      const luma = lumaAt(data, (row + x0 + x) * 4);
+      const luma = lumaAt(data, (row + x0 + x) * 4) - shift;
       const scaled = ((luma - 70) / 170) * 255;
       source[y * sourceW + x] = scaled < 0 ? 0 : scaled > 255 ? 255 : scaled;
     }
