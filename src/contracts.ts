@@ -252,8 +252,11 @@ export type SessionVerdict = 'ok' | 'escalate' | 'stop';
 
 // §10 Farm tasks
 
-/** A script a task file can name. `enter` runs at session start; `exit` when the policy says leave. */
-export type ScriptId = 'enter' | 'exit';
+/**
+ * A script a task file can name. `enter` runs at session start (a scripted task only); `exit` when
+ * the policy says leave; `climb` when the orientation finds the party on the stair floor.
+ */
+export type ScriptId = 'enter' | 'exit' | 'climb';
 
 export type TaskKeyName = 'g' | 'l' | 'q' | 'f' | 'r' | 'tab' | 'esc' | 'space';
 
@@ -274,17 +277,50 @@ export interface TaskStep {
 
 export interface TaskScript { readonly timeoutMs: number; readonly steps: readonly TaskStep[] }
 
+/**
+ * Where a farm lives, and the one measured detour on the way (contracts §10).
+ *
+ * A goal task does not say how to drive the game from a known starting screen: it says where the
+ * farm is, and the World orients toward it from whatever screen the party is on. `site` is the
+ * world-map node, `zone` the Dungeon Select row that opens one of its zones.
+ */
+export interface TaskGoal {
+  readonly site: string;
+  readonly zone?: string;
+  /**
+   * The floor whose map carries the measured stair-up. A party already on that floor runs the climb
+   * script; the World never presses a blind tile from another floor.
+   */
+  readonly climb?: TaskClimb;
+}
+
+export interface TaskClimb {
+  /** The 32-hex floor key the climb script's own `expectFloor` falls back to. */
+  readonly from: string;
+  readonly script: TaskScript;
+}
+
 export interface TaskDefinition {
   readonly id: string;
   readonly label: string;
   readonly floor: { readonly titleKey: string };
-  readonly entry: TaskScript;
+  /** A scripted entry, for a task that drives itself from a known screen. Absent for a goal task. */
+  readonly entry?: TaskScript;
   readonly exit?: TaskScript;
+  /** The goal the World orients to, from any screen. Absent for a scripted task. */
+  readonly goal?: TaskGoal;
+}
+
+/** What the World needs to orient: where the farm is, and the floor it farms on. */
+export interface TaskOrient {
+  readonly goal: TaskGoal;
+  /** The task's own `floor.titleKey`: the floor the farm happens on. */
+  readonly floor: string;
 }
 
 export type TaskFileProblem =
   | 'not-json' | 'not-an-object' | 'missing-field' | 'unknown-field' | 'unknown-op'
-  | 'bad-coordinate' | 'bad-timeout' | 'bad-title-key' | 'unknown-location';
+  | 'bad-coordinate' | 'bad-timeout' | 'bad-title-key' | 'unknown-location' | 'exclusive-field';
 
 export type TaskLoad =
   | { readonly ok: true; readonly task: TaskDefinition }
@@ -324,6 +360,8 @@ export interface SessionTask {
   runScript(name: ScriptId): Promise<ScriptResult>;
   /** Stop at the next step boundary; a press already in flight completes. */
   abort(): void;
+  /** The orientation a goal task declares. Absent for a scripted task: its entry drives itself. */
+  readonly orient?: TaskOrient | undefined;
 }
 
 // §7 QTE timing

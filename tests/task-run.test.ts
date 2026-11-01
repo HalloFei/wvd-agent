@@ -237,6 +237,49 @@ describe('createTaskRunner', () => {
     expect(await created.runScript('exit')).toEqual({ ok: true, steps: 0, ms: 0 });
     expect(recorder.calls).toEqual([]);
   });
+
+  // --- the goal form: the World orients, the task carries the measured climb ---
+
+  const climbKey = '0c0280000d6ff0000d7ffc0008c37000';
+
+  it('runs the climb script, gated on the climb floor rather than the farm floor', async () => {
+    const goalTask = task({
+      entry: undefined,
+      goal: {
+        site: 'ffxi-gcn',
+        climb: { from: climbKey, script: script([{ op: 'expectFloor', timeoutMs: 5_000 }, { op: 'tap', at: [9, 10] }]) },
+      },
+    });
+    const { created, recorder } = runner([mapObservation(climbKey)], goalTask);
+
+    // The task's own floor is 'k…': the climb's expectFloor would mismatch without its own key.
+    expect(await created.runScript('climb')).toMatchObject({ ok: true });
+    expect(recorder.calls).toEqual(['tap 9,10']);
+  });
+
+  it('refuses the climb on any other floor, before its measured taps', async () => {
+    const goalTask = task({
+      entry: undefined,
+      goal: { site: 'ffxi-gcn', climb: { from: climbKey, script: script([{ op: 'expectFloor', timeoutMs: 150 }, { op: 'tap', at: [9, 10] }]) } },
+    });
+    const { created, recorder } = runner([mapObservation('b'.repeat(32))], goalTask);
+
+    expect(await created.runScript('climb')).toMatchObject({ ok: false, reason: 'floor-mismatch' });
+    expect(recorder.calls).toEqual([]);
+  });
+
+  it('hands the World the goal and the farm floor, and nothing for a scripted task', () => {
+    const goal = { site: 'ffxi-gcn', zone: 'ffxi-zone3' };
+    expect(runner([screen('dungeon')], task({ entry: undefined, goal })).created.orient)
+      .toEqual({ goal, floor: 'k'.repeat(32) });
+    expect(runner([screen('dungeon')]).created.orient).toBeUndefined();
+  });
+
+  it('runs no entry for a goal task: the orientation is the entry', async () => {
+    const { created, recorder } = runner([screen('dungeon')], task({ entry: undefined, goal: { site: 'ffxi-gcn' } }));
+    expect(await created.enter()).toEqual({ ok: true, steps: 0, ms: 0 });
+    expect(recorder.calls).toEqual([]);
+  });
 });
 
 describe('createTaskPolicy', () => {

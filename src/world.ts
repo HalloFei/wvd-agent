@@ -62,6 +62,7 @@ import type {
   ScriptResult,
   SessionTask,
   SessionVerdict,
+  TravelOutcome,
 } from './contracts.ts';
 import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
@@ -81,6 +82,7 @@ import { bandSampler, REFERENCE_FRAME, type QteOutcome, type QteRefusal, type Qt
 import { openerCardCentre, openerSlot } from './perception/opener.ts';
 import { tileOnScreen } from './perception/map.ts';
 import { chooseOpener } from './policy/chest.ts';
+import { nextOrientStep, type OrientCommand } from './policy/orient.ts';
 import {
   CONSOLE_GET_METHODS,
   CONSOLE_LOG_LIMIT,
@@ -130,6 +132,13 @@ export interface RouteCommands {
    * step off plus the step back on draws 打开 on the next frame. The hold is `hazardEscapeHoldMs`.
    */
   reenterChest(): Promise<ActionResult>;
+  /**
+   * Travel to a catalogued node on the world map: the orientation's one long command (contracts §10,
+   * the goal form). Unlike the single gestures above it reads frames — it opens the map, locates the
+   * view, pans and zooms, and confirms the node — so the deployment binds it to a source and a
+   * perceiver of its own, and `abort` is the session's signal for a stop that lands mid-travel.
+   */
+  travel(to: string, abort: AbortSignal): Promise<TravelOutcome>;
 }
 
 /** One session's collaborators: everything the loop drives, for as long as it runs. */
@@ -236,6 +245,15 @@ function routineQteRefusal(reason: QteRefusal): boolean {
  * `open-map` rather than `exit`.
  */
 const INITIAL_CHEST_BUDGET = 1;
+
+/**
+ * How many times the orientation may travel, and may climb, before it gives up (contracts §10).
+ * One retry per step: the world map's travel retries its own gestures inside, so a whole-travel
+ * retry is for a transition that landed badly; a second failed climb means the measured stair is
+ * not where the party stands, and a third attempt would walk the same tile again.
+ */
+const ORIENT_TRAVEL_TRIES = 2;
+const ORIENT_CLIMB_TRIES = 2;
 /** The intents that send one command, as opposed to the ones that only hand the decision back. */
 const COMMAND_KINDS: ReadonlySet<Intent['kind']> = new Set<Intent['kind']>([
   'open-map',
@@ -473,6 +491,17 @@ export class WvdWorld implements World {
   #qteGivenUp = false;
   /** A battle or a chest happened: heal when the loop is back on the 3-D view. */
   #healDue = false;
+
+  /**
+   * The orientation phase (contracts §10, the goal form). True from the session start until the map
+   * shows the farm floor; while it is true the loop sends the orientation's commands and lets the
+   * farm route answer the screens it owns (a chest, a bar, a fight).
+   */
+  #orienting = false;
+  /** Aborts an orientation travel or climb when the session ends under it. */
+  #orientAbort: AbortController | null = null;
+  #orientTravelFailures = 0;
+  #orientClimbs = 0;
   /** The loot card's tap clock and count, so a modal that never leaves is bounded (lootTap*). */
   #lootTapAtMs: number | null = null;
   #lootTaps = 0;
@@ -813,13 +842,24 @@ export class WvdWorld implements World {
       this.#lastFailed = false;
       this.#engineProblem = null;
       this.#cyclesDone = 0;
+      this.#orienting = false;
+      this.#orientAbort = null;
+      this.#orientTravelFailures = 0;
+      this.#orientClimbs = 0;
       this.#record('started', 'the session started');
       this.#unsubscribe = session.onEngineEvent?.((event) => {
         void this.onEngineEvent(event);
       }) ?? null;
-      // The task's entry script runs before the first tick: nothing is farmed until the task's own
-      // floor gate has passed. It is cancellable because `#running` is already true.
-      if (this.#task !== null) {
+      // A goal task has no entry script: the loop orients from whatever screen the party is on, and
+      // the first tick starts that work (contracts §10, the goal form). A scripted task instead runs
+      // its entry before the first tick: nothing is farmed until the task's own floor gate has
+      // passed. Both are cancellable because `#running` is already true.
+      if (this.#task?.orient !== undefined) {
+        this.#orienting = true;
+        this.#host?.log.info(
+          `wvd: orienting to ${this.#task.orient.goal.site} (farm floor ${this.#task.orient.floor})`,
+        );
+      } else if (this.#task !== null) {
         const entered = await this.#task.enter();
         if (!this.#running) return false;
         if (!entered.ok) {
@@ -987,6 +1027,32 @@ export class WvdWorld implements World {
     }
 
     if (waiting) return;
+
+    // The orientation (contracts §10, the goal form): from whatever screen the session started on,
+    // one command per tick until the map shows the farm floor. A screen the farm owns — a chest,
+    // the bar, the loot card, a battle — yields to the route below, so the orientation never
+    // abandons something the party is in the middle of.
+    if (this.#orienting) {
+      const orient = this.#task?.orient;
+      if (orient === undefined) {
+        this.#orienting = false;
+      } else {
+        const decision = nextOrientStep(observation, orient);
+        if (decision.kind === 'arrived') {
+          this.#orienting = false;
+          this.#host?.log.info(`wvd: on the farm floor (${orient.floor}); the farm takes over`);
+        } else if (decision.kind === 'wait') {
+          return;
+        } else if (decision.kind === 'stop') {
+          await this.#endSession(decision.reason, { report: true });
+          return;
+        } else if (decision.kind === 'command') {
+          await this.#orientTo(decision.command, observation.screen);
+          return;
+        }
+        // 'yield' falls through: the farm route finishes the chest or the fight the party is in.
+      }
+    }
 
     const intent = this.#policy.next(state);
     if (COMMAND_KINDS.has(intent.kind) && this.#failed.has(intent.kind)) {
@@ -1508,6 +1574,11 @@ export class WvdWorld implements World {
     this.#battleAutoOn = false;
     this.#lootTapAtMs = null;
     this.#lootTaps = 0;
+    // A new cycle orients afresh: the climb budget is per cycle, and the next cycle may leave the
+    // dungeon by the same measured stair the last one came up.
+    this.#orienting = false;
+    this.#orientTravelFailures = 0;
+    this.#orientClimbs = 0;
   }
 
   /**
@@ -1811,6 +1882,12 @@ export class WvdWorld implements World {
         this.#cyclesDone += 1;
         if (this.#cyclesDone < Math.max(1, this.#cfg.cycles) && this.#task !== null) {
           this.#resetCycle();
+          if (this.#task.orient !== undefined) {
+            // A goal task orients back in; there is no entry script to run.
+            this.#orienting = true;
+            this.#host?.log.info(`wvd: cycle ${this.#cyclesDone} done; orienting back to the farm`);
+            return;
+          }
           const entered = await this.#task.runScript('enter');
           if (!this.#running) return;
           if (!entered.ok) {
@@ -1834,6 +1911,92 @@ export class WvdWorld implements World {
         return;
       default:
         return assertNever(intent);
+    }
+  }
+
+  /**
+   * One command of the orientation (contracts §10, the goal form). It sends exactly one thing and
+   * lets the next tick's frame answer it, except the two long jobs — the world-map travel and the
+   * climb script — which are whole procedures with their own settle and their own retry budget.
+   *
+   * The two presses go through `#press` so they share the loop's in-flight rules: a map that never
+   * opens is not pressed twice, and a walk is waited out by arrival like any other.
+   */
+  async #orientTo(command: OrientCommand, fromScreen: ScreenId): Promise<void> {
+    switch (command.kind) {
+      case 'open-map':
+      case 'exit': {
+        // A command that already changed nothing on this screen is not sent again: the stall clock
+        // is what escalates it, exactly as on the farm path.
+        if (this.#failed.has(command.kind)) {
+          this.#host?.log.warn(`wvd: orienting: ${command.kind} already changed nothing here; not sending it again`);
+          return;
+        }
+        const send = command.kind === 'open-map'
+          ? () => this.#commands.openMap()
+          : () => this.#commands.automoveToExit();
+        await this.#press(command.kind, fromScreen, send);
+        return;
+      }
+      case 'climb': {
+        const task = this.#task;
+        if (task === null) return;
+        if (this.#cfg.dryRun) {
+          this.#host?.log.info('wvd: dry run, would climb to the farm floor');
+          return;
+        }
+        this.#orientClimbs += 1;
+        if (this.#orientClimbs > ORIENT_CLIMB_TRIES) {
+          await this.#endSession(
+            `the climb was tried ${ORIENT_CLIMB_TRIES} times and the party is still not on the farm floor`,
+            { report: true, failed: true },
+          );
+          return;
+        }
+        this.#host?.log.info(`wvd: climbing to the farm floor (attempt ${this.#orientClimbs})`);
+        const result = await task.runScript('climb');
+        if (!this.#running) return;
+        if (!result.ok) {
+          const detail = result.detail === undefined ? '' : ` (${result.detail})`;
+          await this.#endSession(
+            `the climb script stopped at step ${result.step}: ${result.reason}${detail}`,
+            { report: true, failed: result.reason !== 'cancelled' },
+          );
+          return;
+        }
+        // The climb's last press starts a game-driven walk: the loop may not command a walking party,
+        // so the hand-off starts the same arrival book-keeping the entry's walk uses.
+        this.#handOffEntry(this.#now());
+        return;
+      }
+      case 'travel': {
+        if (this.#cfg.dryRun) {
+          this.#host?.log.info(`wvd: dry run, would travel to ${command.to}`);
+          return;
+        }
+        this.#orientAbort ??= new AbortController();
+        this.#host?.log.info(`wvd: orienting: travelling to ${command.to}`);
+        const result = await this.#commands.travel(command.to, this.#orientAbort.signal);
+        if (!this.#running) return;
+        if (result.ok) {
+          this.#orientTravelFailures = 0;
+          this.#lastProgressAtMs = this.#now();
+          return;
+        }
+        this.#orientTravelFailures += 1;
+        const detail = result.detail === undefined ? '' : ` (${result.detail})`;
+        if (this.#orientTravelFailures >= ORIENT_TRAVEL_TRIES) {
+          await this.#endSession(
+            `the world-map travel to ${command.to} failed ${this.#orientTravelFailures} times: ${result.reason}${detail}`,
+            { report: true, failed: true },
+          );
+          return;
+        }
+        this.#host?.log.warn(`wvd: the world-map travel to ${command.to} failed (${result.reason}${detail}); trying once more`);
+        return;
+      }
+      default:
+        return assertNever(command);
     }
   }
 
@@ -1914,6 +2077,10 @@ export class WvdWorld implements World {
     const task = this.#task;
     this.#task = null;
     task?.abort();
+    // A stop that lands during the orientation's travel or climb must not keep pressing keys.
+    this.#orientAbort?.abort();
+    this.#orientAbort = null;
+    this.#orienting = false;
     const hadQuestion = this.#supervisor.isOpen();
     this.#running = false;
     this.#lastStopReason = reason;

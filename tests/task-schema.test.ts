@@ -14,7 +14,7 @@ const valid = {
 const text = (value: unknown) => JSON.stringify(value);
 
 describe('parseTask', () => {
-  it('parses the committed FFXI 4F task and its measured route', async () => {
+  it('parses the committed FFXI 4F goal and its measured route', async () => {
     const raw = await readFile(new URL('../tasks/ffxi-4f.json', import.meta.url), 'utf8');
     const loaded = parseTask(raw, TRAVEL_IDS);
 
@@ -25,16 +25,24 @@ describe('parseTask', () => {
     // The live 2026-10-31 4F key; the older fixture key differs by three bits and is also accepted.
     expect(task.floor.titleKey).toBe('000000007f3ffe007ffeff00220bb600');
 
-    // The stair-up leg is gated on 第三区's key. The 第四区 gate is the loop's now: the task policy
-    // checks every map read against the task floor, because a blind script cannot wait out the
-    // stair's game-driven walk and the map is opened by the loop after it. The entry ends where the
-    // walk begins.
+    // A goal task has no entry: the World orients from any screen to 北穿幽冥城's third zone, and
+    // the farm sits behind the measured stair up from 第三区.
+    expect(task.entry).toBeUndefined();
+    expect(task.goal?.site).toBe('ffxi-gcn');
+    expect(task.goal?.zone).toBe('ffxi-zone3');
     const threeF = '0c0280000d6ff0000d7ffc0008c37000';
-    expect(task.entry.steps).toContainEqual({ op: 'expectFloor', titleKey: threeF, timeoutMs: 5000 });
-    // The entry hands over to the farm loop only once the 3-D view is named: a black transition
-    // frame as the World's first tick ended a session that had already arrived (2026-11-01).
-    expect(task.entry.steps.at(-2)).toEqual({ op: 'wait', ms: 8000 });
-    expect(task.entry.steps.at(-1)).toEqual({ op: 'expect', screen: 'dungeon', timeoutMs: 30000 });
+    expect(task.goal?.climb?.from).toBe(threeF);
+    const climb = task.goal!.climb!.script.steps;
+    // The map is already open when the climb runs (the orientation opened it to read the floor), so
+    // its own gate is the only screen step: a wrong floor refuses before the measured taps.
+    expect(climb[0]).toEqual({ op: 'expectFloor', timeoutMs: 5000 });
+    expect(climb).toContainEqual({ op: 'key', key: 'r' });
+    expect(climb).toContainEqual({ op: 'tap', at: [960, 158], count: 1 });
+    expect(climb).toContainEqual({ op: 'tap', at: [960, 236], count: 1 });
+    // It hands over to the farm loop only once the 3-D view is named: a black transition frame as
+    // the World's first tick ended a session that had already arrived (2026-11-01).
+    expect(climb.at(-2)).toEqual({ op: 'wait', ms: 8000 });
+    expect(climb.at(-1)).toEqual({ op: 'expect', screen: 'dungeon', timeoutMs: 30000 });
 
     // The exit walks back through both floors, harkens out, then returns to town.
     expect(task.exit).toBeDefined();
@@ -93,7 +101,7 @@ describe('parseTask', () => {
 
     expect(loaded.ok).toBe(true);
     if (loaded.ok) {
-      expect(loaded.task.entry.steps[0]).toEqual({ op: 'expectFloor', titleKey: key, timeoutMs: 5000 });
+      expect(loaded.task.entry!.steps[0]).toEqual({ op: 'expectFloor', titleKey: key, timeoutMs: 5000 });
     }
   });
 
@@ -129,7 +137,7 @@ describe('parseTask', () => {
     const travel = { ...valid, entry: { steps: [{ op: 'travel', to: 'vnh' }] } };
     const loaded = parseTask(text(travel), new Set(['vnh']));
     expect(loaded.ok).toBe(true);
-    if (loaded.ok) expect(loaded.task.entry.steps[0]).toEqual({ op: 'travel', to: 'vnh' });
+    if (loaded.ok) expect(loaded.task.entry!.steps[0]).toEqual({ op: 'travel', to: 'vnh' });
 
     expect(parseTask(text(travel), new Set(['ffxi-gcn']))).toMatchObject({ ok: false, reason: 'unknown-location' });
     expect(parseTask(text({ ...valid, entry: { steps: [{ op: 'travel' }] } }), new Set(['vnh'])))
@@ -143,5 +151,73 @@ describe('parseTask', () => {
   it('refuses a key name it does not know', () => {
     const bad = { ...valid, exit: { steps: [{ op: 'key', key: 'enter' }] } };
     expect(parseTask(text(bad))).toMatchObject({ ok: false, reason: 'missing-field' });
+  });
+
+  // --- the goal form (contracts §10): a task that says where to farm instead of how to drive ---
+
+  const goalTask = {
+    id: 'ffxi-4f',
+    label: '[Chest] FFXI 4F',
+    floor: { titleKey: '000000007f3ffe007ffeff00220bb600' },
+    goal: { site: 'ffxi-gcn', zone: 'ffxi-zone3' },
+  };
+
+  it('accepts a goal task with no entry, and a scripted task with no goal', () => {
+    const goal = parseTask(text(goalTask), TRAVEL_IDS);
+    expect(goal.ok).toBe(true);
+    if (!goal.ok) return;
+    expect(goal.task.entry).toBeUndefined();
+    expect(goal.task.goal).toEqual({ site: 'ffxi-gcn', zone: 'ffxi-zone3' });
+
+    const scripted = parseTask(text(valid));
+    expect(scripted.ok).toBe(true);
+    if (scripted.ok) expect(scripted.task.goal).toBeUndefined();
+  });
+
+  it('refuses a task that carries both a goal and an entry, and one that carries neither', () => {
+    expect(parseTask(text({ ...valid, goal: { site: 'ffxi-gcn' } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'exclusive-field' });
+    const { entry: _entry, ...noEntry } = valid;
+    expect(parseTask(text(noEntry))).toMatchObject({ ok: false, reason: 'missing-field' });
+  });
+
+  it('refuses a goal site or zone the catalog does not know', () => {
+    expect(parseTask(text({ ...goalTask, goal: { site: 'atlantis' } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'unknown-location' });
+    expect(parseTask(text({ ...goalTask, goal: { site: 'ffxi-gcn', zone: 'nowhere' } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'unknown-location' });
+    // a goal is validated only when the caller has a catalog to validate against
+    expect(parseTask(text({ ...goalTask, goal: { site: 'atlantis' } })).ok).toBe(true);
+  });
+
+  it('parses the climb: its from-floor key and a script under the same rules', () => {
+    const climb = {
+      ...goalTask,
+      goal: {
+        site: 'ffxi-gcn',
+        zone: 'ffxi-zone3',
+        climb: {
+          from: '0c0280000d6ff0000d7ffc0008c37000',
+          script: { timeoutMs: 60000, steps: [{ op: 'key', key: 'r' }, { op: 'expectFloor', timeoutMs: 5000 }] },
+        },
+      },
+    };
+    const loaded = parseTask(text(climb), TRAVEL_IDS);
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    expect(loaded.task.goal?.climb?.from).toBe('0c0280000d6ff0000d7ffc0008c37000');
+    expect(loaded.task.goal?.climb?.script.steps).toEqual([
+      { op: 'key', key: 'r' },
+      { op: 'expectFloor', timeoutMs: 5000 },
+    ]);
+  });
+
+  it('refuses a malformed climb key and a bad step inside the climb script', () => {
+    const badKey = { ...goalTask, goal: { site: 'ffxi-gcn', climb: { from: 'xyz', script: { steps: [{ op: 'tap', at: [1, 1] }] } } } };
+    expect(parseTask(text(badKey), TRAVEL_IDS)).toMatchObject({ ok: false, reason: 'bad-title-key' });
+    const badStep = { ...goalTask, goal: { site: 'ffxi-gcn', climb: { from: 'a'.repeat(32), script: { steps: [{ op: 'jump' }] } } } };
+    expect(parseTask(text(badStep), TRAVEL_IDS)).toMatchObject({ ok: false, reason: 'unknown-op' });
+    const noSteps = { ...goalTask, goal: { site: 'ffxi-gcn', climb: { from: 'a'.repeat(32), script: { steps: [] } } } };
+    expect(parseTask(text(noSteps), TRAVEL_IDS)).toMatchObject({ ok: false, reason: 'missing-field' });
   });
 });

@@ -96,13 +96,20 @@ export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
     }
   };
 
-  const runScript = async (name: ScriptId, script: TaskScript | undefined): Promise<ScriptResult> => {
+  /** The script a name stands for: the climb's floor gate is its own key, not the farm floor's. */
+  const scriptFor = (name: ScriptId): { script: TaskScript | undefined; floor: string } => {
+    if (name === 'enter') return { script: deps.task.entry, floor: deps.task.floor.titleKey };
+    if (name === 'exit') return { script: deps.task.exit, floor: deps.task.floor.titleKey };
+    return { script: deps.task.goal?.climb?.script, floor: deps.task.goal?.climb?.from ?? deps.task.floor.titleKey };
+  };
+
+  const runScript = async (name: ScriptId, script: TaskScript | undefined, floor: string): Promise<ScriptResult> => {
     if (script === undefined) return { ok: true, steps: 0, ms: 0 };
     const startedAt = Date.now();
     if (name === 'exit' && !await closeMapIfOpen()) {
       return { ok: false, step: 0, reason: 'expect-timeout', detail: 'the map did not close' };
     }
-    const result = await runSteps(script, env(), deps.task.floor.titleKey);
+    const result = await runSteps(script, env(), floor);
     deps.log(result.ok
       ? `wvd: ${name} script finished (${result.steps} steps, ${result.ms} ms)`
       : `wvd: ${name} script stopped at step ${result.step} (${result.reason}${result.detail ? `: ${result.detail}` : ''}) after ${Date.now() - startedAt} ms`);
@@ -110,8 +117,17 @@ export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
   };
 
   return {
-    enter: () => runScript('enter', deps.task.entry),
-    runScript: (name: ScriptId) => runScript(name, name === 'enter' ? deps.task.entry : deps.task.exit),
+    enter: () => {
+      const { script, floor } = scriptFor('enter');
+      return runScript('enter', script, floor);
+    },
+    runScript: (name: ScriptId) => {
+      const { script, floor } = scriptFor(name);
+      return runScript(name, script, floor);
+    },
     abort: () => controller.abort(),
+    ...(deps.task.goal === undefined
+      ? {}
+      : { orient: { goal: deps.task.goal, floor: deps.task.floor.titleKey } }),
   };
 }

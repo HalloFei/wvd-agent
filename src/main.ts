@@ -26,6 +26,7 @@ import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, enableBattleAuto, reenterChest, tapLoot } from './actions/chest.ts';
 import { healParty } from './actions/heal.ts';
 import { timeQte } from './actions/qte.ts';
+import { travelTo } from './actions/worldmap.ts';
 import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
 import { connectEngine, startEngine, type EngineClient } from './engine/child.ts';
@@ -68,6 +69,10 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
   // The task the running session farms with; the decorator reads it per tick, so a session that
   // loaded no file behaves exactly like the v1 route.
   let task: TaskDefinition | null = null;
+  // The session that owns the engine right now. Only the orientation's travel needs it: every other
+  // command goes through the actuator alone, while a travel reads frames, so the composition root
+  // keeps the live session for the one command that is bound to it.
+  let live: WvdSession | null = null;
 
   /** The package root: `tasks/` sits beside `src/`, and a relative `taskFile` resolves from here. */
   const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -172,10 +177,12 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       },
       onEngineEvent: (listener: (event: EngineEvent) => void) => client.onEvent(listener),
       close: () => {
+        live = null;
         engine?.close();
         engine = null;
       },
     };
+    live = session;
     const taskRunner = loaded === null ? undefined : createTaskRunner({
       task: loaded,
       source: session.source,
@@ -206,6 +213,21 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       // The attempt-vs-reroll policy's action: leave the QTE (free, chest §4) and re-click a card.
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
+      // The orientation's one long command. It reads frames, so it is bound to the live session's
+      // own source and perceiver; the atlas is the stored map (contracts §10, the goal form).
+      travel: async (to, abort) => {
+        const session = live;
+        if (session === null) return { ok: false, reason: 'capture-unavailable', detail: 'no session is open' };
+        return travelTo(to, {
+          actuator: session.actuator,
+          capture: () => session.source.capture(),
+          observe: (frame) => session.perceiver.observe(frame),
+          sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+          abort,
+          log: (line) => world?.note(line),
+          atlas: true,
+        });
+      },
     },
     openSession,
   });

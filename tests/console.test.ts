@@ -213,6 +213,8 @@ function makeConsole(options: {
       enableBattleAuto: () => enableBattleAuto(actuator),
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
+      // This harness never orients: the World runs the built-in route with no task file.
+      travel: async () => ({ ok: true }),
     },
     openSession: options.noEngine
       ? undefined

@@ -18,13 +18,16 @@ import type {
   ActionResult,
   Actuator,
   EngineEvent,
+  FarmPolicy,
   Frame,
   FrameSource,
   MapState,
+  MapIcon,
   Observation,
   Perceiver,
   Point,
   SessionTask,
+  TaskDefinition,
 } from '../src/contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 import { acceptChestPrompt, cancelQte, DISARM_SCAN, dismissLoot, enableBattleAuto, reenterChest, tapLoot } from '../src/actions/chest.ts';
@@ -32,6 +35,7 @@ import { timeQte, type QteTimer, type QteTimingOptions } from '../src/actions/qt
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { MAX_PRESS_HOLD_MS } from '../src/contracts.ts';
 import { routePolicy } from '../src/policy/route.ts';
+import { createTaskPolicy } from '../src/tasks/policy.ts';
 import { tileOnScreen } from '../src/perception/map.ts';
 import { classify } from '../src/policy/session.ts';
 import { WvdWorld, type WvdSession } from '../src/world.ts';
@@ -333,6 +337,10 @@ function makeWorld(options: {
   openSessionGate?: Promise<void>;
   /** The task a session runs, when the test exercises the entry hand-off. */
   task?: SessionTask;
+  /** The policy under test; the route alone unless a test decorates it (the task decorator). */
+  policy?: FarmPolicy;
+  /** What the orientation's world-map travel answers. */
+  travelResult?: { ok: true } | { ok: false; reason: 'location-not-found' | 'unknown-location'; detail?: string };
   host?: FakeHost;
   /**
    * The QTE timing sub-loop. The real one unless a test scripts it: a bar on screen would then
@@ -343,6 +351,7 @@ function makeWorld(options: {
   const source = options.source ?? new ScriptedSource();
   const perceiver = new ScriptedPerceiver(options.observation ?? dungeonMap);
   const actuator = options.actuator ?? new ScriptedActuator();
+  const travelCalls: string[] = [];
   const snapshotCalls: Array<number | undefined> = [];
   const shot = options.screenshot === null ? null : options.screenshot;
   const session: WvdSession = {
@@ -373,7 +382,7 @@ function makeWorld(options: {
   const world = new WvdWorld({
     cfg,
     timezone: 'Asia/Shanghai',
-    policy: routePolicy,
+    policy: options.policy ?? routePolicy,
     classify,
     timing: options.timing ?? timeQte,
     commands: {
@@ -390,6 +399,10 @@ function makeWorld(options: {
       enableBattleAuto: () => enableBattleAuto(actuator),
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
+      travel: async (to) => {
+        travelCalls.push(to);
+        return options.travelResult ?? { ok: true };
+      },
     },
     openSession: async () => {
       openSessionCalls += 1;
@@ -400,7 +413,7 @@ function makeWorld(options: {
     now: clock.now,
   });
   return {
-    world, host, source, perceiver, actuator, cfg, snapshotCalls, clock,
+    world, host, source, perceiver, actuator, cfg, snapshotCalls, clock, travelCalls,
     openSessionCalls: () => openSessionCalls,
   };
 }
@@ -1799,5 +1812,183 @@ describe('the chest re-engage after a QTE cancel', () => {
     perceiver.observation = { screen: 'chest-prompt', atMs: 300, confidence: 1 };
     await world.tick();
     expect(actuator.calls.at(-1)).toBe('tap 955,858');
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// The orientation: resume the farm from any screen (contracts §10, the goal form)
+// ---------------------------------------------------------------------------------------------
+
+describe('the orientation', () => {
+  const CLIMB = '0c0280000d6ff0000d7ffc0008c37000';
+  const FARM = '000000007f3ffe007ffeff00220bb600';
+  const STRANGER = 'ffffffffffffffffffffffffffffffff';
+
+  const mapWith = (titleKey: string, icons: readonly MapIcon[] = []): Observation => ({
+    screen: 'dungeonmap',
+    atMs: 100,
+    confidence: 0.9,
+    map: { floorTitle: 'B1F', titleKey, player: { x: 19, y: 21 }, origin: { x: 960, y: 540 }, icons },
+  });
+  const townView: Observation = { screen: 'town', atMs: 100, confidence: 0.9 };
+
+  const goalDefinition = (options: { climb?: boolean } = {}): TaskDefinition => ({
+    id: 'ffxi-4f',
+    label: '[Chest] FFXI 4F',
+    floor: { titleKey: FARM },
+    goal: {
+      site: 'ffxi-gcn',
+      zone: 'ffxi-zone3',
+      ...(options.climb === false
+        ? {}
+        : { climb: { from: CLIMB, script: { timeoutMs: 60_000, steps: [{ op: 'wait' as const, ms: 1 }] } } }),
+    },
+    exit: { timeoutMs: 1_000, steps: [{ op: 'tap' as const, at: [1, 2] as const }] },
+  });
+  /** The loop's view of a goal task: the orientation descriptor, and a script recorder. */
+  function goalTask(definition = goalDefinition()): { task: SessionTask; calls: string[] } {
+    const calls: string[] = [];
+    const task: SessionTask = {
+      enter: async () => {
+        calls.push('enter');
+        return { ok: true, steps: 0, ms: 0 };
+      },
+      runScript: async (name) => {
+        calls.push(name);
+        return { ok: true, steps: 1, ms: 1 };
+      },
+      abort: () => {},
+      orient: { goal: definition.goal!, floor: definition.floor.titleKey },
+    };
+    return { task, calls };
+  }
+
+  /** The two presses of openMap, as the fake actuator records them. */
+  const GG = ['key ' + SCAN.G + ' 60', 'key ' + SCAN.G + ' 60'];
+
+  it('resumes from inside the dungeon: no entry runs, and the map is opened to read the floor', async () => {
+    const { task, calls } = goalTask();
+    const { world, host, actuator } = makeWorld({ observation: dungeonView, task });
+    await started(world, host);
+
+    // A scripted entry would have stopped at its own expect-town; a goal task never runs one.
+    expect(world.isRunning()).toBe(true);
+    expect(calls).toEqual([]);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(GG);
+  });
+
+  it('travels: to the site from town or the map, to the zone from Dungeon Select', async () => {
+    const cases: ReadonlyArray<readonly [Observation, string]> = [
+      [townView, 'ffxi-gcn'],
+      [{ screen: 'worldmap', atMs: 100, confidence: 0.9 }, 'ffxi-gcn'],
+      [{ screen: 'dungeon-select', atMs: 100, confidence: 0.9 }, 'ffxi-zone3'],
+    ];
+    for (const [screen, to] of cases) {
+      const { task } = goalTask();
+      const { world, host, travelCalls } = makeWorld({ observation: screen, task });
+      await started(world, host);
+
+      await world.tick();
+      expect(travelCalls, screen.screen).toEqual([to]);
+    }
+  });
+
+  it('farms as soon as the map shows the farm floor', async () => {
+    const { task } = goalTask();
+    const farm = mapWith(FARM, [{ kind: 'chest', at: CHEST }]);
+    const { world, host, actuator, travelCalls } = makeWorld({ observation: farm, task });
+    await started(world, host);
+
+    await world.tick();
+    expect(travelCalls).toEqual([]);
+    expect(actuator.calls).toEqual(walkCalls(mapOf(farm), CHEST));
+  });
+
+  it('climbs from the stair floor, then hands the walk to the loop', async () => {
+    const { task, calls } = goalTask();
+    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: mapWith(CLIMB), task });
+    await started(world, host);
+
+    await world.tick();
+    expect(calls).toEqual(['climb']);
+    expect(actuator.calls).toEqual([]);
+
+    // The climb ends by starting a game-driven walk: the loop commands nothing until it stands.
+    clock.advance(600);
+    await world.tick();
+    expect(actuator.calls).toEqual([]);
+
+    clock.advance(5_100);
+    const farm = mapWith(FARM, [{ kind: 'chest', at: CHEST }]);
+    perceiver.observation = farm;
+    await world.tick();
+    // Arrival released the walk and the same tick found the farm floor: the first farm command.
+    expect(actuator.calls).toEqual(walkCalls(mapOf(farm), CHEST));
+  });
+
+  it('stops on a floor it has no measured way off, before pressing anything', async () => {
+    const { task } = goalTask();
+    const { world, host, actuator } = makeWorld({ observation: mapWith(STRANGER), task });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls).toEqual([]);
+    expect(world.isRunning()).toBe(false);
+    const stopped = host.pushed.find((pushed) => pushed.event.type === 'wvd.stopped');
+    expect(stopped?.event.text).toContain('neither the farm floor');
+  });
+
+  it('never abandons a chest: a prompt during the orientation is the route that finishes it', async () => {
+    const { task } = goalTask();
+    const { world, host, actuator, travelCalls } = makeWorld({ observation: chestPrompt, task });
+    await started(world, host);
+
+    await world.tick();
+    expect(travelCalls).toEqual([]);
+    expect(actuator.calls).toHaveLength(1);
+  });
+
+  it('retries the world-map travel once, then stops with the reason', async () => {
+    const { task } = goalTask();
+    const { world, host, travelCalls } = makeWorld({
+      observation: townView,
+      task,
+      travelResult: { ok: false, reason: 'location-not-found', detail: 'not in view' },
+    });
+    await started(world, host);
+
+    await world.tick();
+    expect(travelCalls).toEqual(['ffxi-gcn']);
+    expect(world.isRunning()).toBe(true);
+
+    await world.tick();
+    expect(travelCalls).toEqual(['ffxi-gcn', 'ffxi-gcn']);
+    expect(world.isRunning()).toBe(false);
+  });
+
+  it('re-orients after the exit script instead of running a scripted entry', async () => {
+    const definition = goalDefinition();
+    const { task, calls } = goalTask(definition);
+    const { world, host, perceiver, travelCalls } = makeWorld({
+      // A farm floor with no chest left: the route next move is the exit.
+      observation: mapWith(FARM),
+      task,
+      policy: createTaskPolicy(() => definition, routePolicy),
+      cfg: { cycles: 2 },
+    });
+    await started(world, host);
+
+    await world.tick();
+    expect(calls).toEqual(['exit']);
+
+    // The exit script ends in town; the next cycle must orient back in, not run an entry.
+    perceiver.observation = townView;
+    await world.tick();
+    expect(calls).not.toContain('enter');
+    expect(travelCalls).toEqual(['ffxi-gcn']);
   });
 });

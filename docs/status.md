@@ -393,6 +393,35 @@ ancient-shrine 0.978; guard-fortress 0.972; red-sand-bastion 0.968), the navigat
 because the pointer sat on the icon — the pointer is now parked on the inert black pillar before each
 measurement. 23 world-map action tests + dungeon-select tests, typecheck clean.
 
+## The orientation — resuming from any screen (2026-11-02)
+
+**The gap that made a farm session brittle:** the task file's `entry` was a blind script whose first
+step was `expect town`. A stop or a crash that left the party inside the dungeon refused the next
+session at step 0 (`expect-timeout: screen stayed dungeon`), and recovery was the operator's manual
+`G` → `F` → `归还` → `travel vnh`. There were state *checks* but no state *machine*.
+
+**The seam:** the task now declares where the farm is instead of how to drive there —
+`goal: { site, zone?, climb? }` — and the World orients toward it one command per tick from
+whatever screen the session started on. `src/policy/orient.ts` is the decision table: the map read
+says `arrived` (on the farm floor), `climb` (on the measured stair floor) or `stop` (any floor with
+no measured way off); `dungeon` opens the map; `dungeon-select` travels to the zone; town and world
+map travel to the site; a chest, a bar, the loot card or a battle **yields to the farm route** so
+nothing the party is doing is abandoned.
+
+The measured stair-up (第三区, `R` then the door at **960,158** and the 自动移动 element at
+**960,236**) moved from the entry script into the task file as `goal.climb`, gated on its own floor
+key; the runner runs it as `runScript('climb')`. Any other floor is a stop before those taps.
+
+**The loop the operator asked for:** after the exit script, the next cycle re-orients instead of
+running an entry — farm, leave, come back, from wherever the exit left the party. Retries are bounded
+(one travel, one climb) and each failure stops the session with its reason.
+
+`tasks/ffxi-4f.json` is now a goal task (no entry, the climb inline, the exit unchanged). 605 tests
+(`tests/orient.test.ts`, the schema's goal cases, the runner's climb gate, nine world cases) and
+`tsc --noEmit` clean. Design: `docs/specs/2026-11-02-orient-goal-design.md`.
+
+**Live acceptance pending:** `scripts/world-run.ts` started with the party inside 第三区 is the
+first run of the goal form against the game.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

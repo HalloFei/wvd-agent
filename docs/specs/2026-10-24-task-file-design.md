@@ -292,6 +292,13 @@ export type SessionOpen =
   No image is attached to `wvd.stopped`: an escalation after the session ended would be a question
   nobody can answer. `wvd_look` still captures the current screen on request.
 
+**Superseded in part, 2026-11-02 — the goal form.** A task may instead carry a `goal` and no
+`entry`: `startSession` then does not run a script at all, it sets the orientation phase and the
+tick loop drives the party to the task's floor from any screen (contracts §10, and
+`2026-11-02-orient-goal-design.md`). A task carries exactly one of `entry` / `goal`. Everything
+else here still holds; `enter` is the scripted task's path, and `climb` joins `enter`/`exit` as a
+script a task may name.
+
 ### 7.9 The decorated policy
 
 `createTaskPolicy(task, inner = routePolicy)`:

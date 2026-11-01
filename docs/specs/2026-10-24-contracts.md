@@ -459,11 +459,16 @@ replaces the default with a note in the commit that changes it.
 ## 10. Farm tasks
 
 The task file design (`2026-10-24-task-file-design.md`) owns the rationale; this section is the
-binding shape. A task file declares where to farm and what script gets the party there and back; the
-World knows only `enter`, `runScript` and `abort`.
+binding shape. A task file declares where to farm and either a script that gets the party there or a
+goal the World orients to; the World knows `enter`, `runScript`, `abort` and — for a goal task — the
+`orient` descriptor it drives one command per tick.
 
 ```ts
-export type ScriptId = 'enter' | 'exit';
+/**
+ * `enter` runs at session start (a scripted task only); `exit` when the policy says leave;
+ * `climb` when the orientation finds the party on the stair floor (the goal form below).
+ */
+export type ScriptId = 'enter' | 'exit' | 'climb';
 export type TaskKeyName = 'g' | 'l' | 'q' | 'f' | 'r' | 'tab' | 'esc' | 'space';
 
 export interface TaskStep {
@@ -483,17 +488,50 @@ export interface TaskStep {
 
 export interface TaskScript { readonly timeoutMs: number; readonly steps: readonly TaskStep[] }
 
+/**
+ * Where a farm lives, and the one measured detour on the way.
+ *
+ * A goal task does not say how to drive the game from a known starting screen: it says where the
+ * farm is, and the World orients toward it from whatever screen the party is on. `site` is the
+ * world-map node, `zone` the Dungeon Select row that opens one of its zones.
+ */
+export interface TaskGoal {
+  readonly site: string;
+  readonly zone?: string;
+  /**
+   * The floor whose map carries the measured stair-up. A party already on that floor runs the
+   * climb script; the World never presses a blind tile from another floor.
+   */
+  readonly climb?: TaskClimb;
+}
+
+export interface TaskClimb {
+  /** The 32-hex floor key the climb script's own `expectFloor` falls back to. */
+  readonly from: string;
+  readonly script: TaskScript;
+}
+
 export interface TaskDefinition {
   readonly id: string;
   readonly label: string;
   readonly floor: { readonly titleKey: string };
-  readonly entry: TaskScript;
+  /** A scripted entry, for a task that drives itself from a known screen. Absent for a goal task. */
+  readonly entry?: TaskScript;
   readonly exit?: TaskScript;
+  /** The goal the World orients to, from any screen. Absent for a scripted task. */
+  readonly goal?: TaskGoal;
+}
+
+/** What the World needs to orient: where the farm is, and the floor it farms on. */
+export interface TaskOrient {
+  readonly goal: TaskGoal;
+  /** The task's own `floor.titleKey`: the floor the farm happens on. */
+  readonly floor: string;
 }
 
 export type TaskFileProblem =
   | 'not-json' | 'not-an-object' | 'missing-field' | 'unknown-field' | 'unknown-op'
-  | 'bad-coordinate' | 'bad-timeout' | 'bad-title-key' | 'unknown-location';
+  | 'bad-coordinate' | 'bad-timeout' | 'bad-title-key' | 'unknown-location' | 'exclusive-field';
 
 export type TaskLoad =
   | { readonly ok: true; readonly task: TaskDefinition }
@@ -532,6 +570,8 @@ export interface SessionTask {
   enter(): Promise<ScriptResult>;
   runScript(name: ScriptId): Promise<ScriptResult>;
   abort(): void;
+  /** The orientation a goal task declares. Absent for a scripted task: its entry drives itself. */
+  readonly orient?: TaskOrient | undefined;
 }
 ```
 
@@ -539,4 +579,12 @@ export interface SessionTask {
 the world map, the map is zoomed out and panned within its budget, and a score below 0.80 is not a
 node. The id is checked against the catalog when the file is loaded (`unknown-location`), so a typo
 refuses the session instead of failing mid-entry.
+
+**A task carries either an `entry` or a `goal`, never both** (`exclusive-field`): a scripted entry
+assumes the screen it starts on, and a goal lets the World orient from any screen. The World drives
+a goal one command per tick — open the map, read the floor, travel, climb — and hands the loop to
+the farm route once the map shows the task's floor. `climb` is the one measured detour: a party on
+the climb floor runs the task's own script, gated on `climb.from`; any other floor is a stop, never
+a blind tile. The design and the live measurements are in
+`2026-11-02-orient-goal-design.md`.
 

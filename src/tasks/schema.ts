@@ -9,7 +9,7 @@
  * a step is how a party walks into the wrong floor.
  */
 import type {
-  ScreenId, TaskDefinition, TaskFileProblem, TaskLoad, TaskScript, TaskStep,
+  ScreenId, TaskClimb, TaskDefinition, TaskFileProblem, TaskGoal, TaskLoad, TaskScript, TaskStep,
 } from '../contracts.ts';
 
 const SCREENS: ReadonlySet<string> = new Set<ScreenId>([
@@ -138,9 +138,64 @@ function parseScript(raw: unknown, name: string, knownLocations?: ReadonlySet<st
   return { timeoutMs: timeoutMs as number, steps };
 }
 
+/** The fields a `goal` may carry; anything else in the object is an unknown field. */
+const GOAL_FIELDS: readonly string[] = ['site', 'zone', 'climb'];
+/** The fields a `climb` may carry. */
+const CLIMB_FIELDS: readonly string[] = ['from', 'script'];
+
+/** A catalog id, checked only when the caller has a catalog to check against. */
+function parseLocationId(raw: unknown, field: string, knownLocations?: ReadonlySet<string>): string | Problem {
+  if (typeof raw !== 'string' || raw.length === 0) return problem('missing-field', field);
+  if (knownLocations !== undefined && !knownLocations.has(raw)) return problem('unknown-location', `${field}: ${raw}`);
+  return raw;
+}
+
+/**
+ * The goal form (contracts §10): where the farm is, not how to drive there.
+ *
+ * The ids are validated against the same catalog a `travel` step is, so a typo refuses the session
+ * at load instead of failing an orientation mid-run. The climb script is parsed by the same rules as
+ * every other script — a step that the runner could not execute is refused here.
+ */
+function parseGoal(raw: unknown, knownLocations?: ReadonlySet<string>): TaskGoal | Problem {
+  if (!isObject(raw)) return problem('missing-field', 'goal');
+  for (const field of Object.keys(raw)) {
+    if (!GOAL_FIELDS.includes(field)) return problem('unknown-field', `goal: ${field}`);
+  }
+  const site = parseLocationId(raw.site, 'goal.site', knownLocations);
+  if (typeof site !== 'string') return site;
+  const goal: { site: string; zone?: string; climb?: TaskClimb } = { site };
+  if (raw.zone !== undefined) {
+    const zone = parseLocationId(raw.zone, 'goal.zone', knownLocations);
+    if (typeof zone !== 'string') return zone;
+    goal.zone = zone;
+  }
+  if (raw.climb !== undefined) {
+    const climb = parseClimb(raw.climb);
+    if ('ok' in climb) return climb;
+    goal.climb = climb;
+  }
+  return goal;
+}
+
+function parseClimb(raw: unknown): TaskClimb | Problem {
+  if (!isObject(raw)) return problem('missing-field', 'goal.climb');
+  for (const field of Object.keys(raw)) {
+    if (!CLIMB_FIELDS.includes(field)) return problem('unknown-field', `goal.climb: ${field}`);
+  }
+  if (typeof raw.from !== 'string' || !TITLE_KEY.test(raw.from)) return problem('bad-title-key', 'goal.climb.from');
+  const script = parseScript(raw.script, 'goal.climb.script');
+  if (!('steps' in script)) return script;
+  return { from: raw.from, script };
+}
+
 /**
  * Parse and validate one task file. `text` is the file as written; JSON syntax is checked here so
  * a caller never has to catch.
+ *
+ * A task carries **either** an `entry` script **or** a `goal`: a scripted entry drives itself from
+ * a screen it assumes, and a goal lets the World orient from any screen. Both at once would be two
+ * answers to one question, so it is refused rather than silently preferring one.
  */
 export function parseTask(text: string, knownLocations?: ReadonlySet<string>): TaskLoad {
   let raw: unknown;
@@ -151,7 +206,7 @@ export function parseTask(text: string, knownLocations?: ReadonlySet<string>): T
   }
   if (!isObject(raw)) return problem('not-an-object');
   for (const field of Object.keys(raw)) {
-    if (!['id', 'label', 'floor', 'entry', 'exit'].includes(field)) return problem('unknown-field', field);
+    if (!['id', 'label', 'floor', 'entry', 'exit', 'goal'].includes(field)) return problem('unknown-field', field);
   }
   if (typeof raw.id !== 'string' || raw.id.length === 0) return problem('missing-field', 'id');
   if (typeof raw.label !== 'string' || raw.label.length === 0) return problem('missing-field', 'label');
@@ -161,17 +216,23 @@ export function parseTask(text: string, knownLocations?: ReadonlySet<string>): T
     return problem('bad-title-key', 'floor.titleKey');
   }
 
-  const entry = parseScript(raw.entry, 'entry', knownLocations);
-  if (!('steps' in entry)) return entry;
+  if (raw.entry !== undefined && raw.goal !== undefined) return problem('exclusive-field', 'entry and goal');
+  if (raw.entry === undefined && raw.goal === undefined) return problem('missing-field', 'entry or goal');
+
+  const entry = raw.entry === undefined ? undefined : parseScript(raw.entry, 'entry', knownLocations);
+  if (entry !== undefined && !('steps' in entry)) return entry;
   const exit = raw.exit === undefined ? undefined : parseScript(raw.exit, 'exit', knownLocations);
   if (exit !== undefined && !('steps' in exit)) return exit;
+  const goal = raw.goal === undefined ? undefined : parseGoal(raw.goal, knownLocations);
+  if (goal !== undefined && 'ok' in goal) return goal;
 
   const task: TaskDefinition = {
     id: raw.id,
     label: raw.label,
     floor: { titleKey: raw.floor.titleKey },
-    entry,
+    ...(entry === undefined ? {} : { entry: entry as TaskScript }),
     ...(exit === undefined ? {} : { exit }),
+    ...(goal === undefined || 'ok' in goal ? {} : { goal }),
   };
   return { ok: true, task };
 }
