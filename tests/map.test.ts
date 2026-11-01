@@ -12,6 +12,21 @@ import { floorKeyDistance } from '../src/tasks/steps.ts';
  */
 const FIXTURES = new URL('../testdata/nav-1024-0213/', import.meta.url);
 
+/**
+ * The live 2026-11-01 maps the parser refused while a human read them instantly — both refused the
+ * farm loop with an unknown screen. They are fixtures so the next regression names them:
+ * 第三区's panel border fused with the X label, 第四区's title strip is lit by the lava wall behind
+ * the translucent panel.
+ */
+const LIVE_MAPS = new URL('../testdata/nav-2026-11-01-maps/', import.meta.url);
+
+async function liveMapFrame(name: string): Promise<Frame> {
+  const bytes = await readFile(new URL(name, LIVE_MAPS));
+  const decoded = jpeg.decode(bytes, { useTArray: true });
+  const image: RgbaImage = { data: decoded.data, width: decoded.width, height: decoded.height };
+  return { atMs: 1, width: decoded.width, height: decoded.height, toRgba: async () => image };
+}
+
 async function jpegFrame(name: string, atMs = 4_000): Promise<Frame> {
   const bytes = await readFile(new URL(name, FIXTURES));
   const decoded = jpeg.decode(bytes, { useTArray: true });
@@ -25,6 +40,20 @@ async function jpegFrame(name: string, atMs = 4_000): Promise<Frame> {
 }
 
 const cell = (point: { x: number; y: number }) => `${point.x},${point.y}`;
+
+describe('the live map frames of 2026-11-01', () => {
+  it('reads 第三区 whose panel border fused with the X label', async () => {
+    const map = await readMap(await liveMapFrame('third-2f.jpg'));
+    expect(map).not.toBeNull();
+    expect(map!.player).toEqual({ x: 13, y: 25 });
+  });
+
+  it('reads 第四区 whose title strip is lit by the wall behind the translucent panel', async () => {
+    const map = await readMap(await liveMapFrame('fourth-2f.jpg'));
+    expect(map).not.toBeNull();
+    expect(map!.player).toEqual({ x: 19, y: 2 });
+  });
+});
 
 describe('readMap', () => {
   it('reads the floor token, the party cell and the icons from map.jpg', async () => {

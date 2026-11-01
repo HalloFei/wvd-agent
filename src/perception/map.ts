@@ -643,8 +643,21 @@ function readReadout(data: Uint8Array, width: number): ReadoutParse {
   }
 
   const allRuns = columnRuns(lit);
-  // A run touching the band's first column is the panel's left border, never a label (R28c).
-  while (allRuns.length > 0 && allRuns[0]![0] === 0) allRuns.shift();
+  // A run touching the band's first column carries the panel's left border (R28c). On a live frame
+  // the border can fuse with the X label itself — 2026-11-01, 第三区: one run 0..23 against the
+  // fixture's 8..19 and 21..23 — and dropping the run dropped the label with it (`readout-labels`,
+  // the farm loop's unexplained unknown). Trim the border part instead when the rest is label-sized
+  // at the measured slot; a run with no such tail is the border alone and still goes.
+  while (allRuns.length > 0 && allRuns[0]![0] === 0) {
+    const [from, to] = allRuns[0]!;
+    const labelStart = Math.max(from, READOUT_LABEL_X[0] - READOUT_X);
+    const width = to - labelStart + 1;
+    if (width >= READOUT_LABEL_MIN_W && width <= READOUT_LABEL_MAX_W + 5) {
+      allRuns[0] = [labelStart, to];
+      break;
+    }
+    allRuns.shift();
+  }
   const runs = allRuns;
   const labelAt = (expected: number): number =>
     runs.findIndex(([from]) => Math.abs(READOUT_X + from - expected) <= READOUT_LABEL_TOLERANCE);
