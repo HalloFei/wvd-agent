@@ -431,8 +431,9 @@ running an entry — farm, leave, come back, from wherever the exit left the par
    The farm's own walk then missed — the chest cell converted to a tap on the panel's top border and
    the party never moved, so the loop escalated at 30 s and stopped at 120 s with a clear reason.
 
-Two board items carry what the runs found: `t-mvy23qdo-u63nzr` (the walk from X:20 Y:5 misses —
-the map's origin/grid question, fixture `testdata/nav-2026-11-02-4f-top-edge/`) and
+Two board items carry what the runs found: `t-mvm2kfvh-d9kc0s` (the 自動移動 element — the tap 81 px
+above a chest near the panel's top edge lands on the title bar, and a tile that raises no element is
+indistinguishable from one that does; fixture `testdata/nav-2026-11-02-4f-top-edge/`) and
 `t-mvy23qe2-nszsfl` (the G-menu view is `unknown`, costing the full 90 s escalation).
 
 **The same-floor key measurement that the gate needed:** the live 4F map, re-opened from the menu,
