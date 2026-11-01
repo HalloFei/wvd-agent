@@ -23,6 +23,7 @@ import {
   MAP_ZOOM,
   MAP_ZOOM_KEYS,
   WORLD_MAP_SIZE,
+  WORLD_MAP_SITES,
   offsetFromMatch,
   panDragFor,
   siteById,
@@ -369,6 +370,9 @@ const ATLAS_LABEL_FLOOR = 0.8;
 /** The node icon, drawn at ~0.45 of the legacy art at max zoom-out; the sweep covers the measured range. */
 const ATLAS_ICON_SCALES = [0.40, 0.42, 0.44, 0.46, 0.48, 0.50] as const;
 const ATLAS_ICON_FLOOR = 0.75;
+/** An icon used as an *anchor* must score higher than one merely confirmed near a prediction. */
+const ATLAS_ICON_ANCHOR_FLOOR = 0.82;
+const ATLAS_ICON_ANCHOR_SCALES = [0.42, 0.45, 0.48] as const;
 /** Where the legacy art's label band starts, as a fraction of its height (locations.ts's rule). */
 const LEGACY_LABEL_BAND_TOP = 0.687;
 const ATLAS_ZOOM_PRESSES = 8;
@@ -642,6 +646,21 @@ function locateView(image: RgbaImage, anchorId?: string): { offset: Point; ancho
     const offset = offsetFromMatch(anchor, { x: match.at.x - MAP_STRIP.x, y: match.at.y });
     votes.push({ id: anchor.id, x: offset.x, y: offset.y });
   }
+  // The node icons are drawn at every zoom, labels are not: at max zoom-out the game culls colliding
+  // banners (北穿幽冥城 has none), and the icon is then the only absolute anchor in the frame.
+  for (const site of WORLD_MAP_SITES) {
+    if (site.templateId === undefined) continue;
+    if (anchorId !== undefined && site.id !== anchorId) continue;
+    const template = iconTemplateFor(site.templateId);
+    if (template === null) continue;
+    const match = findTemplate(image, MAP_STRIP, template, { scales: ATLAS_ICON_ANCHOR_SCALES, minScore: ATLAS_ICON_ANCHOR_FLOOR });
+    if (match === null) continue;
+    const centre = {
+      x: match.at.x + Math.round(match.width / 2) - MAP_STRIP.x,
+      y: match.at.y + Math.round(match.height / 2),
+    };
+    votes.push({ id: site.id, x: site.x - centre.x, y: site.y - centre.y });
+  }
   if (votes.length === 0) return null;
   let best = votes;
   for (const vote of votes) {
@@ -832,6 +851,7 @@ export async function travelViaAtlas(
   if (!first.ok) return finish(first.failure);
   const located = locateView(first.image, options.anchor);
   let offset: Point;
+  let locatedByClamp = false;
   if (located !== null) {
     offset = located.offset;
     trace.located = { by: 'anchor', anchor: located.anchor, offset: located.offset, anchors: located.anchors, spreadPx: located.spreadPx };
@@ -843,6 +863,7 @@ export async function travelViaAtlas(
     const corner = await clampToNorthWest(env, policy, timing, env.log);
     if (!corner.ok) return finish(corner);
     offset = { x: 0, y: 0 };
+    locatedByClamp = true;
     trace.located = { by: 'clamp', offset };
   }
 
@@ -896,10 +917,18 @@ export async function travelViaAtlas(
     const again = await lookAtMap(env, policy, timing);
     if (!again.ok) return finish(again.failure);
     const relocated = locateView(again.image, options.anchor);
-    if (relocated === null) {
+    if (relocated === null && locatedByClamp) {
+      // Nothing legible in the new view and the only fix already applied: dead-reckon the drag, and
+      // let the confirmation refuse the tap if the estimate was wrong.
+      offset = {
+        x: clampNumber(Math.round(offset.x - drag.x * gainX), 0, WORLD_MAP_SIZE.width - MAP_STRIP.width),
+        y: clampNumber(Math.round(offset.y - drag.y * gainY), 0, WORLD_MAP_SIZE.height - MAP_STRIP.height),
+      };
+    } else if (relocated === null) {
       const corner = await clampToNorthWest(env, policy, timing, env.log);
       if (!corner.ok) return finish(corner);
       offset = { x: 0, y: 0 };
+      locatedByClamp = true;
     } else {
       const before = offset;
       offset = relocated.offset;
