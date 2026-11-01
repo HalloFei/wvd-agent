@@ -64,7 +64,7 @@ const IsIconic = user32.func('bool __stdcall IsIconic(intptr_t hwnd)');
 const ShowWindow = user32.func('bool __stdcall ShowWindow(intptr_t hwnd, int cmd)');
 const SetForegroundWindow = user32.func('bool __stdcall SetForegroundWindow(intptr_t hwnd)');
 const BringWindowToTop = user32.func('bool __stdcall BringWindowToTop(intptr_t hwnd)');
-const SetCursorPos = user32.func('bool __stdcall SetCursorPos(int x, int y)');
+const GetSystemMetrics = user32.func('int __stdcall GetSystemMetrics(int index)');
 const SendInput = user32.func('uint32_t __stdcall SendInput(uint32_t count, WvdInput *inputs, int size)');
 const RegisterHotKey = user32.func('bool __stdcall RegisterHotKey(intptr_t hwnd, int id, uint32_t mods, uint32_t vk)');
 const UnregisterHotKey = user32.func('bool __stdcall UnregisterHotKey(intptr_t hwnd, int id)');
@@ -88,6 +88,8 @@ const MOD_NOREPEAT = 0x4000;
 const HOTKEY_ID = 1;
 const INPUT_MOUSE = 0, INPUT_KEYBOARD = 1;
 const MOUSEEVENTF_LEFTDOWN = 0x2, MOUSEEVENTF_LEFTUP = 0x4;
+const MOUSEEVENTF_MOVE = 0x1, MOUSEEVENTF_ABSOLUTE = 0x8000, MOUSEEVENTF_VIRTUALDESK = 0x4000;
+const SM_XVIRTUALSCREEN = 76, SM_YVIRTUALSCREEN = 77, SM_CXVIRTUALSCREEN = 78, SM_CYVIRTUALSCREEN = 79;
 const KEYEVENTF_KEYUP = 0x2, KEYEVENTF_SCANCODE = 0x8;
 
 // per-monitor DPI aware v2, so no call here scales anything (SetProcessDpiAwarenessContext(-4))
@@ -244,13 +246,31 @@ export function captureClient(hwnd, target = null) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const mouse = (flags) => ({ type: INPUT_MOUSE, u: { mi: { dx: 0, dy: 0, mouseData: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } });
+const mouse = (flags, dx = 0, dy = 0) => ({ type: INPUT_MOUSE, u: { mi: { dx, dy, mouseData: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } });
 const key = (scan, flags) => ({ type: INPUT_KEYBOARD, u: { ki: { wVk: 0, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 } } });
 const virtualKey = (vk, flags) => ({ type: INPUT_KEYBOARD, u: { ki: { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } });
 
 function send(inputs) {
   const sent = SendInput(inputs.length, inputs, INPUT_SIZE);
   if (sent !== inputs.length) throw new Error(`send-input:${sent}/${inputs.length}`);
+}
+
+/**
+ * A pointer move the game can see. The world map reads its pan from *pointer motion in the input
+ * stream*: `SetCursorPos` relocates the pointer without producing one, so a drag built from it never
+ * panned (measured 2026-11-01 — twenty such drags moved nothing, while every drag that injected
+ * `MOUSEEVENTF_MOVE` moved the map by roughly the drag distance). The coordinates are the virtual
+ * screen normalised to 0..65535, which is what `MOUSEEVENTF_ABSOLUTE` expects; per-monitor DPI
+ * awareness was set above, so the client and screen spaces agree.
+ */
+function absoluteMove(screenX, screenY) {
+  const left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+  const top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+  const width = Math.max(2, GetSystemMetrics(SM_CXVIRTUALSCREEN));
+  const height = Math.max(2, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+  const nx = Math.round(((screenX - left) * 65535) / (width - 1));
+  const ny = Math.round(((screenY - top) * 65535) / (height - 1));
+  send([mouse(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, nx, ny)]);
 }
 
 /**
@@ -262,7 +282,7 @@ const device = {
   moveToClient(hwnd, x, y) {
     const point = { x: Math.round(x), y: Math.round(y) };
     if (!ClientToScreen(hwnd, point)) throw new Error('client-to-screen');
-    if (!SetCursorPos(point.x, point.y)) throw new Error('set-cursor');
+    absoluteMove(point.x, point.y);
   },
   mouseDown: () => send([mouse(MOUSEEVENTF_LEFTDOWN)]),
   mouseUp: () => send([mouse(MOUSEEVENTF_LEFTUP)]),

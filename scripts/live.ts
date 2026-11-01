@@ -166,6 +166,7 @@ try {
     observe: (frame) => see.observe(frame),
     sleep: wait,
     log,
+    atlas: true,
   });
 
   switch (command) {

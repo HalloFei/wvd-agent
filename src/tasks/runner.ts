@@ -50,6 +50,9 @@ export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
       }),
       abort: controller.signal,
       log: deps.log,
+      // The World travelling a task's node uses the stored atlas; the template spiral is the
+      // fallback inside travelTo when the atlas cannot place the destination.
+      atlas: true,
     };
     return {
       ...shared,
