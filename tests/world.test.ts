@@ -354,6 +354,7 @@ function makeWorld(options: {
   const perceiver = new ScriptedPerceiver(options.observation ?? dungeonMap);
   const actuator = options.actuator ?? new ScriptedActuator();
   const travelCalls: string[] = [];
+  let battleOpenerCalls = 0;
   const snapshotCalls: Array<number | undefined> = [];
   const shot = options.screenshot === null ? null : options.screenshot;
   const session: WvdSession = {
@@ -399,6 +400,8 @@ function makeWorld(options: {
       // The heal's taps are pinned in tests/heal.test.ts; the world tests only need the command.
       healParty: async () => ({ ok: true }),
       enableBattleAuto: () => enableBattleAuto(actuator),
+      // The opener's taps are pinned in tests/battle-opener.test.ts; the world tests need the call.
+      battleOpener: async () => { battleOpenerCalls += 1; return { ok: true }; },
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
       travel: async (to) => {
@@ -416,6 +419,7 @@ function makeWorld(options: {
   });
   return {
     world, host, source, perceiver, actuator, cfg, snapshotCalls, clock, travelCalls,
+    battleOpenerCalls: () => battleOpenerCalls,
     openSessionCalls: () => openSessionCalls,
   };
 }
@@ -918,6 +922,25 @@ describe('a walk stays in flight through the screens it produces', () => {
       `key ${SCAN.G} 60`,
       `key ${SCAN.G} 60`,
     ]);
+  });
+
+  it('casts the battle opener once per battle, before auto', async () => {
+    // Operator rule 2026-11-02: 爱丽丝 opens every battle with her top-right skill, then auto runs. The
+    // opener is a `fight`-tick prefix, so it cannot be re-cast inside one battle; a new battle re-arms it.
+    const { world, host, actuator, perceiver, clock, battleOpenerCalls } = makeWorld({ observation: combatView });
+    await started(world, host);
+
+    await world.tick();
+    expect(battleOpenerCalls()).toBe(1);
+    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
+
+    // The battle leaves; once the fight's own wait settles, a new battle starts and re-arms the opener.
+    perceiver.observation = dungeonView;
+    for (let index = 0; index < 14; index += 1) { clock.advance(500); await world.tick(); }
+    perceiver.observation = combatView;
+    clock.advance(500);
+    await world.tick();
+    expect(battleOpenerCalls()).toBe(2);
   });
 
   it('puts the heal before the next command in the cycle pipeline', async () => {

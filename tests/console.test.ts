@@ -211,6 +211,7 @@ function makeConsole(options: {
       dismissLoot: () => dismissLoot(actuator),
       healParty: async () => ({ ok: true }),
       enableBattleAuto: () => enableBattleAuto(actuator),
+      battleOpener: async () => ({ ok: true }),
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
       // This harness never orients: the World runs the built-in route with no task file.

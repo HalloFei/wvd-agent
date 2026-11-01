@@ -218,6 +218,16 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       dismissLoot: () => dismissLoot(actuator),
       healParty: () => healParty(actuator, (ms) => new Promise((resolve) => setTimeout(resolve, ms))),
       enableBattleAuto: () => enableBattleAuto(actuator),
+      // Operator rule: 爱丽丝's top-right skill opens the battle, once, before auto takes over — but only
+      // when SHE is the ACTIVE member. That guard is not built yet (it needs a frame with her active;
+      // the captured phase had the main character active), and tapping whoever happens to be active is
+      // exactly what the operator forbade. So the command refuses, the loop logs it and auto runs; the
+      // action and its tests are ready in actions/battle.ts for the day the guard lands.
+      battleOpener: async () => ({
+        ok: false,
+        reason: 'rejected',
+        detail: 'the active-member guard is not built yet, so no slot is tapped',
+      }),
       // The attempt-vs-reroll policy's action: leave the QTE (free, chest §4) and re-click a card.
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),

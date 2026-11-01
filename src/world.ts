@@ -121,6 +121,12 @@ export interface RouteCommands {
   /** Press 倍速 then 自动 once, for the battle on screen. */
   enableBattleAuto(): Promise<ActionResult>;
   /**
+   * Cast the configured battle opener (one member's quick slot, then its target) — the operator's rule
+   * that 爱丽丝 opens a battle with her top-right skill before auto takes over. Only when the member it
+   * is configured for is the ACTIVE one; the command logs and refuses otherwise.
+   */
+  battleOpener(): Promise<ActionResult>;
+  /**
    * Leave the chest QTE without spending an attempt (chest §4): the round ✕ at the left of the
    * hotbar. Used by the attempt-vs-reroll policy, which changes the bar's speed by re-selecting the
    * opener; cancelling a floor chest's QTE is free.
@@ -490,6 +496,8 @@ export class WvdWorld implements World {
   #cyclesDone = 0;
   /** 倍速 + 自动 pressed for the battle currently on screen; cleared by any other screen. */
   #battleAutoOn = false;
+  /** The opener was cast for the battle currently on screen; cleared with the battle. */
+  #battleOpenerCast = false;
   #unsubscribe: (() => void) | null = null;
   #running = false;
   #starting = false;
@@ -893,6 +901,7 @@ export class WvdWorld implements World {
       this.#orientClimbs = 0;
       this.#settleUntilMs = 0;
       this.#blankSinceMs = null;
+      this.#battleOpenerCast = false;
       this.#record('started', 'the session started');
       this.#unsubscribe = session.onEngineEvent?.((event) => {
         void this.onEngineEvent(event);
@@ -1162,7 +1171,10 @@ export class WvdWorld implements World {
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
   #track(observation: Observation): void {
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
-    if (observation.screen !== 'combat') this.#battleAutoOn = false;
+    if (observation.screen !== 'combat') {
+      this.#battleAutoOn = false;
+      this.#battleOpenerCast = false;
+    }
     if (observation.screen !== 'loot') {
       this.#lootTapAtMs = null;
       this.#lootTaps = 0;
@@ -1692,6 +1704,7 @@ export class WvdWorld implements World {
     this.#qteRerolls = 0;
     this.#lastQtePass = null;
     this.#battleAutoOn = false;
+    this.#battleOpenerCast = false;
     this.#lootTapAtMs = null;
     this.#lootTaps = 0;
     // A new cycle orients afresh: the climb budget is per cycle, and the next cycle may leave the
@@ -1978,6 +1991,14 @@ export class WvdWorld implements World {
           return;
         }
         this.#battleAutoOn = true;
+        // Operator rule 2026-11-02: the configured opener is cast once, before auto takes over. The
+        // command refuses when the ACTIVE member is not the one the opener is configured for.
+        if (!this.#battleOpenerCast && !this.#cfg.dryRun) {
+          this.#battleOpenerCast = true;
+          const opener = await this.#commands.battleOpener();
+          if (opener.ok) this.#host?.log.info('wvd: cast the battle opener');
+          else this.#host?.log.warn(`wvd: the battle opener was not cast (${opener.reason}${opener.detail ? `: ${opener.detail}` : ''})`);
+        }
         await this.#press('fight', fromScreen, () => this.#commands.enableBattleAuto());
         return;
       case 'wait':
