@@ -416,12 +416,30 @@ key; the runner runs it as `runScript('climb')`. Any other floor is a stop befor
 running an entry — farm, leave, come back, from wherever the exit left the party. Retries are bounded
 (one travel, one climb) and each failure stops the session with its reason.
 
-`tasks/ffxi-4f.json` is now a goal task (no entry, the climb inline, the exit unchanged). 605 tests
+`tasks/ffxi-4f.json` is now a goal task (no entry, the climb inline, the exit unchanged). 607 tests
 (`tests/orient.test.ts`, the schema's goal cases, the runner's climb gate, nine world cases) and
 `tsc --noEmit` clean. Design: `docs/specs/2026-11-02-orient-goal-design.md`.
 
-**Live acceptance pending:** `scripts/world-run.ts` started with the party inside 第三区 is the
-first run of the goal form against the game.
+**Live, 2026-11-02 (two runs, both started with the party inside the dungeon):**
+
+1. From a leftover loot banner (00:29): the World dismissed it, opened the map through the
+   escalation fallback, read the farm floor and said "on the farm floor; the farm takes over" — the
+   first time a session started inside the dungeon and reached the farm without a manual step. It
+   then exited (the map showed no chest) and the exit script refused on one `stale-frame` capture;
+   that probe now retries.
+2. From the open 4F map (00:37): `on the farm floor` within the first second, and `chestsLeft: 1`.
+   The farm's own walk then missed — the chest cell converted to a tap on the panel's top border and
+   the party never moved, so the loop escalated at 30 s and stopped at 120 s with a clear reason.
+
+Two board items carry what the runs found: `t-mvy23qdo-u63nzr` (the walk from X:20 Y:5 misses —
+the map's origin/grid question, fixture `testdata/nav-2026-11-02-4f-top-edge/`) and
+`t-mvy23qe2-nszsfl` (the G-menu view is `unknown`, costing the full 90 s escalation).
+
+**The same-floor key measurement that the gate needed:** the live 4F map, re-opened from the menu,
+read `600004007f3ffe007ffefe0002032200` against the task's `000000007f3ffe007ffeff00220bb600` —
+9 bits, outside R27b's 8; the two collab floors read 30 and 31 bits apart the same day, so the
+tolerance is 16 now. Without that, the orientation would have refused the floor it was standing on.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only
