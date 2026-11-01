@@ -19,13 +19,14 @@ const ATLAS_WIDTH = 1360;
 const ATLAS_HEIGHT = 1496;
 /** Banner rectangles measured on the atlas, in atlas pixels: { id: [x, y, w, h] }. */
 const BOXES = [
-  ['vnh', 567, 439, 153, 34],
+  ['vnh', 568, 439, 152, 34],
   ['ancient-shrine', 569, 567, 186, 36],
-  ['varian-plain', 213, 610, 172, 35],
-  ['city-royal', 492, 730, 168, 33],
+  ['varian-plain', 214, 610, 171, 35],
+  ['city-royal', 502, 729, 159, 34],
   ['guard-fortress', 741, 765, 153, 34],
-  ['black-plum-pavilion', 528, 835, 174, 35],
+  ['black-plum-pavilion', 529, 834, 173, 36],
   ['red-sand-bastion', 888, 697, 178, 35],
+  ['city-port', 640, 1062, 150, 43],
 ];
 
 const path = atlas.pathname.replace(/^\/([A-Za-z]:)/, '$1');

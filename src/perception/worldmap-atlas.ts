@@ -104,6 +104,10 @@ export const WORLD_MAP_SITES: readonly WorldMapSite[] = [
     id: 'red-sand-bastion', label: '赤砂之砦', kind: 'city', x: 977, y: 657,
     labelBand: { x: 888, y: 697, width: 178, height: 35 },
   },
+  {
+    id: 'city-port', label: '港口镇大军团', kind: 'city', x: 715, y: 1022,
+    labelBand: { x: 640, y: 1062, width: 150, height: 43 }, templateId: 'city-port',
+  },
 ];
 
 const SITES_BY_ID: ReadonlyMap<string, WorldMapSite> = new Map(WORLD_MAP_SITES.map((site) => [site.id, site]));
