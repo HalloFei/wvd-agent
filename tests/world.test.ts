@@ -541,6 +541,24 @@ describe('the tick', () => {
     expect(perceiver.observes).toBe(1);
   });
 
+  it('holds the nothing-perceived stop through a transition and stops when it persists', async () => {
+    // Live 2026-11-02: a battle's fade read `unknown` at confidence 0 and ended an unattended run.
+    // With the real settle window a blank frame is watched, not obeyed; a session that stays blank
+    // still stops, with the same report.
+    const { world, host, clock } = makeWorld({ observation: nothingSeen, cfg: { escalateSettleMs: 5_000 } });
+    await started(world, host);
+
+    await world.tick();
+    expect(world.isRunning()).toBe(true);
+
+    clock.advance(5_100);
+    await world.tick();
+    const stopped = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stopped');
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]!.event.text).toContain('nothing');
+    expect(world.isRunning()).toBe(false);
+  });
+
   it('stops with a report when nothing was perceived', async () => {
     const { world, host, actuator } = makeWorld({ observation: nothingSeen });
     await started(world, host);

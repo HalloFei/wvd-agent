@@ -547,6 +547,8 @@ export class WvdWorld implements World {
   #escalationCooldownUntilMs = 0;
   /** When the screen became unnamed; null while it is named. The settle window's clock. */
   #unnamedSinceMs: number | null = null;
+  /** Since when every frame has been unperceivable: a transition, until it proves otherwise. */
+  #blankSinceMs: number | null = null;
   /** The cooldown window already reported: one wait is one line, not one per tick. */
   #cooldownNotedUntilMs = -1;
   #nextEscalationId = 1;
@@ -874,6 +876,7 @@ export class WvdWorld implements World {
       this.#orientTravelFailures = 0;
       this.#orientClimbs = 0;
       this.#settleUntilMs = 0;
+      this.#blankSinceMs = null;
       this.#record('started', 'the session started');
       this.#unsubscribe = session.onEngineEvent?.((event) => {
         void this.onEngineEvent(event);
@@ -1043,6 +1046,15 @@ export class WvdWorld implements World {
     // unnamed frame and a named screen clears it, so the question is only asked once the screen has
     // stayed nameless for `escalateSettleMs` (`worlds.wvd.escalateSettleMs`). The stall clock below is
     // the backstop for a transition that never ends.
+    // A frame nobody perceived is a transition far more often than a dead game: the load fades and the
+    // battle's own fades both read as `unknown` at confidence 0 (live 2026-11-02 — a battle's fade
+    // ended an unattended run two minutes after the climb and the chest had both worked). The
+    // classifier's stop is held for `escalateSettleMs` while the frames stay blank; the bound is what
+    // keeps a dead game fatal, and the stall clock is the backstop behind it.
+    const blank = observation.confidence <= 0;
+    if (blank) this.#blankSinceMs ??= now;
+    else this.#blankSinceMs = null;
+
     const unnamed = observation.screen === 'unknown' && observation.confidence > 0;
     if (unnamed) this.#unnamedSinceMs ??= now;
     else this.#unnamedSinceMs = null;
@@ -1051,6 +1063,11 @@ export class WvdWorld implements World {
     let verdict = this.#classify(state, spent, this.#cfg.escalateMaxPerHour);
     if (verdict === 'escalate' && unnamedSinceMs !== null && now - unnamedSinceMs < this.#cfg.escalateSettleMs) {
       verdict = 'ok';
+    }
+    // The nothing-perceived stop is the transition's, not one frame's: hold it while the blank frames
+    // are still young. A session whose frames never come back stops at `escalateSettleMs`.
+    if (verdict === 'stop' && blank && now - (this.#blankSinceMs ?? now) < this.#cfg.escalateSettleMs) {
+      return;
     }
     if (verdict === 'ok' && stalledMs >= this.#stallEscalateMs()) verdict = 'escalate';
 
