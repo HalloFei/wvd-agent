@@ -2313,9 +2313,11 @@ export class WvdWorld implements World {
         return;
       }
       case 'stairs': {
-        // The 楼梯-门 icon the map reader named: one tap starts the game's own walk to the stairs. The
-        // in-flight bookkeeping is the walk's (arrival by stillness), exactly like a tile walk.
-        await this.#press('move', fromScreen, () => this.#commands.tapPoint(command.at));
+        // The 楼梯-门 icon the map reader named. It is **the same interaction as a chest walk**: the tap
+        // on the cell raises the 自動移動 prompt and tapping the prompt starts the walk (live 2026-11-03
+        // 21:45: a bare tap raised the prompt and the screen never changed, so the press looked ignored).
+        // The climb therefore goes through the farm's own automove, which finds and taps that prompt.
+        await this.#press('move', fromScreen, () => this.#commands.automoveToTile(command.at));
         return;
       }
       case 'climb': {
