@@ -247,6 +247,10 @@ describe('the 自動移動 element', () => {
     });
 
     expect(result).toMatchObject({ ok: false, reason: 'timeout' });
-    expect(actuator.taps).toEqual([tile]);
+    // The cell is tapped twice — once in each pointer mode, because the mode is a toggle the map
+    // remembers — but the *rise* is never tapped blind: the refusal is real, and the World skips the
+    // cell (live 2026-11-02: a cell 18 rows up the map has no path).
+    expect(actuator.taps).toEqual([tile, tile]);
+    expect(actuator.presses.filter((press) => press.scan === SCAN.pointer)).toHaveLength(2);
   });
 });

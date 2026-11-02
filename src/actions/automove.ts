@@ -154,7 +154,19 @@ export async function automoveToTile(
   // The element's own position, not a fixed rise: a cell near the panel's top edge has no room
   // above it, and a cell the game cannot walk to raises no element at all (live, 2026-11-02). Both
   // answer the same way — the walk is refused, and the World skips that chest.
-  const element = await waitForElement(probe, at);
+  let element = await waitForElement(probe, at);
+  if (element === null) {
+    // The pointer mode is a **toggle**, and the map remembers it: our R may have turned it *off* on a
+    // map that was already in pointer mode, and the tap then selects nothing (live 2026-11-03 22:04: the
+    // walk to the 楼梯-门 raised no element, and the same tap had raised one an hour earlier). One
+    // retry in the other mode, at the same cell — never at the blind rise.
+    const again = await press(actuator, SCAN.pointer, holdMs);
+    if (!again.ok) return again;
+    await settle(POINTER_SETTLE_MS);
+    const tapAgain = await actuator.tap(at);
+    if (!tapAgain.ok) return tapAgain;
+    element = await waitForElement(probe, at);
+  }
   if (element === null) {
     return { ok: false, reason: 'timeout', detail: 'the tile raised no 自动移動 element' };
   }
