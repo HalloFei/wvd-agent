@@ -18,10 +18,10 @@ const REFERENCE_WIDTH = 1920;
 const REFERENCE_HEIGHT = 1080;
 
 /** Centre of the 倍速 button and of the 自动 button, client pixels (measured on the live game). */
-const SPEED_BUTTON = { x: 691, y: 708 } as const;
-const AUTO_BUTTON = { x: 1231, y: 708 } as const;
+export const SPEED_BUTTON = { x: 691, y: 708 } as const;
+export const AUTO_BUTTON = { x: 1231, y: 708 } as const;
 /** Half-window: 30 px holds an icon and its ring where the battle draws one. */
-const WINDOW_RADIUS = 30;
+export const WINDOW_RADIUS = 30;
 /** Near-white ink. */
 const INK_LUMA = 200;
 

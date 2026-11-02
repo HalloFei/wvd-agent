@@ -587,6 +587,31 @@ afterwards is the unnamed policy's business.
    (787,939) selects nothing. Candidate causes: the 700 ms settle, or the panel layout's row geometry
    (with the panel up the party grid moves up ~84 px). One live battle with the cast measured decides
    it; that is the operator's call to start.
+## The battle order: speed → opener → auto → finish (2026-11-03)
+
+The operator's rule: *1. check multi speed on, 2. team member open skill cast if set, 3. auto battle
+on, 4. finish combat.* Both battle buttons are **toggles**, so the order needs their state, not just
+presses. The `combat` observation now carries `speedOn`/`autoOn` (contracts §2): a toggle that is on is
+drawn gold, one that is off white/grey — measured over the same 60×60 windows the facts count, warm
+**39.5–56.4** when on against **1.0–2.3** when off (`alice-command-phase.jpg`: both off;
+`command-phase.jpg`: 倍速 on, 自動 off).
+
+The World's fight branch follows the order literally:
+
+1. `倍速` — pressed only when the frame says it is off; then return, and the next frame says whether it
+   took.
+2. **The opener** — read and cast (the 3 s read window still applies, and 自動 waits while the read is
+   owed: auto would take the command phase the cast needs).
+3. `自動` — again only when the frame says it is off.
+4. **Finish** — both on and the opener decided: nothing is pressed; the mode holds until the battle
+   ends and `#track` re-arms the counts for the next one.
+
+Both presses are paced by `AUTO_PRESS_RETRY_MS` against `#togglePressAtMs` and capped by
+`autoBattleEnableAttempts`, with one warning when a cap is spent. The commands split into
+`battleSpeed`/`battleAuto` (`enableBattleAuto` stays for one-off scripts and measurements).
+
+658 tests, tsc clean.
+
 ## The battle read: the frame colour, and the first frame is too early (2026-11-03)
 
 The 02:07 live cycle reached its first battle with 爱丽丝 ACTIVE — and the opener did not cast. The

@@ -27,7 +27,7 @@ import type {
 } from '../src/contracts.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
-import { acceptChestPrompt, cancelQte, dismissLoot, enableBattleAuto, reenterChest, tapLoot } from '../src/actions/chest.ts';
+import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from '../src/actions/chest.ts';
 import { timeQte } from '../src/actions/qte.ts';
 import { routePolicy } from '../src/policy/route.ts';
 import { classify } from '../src/policy/session.ts';
@@ -210,7 +210,8 @@ function makeConsole(options: {
       tapLoot: () => tapLoot(actuator),
       dismissLoot: () => dismissLoot(actuator),
       healParty: async () => ({ ok: true }),
-      enableBattleAuto: () => enableBattleAuto(actuator),
+      battleSpeed: () => pressBattleSpeed(actuator),
+      battleAuto: () => pressBattleAuto(actuator),
       battleOpener: async () => ({ ok: true }),
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),

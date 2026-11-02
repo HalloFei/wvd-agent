@@ -25,7 +25,15 @@
  * the second layout draws them and clear the floor in both; every other screen measured is below it.
  */
 import type { Frame, Observation, Perceiver, RgbaImage } from '../contracts.ts';
-import { BUTTON_INK_MIN, BUTTON_INK_STRONG, readFacts, type FrameFacts } from './facts.ts';
+import {
+  AUTO_BUTTON,
+  BUTTON_INK_MIN,
+  BUTTON_INK_STRONG,
+  readFacts,
+  SPEED_BUTTON,
+  WINDOW_RADIUS,
+  type FrameFacts,
+} from './facts.ts';
 import { screenStandings, settlesAgainst } from './screens.ts';
 
 const REFERENCE_WIDTH = 1920;
@@ -45,8 +53,55 @@ export class CombatPerceiver implements Perceiver {
     const facts = readFacts(image);
     if (!battleHudUp(facts)) return unknown;
     const confidence = facts.speedInk >= BUTTON_INK_STRONG && facts.autoInk >= BUTTON_INK_STRONG ? 1 : 0.8;
-    return { screen: 'combat', atMs: frame.atMs, confidence };
+    const toggles = battleToggles(image);
+    return {
+      screen: 'combat',
+      atMs: frame.atMs,
+      confidence,
+      ...(toggles === null ? {} : { speedOn: toggles.speedOn, autoOn: toggles.autoOn }),
+    };
   }
+}
+
+/**
+ * The two battle toggles' highlight on this frame, or null off the reference size. A toggle that is on
+ * is drawn gold (warm); one that is off is drawn white/grey. Measured 2026-11-03 over the same 60×60
+ * windows the facts count:
+ *
+ * | frame | 倍速 window | 自動 window |
+ * | --- | --- | --- |
+ * | `alice-command-phase.jpg` (both off) | 2.3 | 1.2 |
+ * | `command-phase.jpg` (speed on, auto off) | **56.4** | 1.0 |
+ * | a live auto battle (auto on) | 1.6 | **39.5** |
+ *
+ * The operator's battle order is speed → opener → auto → finish, and both buttons are toggles, so the
+ * loop presses one only when the frame says it is off (operator rule 2026-11-03).
+ */
+export function battleToggles(image: RgbaImage): { speedOn: boolean; autoOn: boolean } | null {
+  if (image.width !== REFERENCE_WIDTH || image.height !== REFERENCE_HEIGHT) return null;
+  return {
+    speedOn: warmthIn(image, SPEED_BUTTON) >= TOGGLE_WARM_MIN,
+    autoOn: warmthIn(image, AUTO_BUTTON) >= TOGGLE_WARM_MIN,
+  };
+}
+
+/** A toggle is drawn gold when on and white/grey when off; measured on 39.5–56.4 against 1.0–2.3. */
+const TOGGLE_WARM_MIN = 20;
+
+/** Mean of `max(r, g) - b` in the toggle's own 60×60 window: gold scores high, white and grey near zero. */
+function warmthIn(image: RgbaImage, centre: { x: number; y: number }): number {
+  const { data, width } = image;
+  let sum = 0;
+  let count = 0;
+  for (let y = centre.y - WINDOW_RADIUS; y <= centre.y + WINDOW_RADIUS; y += 1) {
+    const row = y * width;
+    for (let x = centre.x - WINDOW_RADIUS; x <= centre.x + WINDOW_RADIUS; x += 1) {
+      const offset = (row + x) * 4;
+      sum += Math.max(data[offset]!, data[offset + 1]!) - data[offset + 2]!;
+      count += 1;
+    }
+  }
+  return count === 0 ? 0 : sum / count;
 }
 
 /**

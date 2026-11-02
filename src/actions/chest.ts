@@ -101,7 +101,26 @@ export async function acceptChestPrompt(actuator: Actuator): Promise<ActionResul
   return actuator.tap(CHEST_OPEN_AT);
 }
 
-/** Turn on 倍速 and 自动 for the battle on screen. */
+/**
+ * The battle's two toggles, one press each. The operator's battle order (2026-11-03) is
+ * **speed → opener → auto → finish**, and each of the two is a toggle: the World presses one only
+ * when the frame says it is off (`BattleToggleReader`, contracts §2), never blindly — a second press
+ * would turn it back off.
+ */
+export async function pressBattleSpeed(actuator: Actuator): Promise<ActionResult> {
+  return actuator.tap(BATTLE_SPEED_AT);
+}
+
+/** 自动, one press: the battle plays itself from here (the loop only watches it end). */
+export async function pressBattleAuto(actuator: Actuator): Promise<ActionResult> {
+  return actuator.tap(BATTLE_AUTO_AT);
+}
+
+/**
+ * Both toggles in one command, kept for the callers that want them together (a one-off script, a
+ * measurement): 倍速, a settle, 自动. The World does not use it — the battle order needs the opener
+ * cast between the two presses.
+ */
 export async function enableBattleAuto(actuator: Actuator): Promise<ActionResult> {
   const speed = await actuator.tap(BATTLE_SPEED_AT);
   if (!speed.ok) return speed;

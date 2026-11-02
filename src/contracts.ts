@@ -111,6 +111,20 @@ export type Observation =
   | { readonly screen: 'chest-qte'; readonly atMs: number; readonly confidence: number; readonly qte: QteState }
   | { readonly screen: 'chest-open'; readonly atMs: number; readonly confidence: number; readonly opener: OpenerPanel }
   | {
+      readonly screen: 'combat';
+      readonly atMs: number;
+      readonly confidence: number;
+      /**
+       * The battle's two toggles, read off their highlight on this frame: 倍速 (multi-speed) and 自動
+       * (auto battle). Absent when the frame does not show the buttons (a caller's own observation, a
+       * non-1920 frame). The loop's battle order is speed → opener → auto → finish, and each press is
+       * sent only when the frame says its toggle is off (operator rule 2026-11-03): both are toggles,
+       * so a blind re-press would turn one back off.
+       */
+      readonly speedOn?: boolean;
+      readonly autoOn?: boolean;
+    }
+  | {
       readonly screen: 'unknown';
       readonly atMs: number;
       readonly confidence: number;
@@ -122,7 +136,7 @@ export type Observation =
        */
       readonly dungeonLike?: boolean;
     }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'unknown'>;
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }

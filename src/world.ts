@@ -123,8 +123,10 @@ export interface RouteCommands {
   dismissLoot(): Promise<ActionResult>;
   /** The game's one-key heal: party card, sparkle, 恢复, close, with its own settles. */
   healParty(): Promise<ActionResult>;
-  /** Press 倍速 then 自动 once, for the battle on screen. */
-  enableBattleAuto(): Promise<ActionResult>;
+  /** The battle's 倍速 toggle: one press, sent only when the frame says it is off (contracts §2). */
+  battleSpeed(): Promise<ActionResult>;
+  /** The battle's 自動 toggle: one press, sent only when the frame says it is off. */
+  battleAuto(): Promise<ActionResult>;
   /**
    * Cast one configured battle opener: the member's quick slot, then the side its skill resolves over.
    * Sent only when the filter below found that member's name on the opener list.
@@ -524,10 +526,12 @@ export class WvdWorld implements World {
   #cyclesDone = 0;
   /** When the opener's name read stops waiting for a readable panel, for this battle. */
   #openerDeadlineMs: number | null = null;
-  /** Auto presses sent for the battle on screen; `#track` re-arms the count when it leaves. */
+  /** 倍速 presses sent for the battle on screen; `#track` re-arms the counts when it leaves. */
+  #speedPresses = 0;
+  /** 自動 presses sent for the battle on screen. */
   #autoPresses = 0;
-  /** When the last auto press was sent, so the fallback retries are paced, not a tap loop. */
-  #autoPressAtMs: number | null = null;
+  /** When the last toggle press was sent, so the two presses are paced, not a tap loop. */
+  #togglePressAtMs: number | null = null;
   /** The battle's command phase was filtered for an opener; cleared with the battle. */
   #battleOpenerCast = false;
   /**
@@ -1252,8 +1256,9 @@ export class WvdWorld implements World {
   #track(observation: Observation): void {
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen !== 'combat') {
+      this.#speedPresses = 0;
       this.#autoPresses = 0;
-      this.#autoPressAtMs = null;
+      this.#togglePressAtMs = null;
       this.#battleOpenerCast = false;
       this.#openerDeadlineMs = null;
     }
@@ -1789,8 +1794,9 @@ export class WvdWorld implements World {
     this.#qteGivenUp = false;
     this.#qteRerolls = 0;
     this.#lastQtePass = null;
+    this.#speedPresses = 0;
     this.#autoPresses = 0;
-    this.#autoPressAtMs = null;
+    this.#togglePressAtMs = null;
     this.#battleOpenerCast = false;
     this.#openerDeadlineMs = null;
     this.#askedForMap = false;
@@ -2072,12 +2078,50 @@ export class WvdWorld implements World {
       }
       case 'fight': {
         const now = context?.now ?? this.#now();
-        // The opener comes first, and a name the reader could not tell yet is *not* a miss: the party
-        // panel is drawn a beat after the battle screen (live 2026-11-03 02:07: unreadable on the first
-        // combat frame, 爱丽丝 ACTIVE on the panel a second later). The read is retried until the panel
-        // is readable or OPENER_READ_WINDOW_MS closes — and auto is not pressed while the read is owed,
-        // because auto would take the command phase the cast needs. When a name is read, the filter
-        // decides: on the list, that member's skill is cast; off it, the default (auto) runs.
+        // Operator rule 2026-11-03, the battle's order: **speed → opener → auto → finish.**
+        // Both buttons are toggles, so each press is sent only when the frame says its toggle is off
+        // (contracts §2 `speedOn`/`autoOn`, `battleToggles`); a press already answered by the frame
+        // is not repeated, and a press that did not take is retried — paced by `AUTO_PRESS_RETRY_MS`
+        // and capped by `cfg.autoBattleEnableAttempts` (contracts §8.5), with `#track` re-arming the
+        // counts when the battle leaves.
+        const seen = context?.observation;
+        let speedOn = false;
+        let autoOn = false;
+        if (seen !== undefined && seen.screen === 'combat') {
+          speedOn = seen.speedOn === true;
+          autoOn = seen.autoOn === true;
+        }
+        const tries = Math.max(1, this.#cfg.autoBattleEnableAttempts);
+        const paced = this.#togglePressAtMs === null || now - this.#togglePressAtMs >= AUTO_PRESS_RETRY_MS;
+        const pressToggle = async (which: 'speed' | 'auto'): Promise<void> => {
+          const presses = which === 'speed' ? this.#speedPresses : this.#autoPresses;
+          // The cap is spent: one line when it is reached, and silence after that.
+          if (presses > tries) return;
+          if (presses === tries) {
+            this.#host?.log.warn(
+              `wvd: ${which === 'speed' ? '倍速' : '自動'} was pressed ${tries} times and the battle does not show it on; leaving it to the stall clock`,
+            );
+            if (which === 'speed') this.#speedPresses += 1;
+            else this.#autoPresses += 1;
+            return;
+          }
+          if (!paced) return;
+          this.#togglePressAtMs = now;
+          if (which === 'speed') this.#speedPresses += 1;
+          else this.#autoPresses += 1;
+          const pressed = which === 'speed'
+            ? await this.#commands.battleSpeed()
+            : await this.#commands.battleAuto();
+          if (pressed.ok) this.#host?.log.info(`wvd: pressed ${which === 'speed' ? '倍速' : '自動'} for the battle`);
+          else this.#host?.log.warn(`wvd: the ${which} press was refused (${pressed.reason})`);
+        };
+        // 1. Multi-speed first: it is the battle's clock, and everything after it rides on it.
+        if (!speedOn) {
+          await pressToggle('speed');
+          return;
+        }
+        // 2. The opener, before auto: auto would take the command phase the cast needs. An unreadable
+        // name is retried for the window (the party panel is drawn a beat after the battle screen).
         const battle = this.#battle;
         const wantsOpener = battle !== undefined && battle.openers.length > 0 && !this.#cfg.dryRun;
         if (wantsOpener && !this.#battleOpenerCast) {
@@ -2089,24 +2133,13 @@ export class WvdWorld implements World {
           }
           this.#battleOpenerCast = true;
         }
-        // Operator rule 2026-11-02: auto is the battle's fallback — pressed until it is on. Every
-        // command phase still on screen means the press did not take (the opener's skill resolution is
-        // what swallowed the first one), so the press is sent again: paced by `AUTO_PRESS_RETRY_MS`
-        // and capped by `cfg.autoBattleEnableAttempts` (contracts §8.5) so a battle that never leaves
-        // `combat` cannot become a tap loop. `#track` re-arms the count when the screen leaves.
-        const tries = Math.max(1, this.#cfg.autoBattleEnableAttempts);
-        if (this.#autoPresses > tries) return;
-        if (this.#autoPresses === tries) {
-          this.#autoPresses += 1;
-          this.#host?.log.warn(
-            `wvd: auto was pressed ${tries} times and the battle is still waiting; leaving it to the stall clock`,
-          );
+        // 3. Auto: the battle plays itself from here.
+        if (!autoOn) {
+          await pressToggle('auto');
           return;
         }
-        if (this.#autoPressAtMs !== null && now - this.#autoPressAtMs < AUTO_PRESS_RETRY_MS) return;
-        this.#autoPressAtMs = now;
-        this.#autoPresses += 1;
-        await this.#press('fight', fromScreen, () => this.#commands.enableBattleAuto());
+        // 4. Both toggles on and the opener decided: nothing to press; the mode holds until the battle
+        // ends (a new battle re-arms all of this in `#track`).
         return;
       }
       case 'wait':

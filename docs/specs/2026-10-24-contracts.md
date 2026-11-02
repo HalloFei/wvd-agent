@@ -146,10 +146,13 @@ export type Observation =
   | { readonly screen: 'dungeonmap'; readonly atMs: number; readonly confidence: number; readonly map: MapState }
   | { readonly screen: 'chest-qte'; readonly atMs: number; readonly confidence: number; readonly qte: QteState }
   | { readonly screen: 'chest-open'; readonly atMs: number; readonly confidence: number; readonly opener: OpenerPanel }
+  | { readonly screen: 'combat'; readonly atMs: number; readonly confidence: number;
+      /** The 倍速 and 自動 toggles' highlight on this frame; absent when the buttons are not shown. */
+      readonly speedOn?: boolean; readonly autoOn?: boolean }
   | { readonly screen: 'unknown'; readonly atMs: number; readonly confidence: number;
       /** The minimap arrow is drawn, yet nothing named the frame: the 3-D view with something over it. */
       readonly dungeonLike?: boolean }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'unknown'>;
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }

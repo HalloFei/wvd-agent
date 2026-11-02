@@ -24,7 +24,7 @@ import {
 } from './contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
 import { BATTLE_OPENERS, castBattleOpener } from './actions/battle.ts';
-import { acceptChestPrompt, cancelQte, dismissLoot, enableBattleAuto, reenterChest, tapLoot } from './actions/chest.ts';
+import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from './actions/chest.ts';
 import { healParty } from './actions/heal.ts';
 import { timeQte } from './actions/qte.ts';
 import { travelTo } from './actions/worldmap.ts';
@@ -219,7 +219,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       tapLoot: () => tapLoot(actuator),
       dismissLoot: () => dismissLoot(actuator),
       healParty: () => healParty(actuator, (ms) => new Promise((resolve) => setTimeout(resolve, ms))),
-      enableBattleAuto: () => enableBattleAuto(actuator),
+      // The battle's two toggles, one press each: speed → opener → auto → finish (operator 2026-11-03).
+      battleSpeed: () => pressBattleSpeed(actuator),
+      battleAuto: () => pressBattleAuto(actuator),
       // The cast itself: the member's slot, then the side its skill resolves over (contracts §11).
       battleOpener: (opener) => castBattleOpener(
         actuator,

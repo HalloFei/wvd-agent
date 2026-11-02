@@ -13,6 +13,7 @@ const NAV = new URL('../testdata/nav-1024-0213/', import.meta.url);
 const LIVE = new URL('../testdata/screens/2026-10-25-live/', import.meta.url);
 const FRAMES = new URL('../testdata/frames/', import.meta.url);
 const GMENU = new URL('../testdata/screens/2026-11-03-gmenu/', import.meta.url);
+const BATTLE = new URL('../testdata/battle-2026-11-02/', import.meta.url);
 
 async function imageAt(dir: URL, name: string): Promise<RgbaImage> {
   const decoded = jpeg.decode(await readFile(new URL(name, dir)), { useTArray: true });
@@ -80,6 +81,15 @@ describe('CompositePerceiver over the table', () => {
     const classification = await new CompositePerceiver([{ perceiver: liar, floor: 0.5 }])
       .classify(select);
     expect(classification.answer.screen).toBe('unknown');
+  });
+
+  it('reads the battle toggles from their highlight', async () => {
+    // Measured 2026-11-03: a toggle that is on is drawn gold (warmth 39.5–56.4 in its window), one that
+    // is off white/grey (1.0–2.3). The battle order needs the two states before it presses anything.
+    const bothOff = await new CombatPerceiver().observe(await frameAt(BATTLE, 'alice-command-phase.jpg'));
+    expect(bothOff).toMatchObject({ screen: 'combat', speedOn: false, autoOn: false });
+    const speedOn = await new CombatPerceiver().observe(await frameAt(BATTLE, 'command-phase.jpg'));
+    expect(speedOn).toMatchObject({ screen: 'combat', speedOn: true, autoOn: false });
   });
 
   it('returns a survivor that clears its floor, and reports the standings it applied', async () => {
