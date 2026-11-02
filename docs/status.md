@@ -533,7 +533,23 @@ in the panel's own card order — and the read is now realised off the battle pa
   slot tap. The design record is `docs/specs/2026-11-02-battle-member-read-design.md`.
 - 635 tests, tsc clean.
 
-The cast itself still owes a live battle: the machine stood in the rest town when the read landed.
+**Live, 22:14 — the first cast.** A farm cycle reached the floor, claimed the chest, and a battle
+followed the loot. The reader named the member and the filter cast:
+
+```
+22:14:48 open-map was overtaken: the screen is now combat
+22:14:49 cast 爱丽丝's 右上 opener at party-front
+```
+
+The heal resolved (爱丽丝's MP 161 -> 152 = the skill's 9 MP cost; 拉纳维尔 256 -> 497 HP), and the
+next command phase drew DragonSlayer's card gold — the member after Alice in the speed order, and
+not on the list.
+
+**The cast exposed one defect (pinned).** The World presses 倍速 + 自動 on the same tick it leaves
+the cast, and both taps land on the skill's result panel, so auto never goes on; the battle then
+stops at the next command phase and the stall clock ends the session. The cast's two taps are fine —
+only the auto press that follows needs to wait for the command row. Card: `t-mvzckmbm-fz14p1` "The
+auto press is swallowed by the opener cast's result panel".
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only
