@@ -9,6 +9,7 @@ import { ChestPromptPerceiver } from '../src/perception/prompt.ts';
 import { ChestOpeningPerceiver } from '../src/perception/chest-opening.ts';
 import { LootPerceiver } from '../src/perception/loot.ts';
 import { CharacterPagePerceiver } from '../src/perception/character-page.ts';
+import { HarkenMenuPerceiver } from '../src/perception/harken.ts';
 import { CombatPerceiver } from '../src/perception/combat.ts';
 import { HudPerceiver } from '../src/perception/hud.ts';
 import { TownPerceiver, WorldMapPerceiver } from '../src/perception/location.ts';
@@ -25,6 +26,7 @@ const composite = new CompositePerceiver([
   { perceiver: new LootPerceiver(), floor: 0.5 },
   { perceiver: new ChestOpeningPerceiver(), floor: 0.5 },
   { perceiver: new CharacterPagePerceiver(), floor: 0.5 },
+  { perceiver: new HarkenMenuPerceiver(), floor: 0.5 },
   { perceiver: new CombatPerceiver(), floor: 0.5 },
   { perceiver: new HudPerceiver(), floor: 0.5 },
   { perceiver: new WorldMapPerceiver(), floor: 0.5 },

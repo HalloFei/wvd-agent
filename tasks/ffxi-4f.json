@@ -7,15 +7,13 @@
     "zone": "ffxi-zone3",
     "climb": {
       "from": "0c0280000d6ff0000d7ffc0008c37000",
+      "destination": "第四区-城内2F深处-",
       "script": {
-        "timeoutMs": 60000,
+        "timeoutMs": 90000,
         "steps": [
           { "op": "expectFloor", "timeoutMs": 5000 },
-          { "op": "key", "key": "r" },
-          { "op": "tap", "at": [960, 158] },
-          { "op": "wait", "ms": 900 },
-          { "op": "tap", "at": [960, 236] },
-          { "op": "wait", "ms": 8000 },
+          { "op": "key", "key": "f" },
+          { "op": "wait", "ms": 12000 },
           { "op": "expect", "screen": "dungeon", "timeoutMs": 30000 }
         ]
       }

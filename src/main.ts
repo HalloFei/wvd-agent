@@ -27,13 +27,16 @@ import { BATTLE_OPENERS, castBattleOpener } from './actions/battle.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from './actions/chest.ts';
 import { closeCharacterPage } from './actions/heal.ts';
 import { CharacterPagePerceiver } from './perception/character-page.ts';
+import { HarkenMenuPerceiver } from './perception/harken.ts';
 import { healParty } from './actions/heal.ts';
 import { timeQte } from './actions/qte.ts';
 import { travelTo } from './actions/worldmap.ts';
 import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
 import { connectEngine, startEngine, type EngineClient } from './engine/child.ts';
+import { writeFile } from 'node:fs/promises';
 import { captureJpeg, focusGame, sendInput, Win32Capture } from './engine/win32.ts';
+import { takeSnapshot } from './escalation/image.ts';
 import { ChestPerceiver } from './perception/chest.ts';
 import { CombatPerceiver } from './perception/combat.ts';
 import { ChestPromptPerceiver } from './perception/prompt.ts';
@@ -125,6 +128,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     // The character page is a full-screen menu: its X 关闭 tile is the evidence, and it must be named
     // before the HUD can mistake the scene under it for the 3-D view (2026-11-03).
     { perceiver: new CharacterPagePerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+  { perceiver: new HarkenMenuPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new CombatPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new HudPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The HUD refuses both of these at 0.2; they run last so a dungeon frame never pays for them.
@@ -226,14 +230,34 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       healParty: () => healParty(actuator, (ms) => new Promise((resolve) => setTimeout(resolve, ms))),
       // The character page's own close: one tap on its measured X 关闭 tile, verified by the next frame.
       closeCharacterPage: () => closeCharacterPage(actuator),
+      // A control perception named: the harken menu's row (contracts §2 harken-menu).
+      tapPoint: (at) => actuator.tap(at),
       // The battle's two toggles, one press each: speed → opener → auto → finish (operator 2026-11-03).
       battleSpeed: () => pressBattleSpeed(actuator),
       battleAuto: () => pressBattleAuto(actuator),
-      // The cast itself: the member's slot, then the side its skill resolves over (contracts §11).
+      // The cast itself: the member's slot, then the press that resolves it (contracts §11).
       battleOpener: (opener) => castBattleOpener(
         actuator,
         opener,
-        (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+        async (ms) => {
+          // Measurement hook (`WVD_CAPTURE_CAST=1`): the settle between the slot tap and the resolving
+          // press is the only moment the panel the cast acts on is on screen, so that is when a frame is
+          // kept — the operator's 确认 button has never been recorded, and no point is guessed on the
+          // cast path. A failed capture never breaks the cast.
+          if (process.env.WVD_CAPTURE_CAST === '1' && live !== null) {
+            const snapshot = await takeSnapshot(live.snapshot, 1920);
+            if (snapshot !== null) {
+              const path = `.tmp/cast-panel-${Date.now()}.jpg`;
+              try {
+                await writeFile(path, Buffer.from(snapshot.bytes));
+                world?.note(`wvd: cast panel captured to ${path}`);
+              } catch {
+                // a measurement, not a command
+              }
+            }
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, ms));
+        },
       ),
       // The attempt-vs-reroll policy's action: leave the QTE (free, chest §4) and re-click a card.
       cancelQte: () => cancelQte(actuator),

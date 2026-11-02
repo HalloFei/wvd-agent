@@ -57,6 +57,7 @@ export const SCREENS: readonly ScreenId[] = [
   'loading',
   'dungeon-select',
   'character-page',
+  'harken-menu',
 ];
 
 export function screenStandings(facts: FrameFacts): readonly ScreenStanding[] {
@@ -79,6 +80,8 @@ export function screenStandings(facts: FrameFacts): readonly ScreenStanding[] {
     // The character page is a menu over the view: its own tile is the only evidence, and no cheap
     // fact rules it in or out (2026-11-03).
     { screen: 'character-page', support: 0, ruledOut: false },
+    // The harken's floor menu: a centred list over the 3-D view; only its own reader can speak about it.
+    { screen: 'harken-menu', support: 0, ruledOut: false },
     { screen: 'chest-prompt', support: 0, ruledOut: false },
     { screen: 'chest-qte', support: 0, ruledOut: false },
     // The opening (lid lifting, hands reaching, no bar, no HUD): only its own recogniser speaks.

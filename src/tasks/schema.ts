@@ -141,7 +141,7 @@ function parseScript(raw: unknown, name: string, knownLocations?: ReadonlySet<st
 /** The fields a `goal` may carry; anything else in the object is an unknown field. */
 const GOAL_FIELDS: readonly string[] = ['site', 'zone', 'climb'];
 /** The fields a `climb` may carry. */
-const CLIMB_FIELDS: readonly string[] = ['from', 'script'];
+const CLIMB_FIELDS: readonly string[] = ['from', 'script', 'destination'];
 
 /** A catalog id, checked only when the caller has a catalog to check against. */
 function parseLocationId(raw: unknown, field: string, knownLocations?: ReadonlySet<string>): string | Problem {
@@ -186,7 +186,14 @@ function parseClimb(raw: unknown): TaskClimb | Problem {
   if (typeof raw.from !== 'string' || !TITLE_KEY.test(raw.from)) return problem('bad-title-key', 'goal.climb.from');
   const script = parseScript(raw.script, 'goal.climb.script');
   if (!('steps' in script)) return script;
-  return { from: raw.from, script };
+  // The harken row's label, when the climb names one: the menu's own text (第一区-城外- etc.). The
+  // World taps it only when the menu offers it — the list is not fixed (operator rule 2026-11-03).
+  if (raw.destination !== undefined && (typeof raw.destination !== 'string' || raw.destination.length === 0)) {
+    return problem('missing-field', 'goal.climb.destination');
+  }
+  return raw.destination === undefined
+    ? { from: raw.from, script }
+    : { from: raw.from, script, destination: raw.destination };
 }
 
 /**

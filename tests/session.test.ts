@@ -56,6 +56,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   loading: screen('loading'),
   'dungeon-select': screen('dungeon-select'),
   'character-page': screen('character-page'),
+  'harken-menu': { screen: 'harken-menu', atMs: AT, confidence: CONFIDENT, rows: [] },
 };
 
 /** The route's acting floor from both sides, plus the out-of-contract zero and a negative. */

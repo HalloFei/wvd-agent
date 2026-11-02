@@ -587,6 +587,24 @@ afterwards is the unnamed policy's business.
    (787,939) selects nothing. Candidate causes: the 700 ms settle, or the panel layout's row geometry
    (with the panel up the party grid moves up ~84 px). One live battle with the cast measured decides
    it; that is the operator's call to start.
+## Readers, and the harken's floor menu (2026-11-03)
+
+The operator's rule: *a reader is a primitive module — similar readers can all inherit a basic reader
+class, similar attributes.* `perception/reader.ts` is that base: `FrameReader<T>` (a region of a frame
+in, `{ value, confidence }` or null out, never a throw), the region/scaling helpers, and
+`StripLibraryReader` — a fixed band whose label is matched against a **measured library** (labels are
+learned patches, not decoded text). The design record, with the survey of the readers that already
+exist (findTemplate, parseMap, the per-screen measures) and how each becomes a subclass, is
+`2026-11-03-readers-design.md`.
+
+The first new consumer is the harken's floor menu (`perception/harken.ts`, fixture
+`testdata/screens/2026-11-03-harken-menu/harken-2f.jpg`): rows found by their text lines in the centre
+band, each label matched against `harken-library.ts` (第一区-城外-, 第二区-城内1F-, 第四区-城内2F深处-,
+归还). **The list is not fixed** — a harken offers a floor only once that floor's harken is reconstructed,
+so a new harken may draw nothing but 归还 — and the reader says `null` for a label it has never measured.
+The World taps the row the climb names (`goal.climb.destination`); when the menu does not offer it, it
+taps 归还 and the stair icon is the way up.
+
 ## The character page is a screen now, and the loop closes it (2026-11-03)
 
 The one-key heal opens a party member's page; twice tonight (03:18, 03:39) the close tap was swallowed

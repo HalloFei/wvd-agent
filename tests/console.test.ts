@@ -211,6 +211,7 @@ function makeConsole(options: {
       dismissLoot: () => dismissLoot(actuator),
       healParty: async () => ({ ok: true }),
       closeCharacterPage: async () => ({ ok: true }),
+      tapPoint: (at) => actuator.tap(at),
       battleSpeed: () => pressBattleSpeed(actuator),
       battleAuto: () => pressBattleAuto(actuator),
       battleOpener: async () => ({ ok: true }),

@@ -126,6 +126,11 @@ export interface RouteCommands {
   healParty(): Promise<ActionResult>;
   /** Leave the character page: its measured X 关闭 tile (2026-11-03; the page is a named screen). */
   closeCharacterPage(): Promise<ActionResult>;
+  /**
+   * One tap at a point **perception named** — the harken menu's row, today. Not a blind tile: the
+   * caller passes a control the frame itself reported (contracts §2 `harken-menu`).
+   */
+  tapPoint(at: Point): Promise<ActionResult>;
   /** The battle's 倍速 toggle: one press, sent only when the frame says it is off (contracts §2). */
   battleSpeed(): Promise<ActionResult>;
   /** The battle's 自動 toggle: one press, sent only when the frame says it is off. */
@@ -1152,6 +1157,32 @@ export class WvdWorld implements World {
       const closed = await this.#commands.closeCharacterPage();
       if (closed.ok) this.#host?.log.info('wvd: closed the character page');
       else this.#host?.log.warn(`wvd: the character page close was refused (${closed.reason})`);
+      return;
+    }
+
+    // The harken's floor menu (operator rule 2026-11-03): the list is not fixed — a harken offers a
+    // floor only once that floor's harken is reconstructed — so the climb reads it. The task names the
+    // farm floor's row; when the menu offers it the World taps it (the teleport). When it does not, the
+    // 归还 row backs the party out and the stair icon is the way up.
+    if (!waiting && observation.screen === 'harken-menu') {
+      if (!this.#pacer.ready(now)) return;
+      const destination = this.#task?.orient?.goal.climb?.destination;
+      const wanted = destination === undefined
+        ? null
+        : observation.rows.find((row) => row.label === destination) ?? null;
+      if (wanted !== null) {
+        this.#pacer.act(now);
+        const tapped = await this.#commands.tapPoint(wanted.at);
+        if (tapped.ok) this.#host?.log.info(`wvd: the harken offers ${destination}; tapping its row`);
+        else this.#host?.log.warn(`wvd: the harken row tap was refused (${tapped.reason})`);
+        return;
+      }
+      const backOut = observation.rows.find((row) => row.label === '归还') ?? null;
+      if (backOut === null) return;
+      this.#pacer.act(now);
+      const tapped = await this.#commands.tapPoint(backOut.at);
+      if (tapped.ok) this.#host?.log.info('wvd: the harken does not offer the farm floor; backing out with 归还');
+      else this.#host?.log.warn(`wvd: the harken 归还 tap was refused (${tapped.reason})`);
       return;
     }
 

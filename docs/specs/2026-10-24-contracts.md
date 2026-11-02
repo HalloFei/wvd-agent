@@ -65,8 +65,15 @@ encoder changes one module and no parser.
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'loot' | 'loading' | 'chest-prompt'
-  | 'dungeon-select' | 'character-page' | 'unknown';
+  | 'dungeon-select' | 'character-page' | 'harken-menu' | 'unknown';
 ```
+
+`harken-menu` is the floor list a harken offers (2026-11-03): a centred list of destination rows
+(`第一区-城外-`, `第二区-城内1F-`, `第四区-城内2F深处-`, `归还` on the measured frame), followed by the
+加护 block. **The list is not fixed** — a harken offers a floor only once that floor's harken is
+reconstructed — so the reader reports the rows it can name and `null` for a label the library has never
+seen (`perception/harken.ts` + `harken-library.ts`). The climb taps the row the task names; when it is
+not offered, the `归还` row backs the party out and the stair icon is the way up.
 
 `character-page` is the menu a party HUD card opens (2026-11-03): a member's page with its stat block
 and the bottom tab row (关闭 / 强度 / 技能 / 咒文 / 装备 / 背包). Its evidence is the X 关闭 tile at
@@ -158,7 +165,10 @@ export type Observation =
   | { readonly screen: 'unknown'; readonly atMs: number; readonly confidence: number;
       /** The minimap arrow is drawn, yet nothing named the frame: the 3-D view with something over it. */
       readonly dungeonLike?: boolean }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'unknown'>;
+  | { readonly screen: 'harken-menu'; readonly atMs: number; readonly confidence: number;
+      /** The menu's rows, top to bottom: where each label sits, and the label the library knows. */
+      readonly rows: readonly { readonly at: Point; readonly label: string | null }[] }
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }

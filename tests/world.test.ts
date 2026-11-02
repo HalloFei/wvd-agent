@@ -412,6 +412,7 @@ function makeWorld(options: {
       healParty: async () => ({ ok: true }),
       // The page's close is one measured tap, so the world tests can see it.
       closeCharacterPage: () => closeCharacterPage(actuator),
+      tapPoint: (at) => actuator.tap(at),
       battleSpeed: () => pressBattleSpeed(actuator),
       battleAuto: () => pressBattleAuto(actuator),
       // The opener's taps are pinned in tests/battle-opener.test.ts; the world tests need the call.
@@ -2263,6 +2264,46 @@ describe('the orientation', () => {
 
   /** The two presses of openMap, as the fake actuator records them. */
   const GG = ['key ' + SCAN.G + ' 60', 'key ' + SCAN.G + ' 60'];
+
+
+  it('reads the harken menu: the named row when it is offered, 归还 when it is not', async () => {
+    // Operator rule 2026-11-03: the harken's list is not fixed — it offers a floor only once that
+    // floor's harken is reconstructed — so the climb reads the menu instead of assuming a layout.
+    const definition: TaskDefinition = {
+      ...goalDefinition(),
+      goal: {
+        site: 'ffxi-gcn',
+        zone: 'ffxi-zone3',
+        climb: {
+          from: CLIMB,
+          destination: '第四区-城内2F深处-',
+          script: { timeoutMs: 60_000, steps: [{ op: 'wait' as const, ms: 1 }] },
+        },
+      },
+    };
+    const { task } = goalTask(definition);
+    const rows = [
+      { at: { x: 960, y: 484 }, label: '第一区-城外-' },
+      { at: { x: 960, y: 556 }, label: '第二区-城内1F-' },
+      { at: { x: 960, y: 628 }, label: '第四区-城内2F深处-' },
+      { at: { x: 960, y: 700 }, label: '归还' },
+    ];
+    const menu: Observation = { screen: 'harken-menu', atMs: 100, confidence: 1, rows };
+    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: menu, task });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,628']);
+    expect(host.logRecords.some((line) => line.message.includes('the harken offers 第四区-城内2F深处-'))).toBe(true);
+
+    // The same menu on a harken that offers nothing but 归还: the World backs out, and the stair icon
+    // is the way up.
+    perceiver.observation = { ...menu, rows: [rows[3]!] };
+    clock.advance(800);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,628', 'tap 960,700']);
+    expect(host.logRecords.some((line) => line.message.includes('does not offer the farm floor'))).toBe(true);
+  });
 
   it('resumes from inside the dungeon: no entry runs, and the map is opened to read the floor', async () => {
     const { task, calls } = goalTask();

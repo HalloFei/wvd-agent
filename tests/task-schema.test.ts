@@ -33,15 +33,15 @@ describe('parseTask', () => {
     const threeF = '0c0280000d6ff0000d7ffc0008c37000';
     expect(task.goal?.climb?.from).toBe(threeF);
     const climb = task.goal!.climb!.script.steps;
-    // The map is already open when the climb runs (the orientation opened it to read the floor), so
-    // its own gate is the only screen step: a wrong floor refuses before the measured taps.
+    // The climb walks to the floor's **exit** instead of tapping a measured tile (operator rule
+    // 2026-11-03): the map is open when the climb runs, F is the map's own 移动至出口, and the party
+    // walks there from wherever it stands. The old harken-menu taps (960,158 / 960,236) were a fixed
+    // layout and never matched this harken's menu.
     expect(climb[0]).toEqual({ op: 'expectFloor', timeoutMs: 5000 });
-    expect(climb).toContainEqual({ op: 'key', key: 'r' });
-    expect(climb).toContainEqual({ op: 'tap', at: [960, 158], count: 1 });
-    expect(climb).toContainEqual({ op: 'tap', at: [960, 236], count: 1 });
+    expect(climb).toContainEqual({ op: 'key', key: 'f' });
+    expect(climb.at(-2)).toEqual({ op: 'wait', ms: 12000 });
     // It hands over to the farm loop only once the 3-D view is named: a black transition frame as
     // the World's first tick ended a session that had already arrived (2026-11-01).
-    expect(climb.at(-2)).toEqual({ op: 'wait', ms: 8000 });
     expect(climb.at(-1)).toEqual({ op: 'expect', screen: 'dungeon', timeoutMs: 30000 });
 
     // The exit walks back through both floors, harkens out, then returns to town.

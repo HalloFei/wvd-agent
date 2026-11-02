@@ -43,7 +43,7 @@ export interface FrameSource {
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'loot' | 'loading' | 'chest-prompt'
-  | 'dungeon-select' | 'character-page' | 'unknown';
+  | 'dungeon-select' | 'character-page' | 'harken-menu' | 'unknown';
 
 // §3 Perception
 
@@ -111,6 +111,17 @@ export type Observation =
   | { readonly screen: 'chest-qte'; readonly atMs: number; readonly confidence: number; readonly qte: QteState }
   | { readonly screen: 'chest-open'; readonly atMs: number; readonly confidence: number; readonly opener: OpenerPanel }
   | {
+      readonly screen: 'harken-menu';
+      readonly atMs: number;
+      readonly confidence: number;
+      /**
+       * The menu's rows, top to bottom: where each label sits, and the label the measured library
+       * knows (`null` for one it has never seen). The list is not fixed — a harken offers a floor only
+       * once that floor's harken is reconstructed — so the climb decides from the rows, not a layout.
+       */
+      readonly rows: readonly { readonly at: Point; readonly label: string | null }[];
+    }
+  | {
       readonly screen: 'combat';
       readonly atMs: number;
       readonly confidence: number;
@@ -136,7 +147,7 @@ export type Observation =
        */
       readonly dungeonLike?: boolean;
     }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'unknown'>;
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }
@@ -342,6 +353,13 @@ export interface TaskClimb {
   /** The 32-hex floor key the climb script's own `expectFloor` falls back to. */
   readonly from: string;
   readonly script: TaskScript;
+  /**
+   * The harken menu's row for the farm's floor, as the menu draws it (`harken-menu` rows, contracts
+   * §2). A harken offers a floor only once that floor's harken is reconstructed (operator rule
+   * 2026-11-03), so the World reads the menu: the named row is tapped when it is offered; when it is
+   * not, the `归还` row backs the party out and the stair icon is the way up.
+   */
+  readonly destination?: string;
 }
 
 export interface TaskDefinition {

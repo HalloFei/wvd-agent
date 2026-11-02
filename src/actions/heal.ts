@@ -10,7 +10,8 @@
  *    page (shield + sword), 协同技能 (the linked arrows), and the auto-heal sparkle. The sparkle is
  *    the rightmost: (1220, 574). The arrow one is (1156, 574) and opens a 协同技能 dialog instead.
  * 3. The sparkle opens the 一键恢复 dialog — 恢复量 on the first/second row, 异常状态, 恢复方式, and
- *    the two buttons. 关闭 is (854, 813); **恢复 is (1070, 813)**.
+ *    the two buttons. 关闭 is (854, 813); **恢复 is (1070, 813)**. The dialog's screen name is
+ *    **`quick-heal`** (operator, 2026-11-03); it is not perceived yet, so its taps are still blind.
  * 4. Confirming prints 「已恢复。」 and leaves the character page up; X 关闭 at the page's bottom left
  *    (699, 1012) returns to the 3-D view.
  *
