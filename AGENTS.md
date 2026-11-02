@@ -76,3 +76,24 @@ directory; the source of truth stays here.
   eight slots — the observable, the diagnosis with its evidence tag, the options, the radius, the
   risk, the test plan, the open questions with their defaults — and stops. A ticket is a board id
   plus the repository; nothing is retyped from the card, and implementation starts only on approval.
+
+## 5. Testing cadence
+
+**A full-suite run after every change is a waste and is not the default.** A change with a clear
+boundary and a clear blast radius is proved by the tests that touch it:
+
+- the unit test of the module changed, and the fixture-driven test of the frame or file it reads;
+- the consumers' tests only when the change is at a seam they read (a contract's field, a command's
+  shape) — name them in the commit.
+
+The **full suite** is for three moments, and only these:
+
+1. **before merging a branch into `main`** — the merge is the integration point, so the integration
+   run happens there;
+2. after a change to a **shared contract or a timing/frame budget** — `src/contracts.ts`, the pacing
+   and in-flight constants, the capture budgets — where every module is a consumer;
+3. **at the end of a task**, when the feature is claimed done.
+
+`tsc --noEmit` runs after every change: it is cheap and catches the type-level break the targeted
+tests never read. A docs-only change runs neither. The commit records the command that proved it
+(`vitest run tests/<file>`), so "which tests proved this" always has an answer.
