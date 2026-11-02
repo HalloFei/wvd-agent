@@ -171,6 +171,7 @@ describe('tapLoot', () => {
  */
 const BANNER = new URL('../testdata/chest/2026-11-01-loot-banner/', import.meta.url);
 const BATTLE = new URL('../testdata/battle-2026-11-02/', import.meta.url);
+const BOOK = new URL('../testdata/chest/2026-11-03-loot-book/', import.meta.url);
 
 /**
  * The operator's rule (2026-11-03): *the loot screen has the loot name and the loot item image, and
@@ -185,9 +186,13 @@ describe('a qualified loot frame', () => {
       const observation = await new LootPerceiver().observe(frameOf(await image(name, BATTLE)));
       expect(observation.screen).toBe('unknown');
     }
-    // The real loot card still qualifies: the same caption, and 2 342 saturated pixels of item art.
-    const loot = await new LootPerceiver().observe(frameOf(await image('loot-00.jpg', LOOT)));
-    expect(loot.screen).toBe('loot');
+    // The real loot cards still qualify, both kinds of item art: the gold goblet (2 829 bright px at
+    // the card's centre) and the grey book of 2026-11-03 04:05 (4 069). The second is why the measure is
+    // brightness, not colour.
+    const goblet = await new LootPerceiver().observe(frameOf(await image('loot-00.jpg', LOOT)));
+    expect(goblet.screen).toBe('loot');
+    const book = await new LootPerceiver().observe(frameOf(await image('loot-book.jpg', BOOK)));
+    expect(book.screen).toBe('loot');
   });
 });
 

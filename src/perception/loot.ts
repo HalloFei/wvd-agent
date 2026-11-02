@@ -172,32 +172,36 @@ function isLootOverlay(image: RgbaImage): boolean {
     if (interior.spread > INTERIOR_SPREAD_MAX) return false;
   }
   // The operator's rule (2026-11-03): **a qualified loot frame carries the loot item's name AND its
-  // image.** The name is the caption below the card; the image is the saturated raster drawn inside
-  // it. The name alone was not enough: the battle's skill **detail panel** (关闭 / 队列 over the party
-  // panel) passes the border, interior and caption gates and was named `loot` live at 03:17 — the loop
-  // then tapped the loot card's point ten times into the battle. Measured over the card's inner box
-  // (0.40,0.42)-(0.60,0.58 of the frame), pixels with saturation over 60:
+  // image.** The name is the caption below the card; the image is the item's own art, drawn lit in the
+  // middle of the card. The name alone was not enough: the battle's skill **detail panel** (关闭 / 队列
+  // over the party panel) passes the border, interior and caption gates and was named `loot` live at
+  // 03:17 — the loop then tapped the loot card's point ten times into the battle.
   //
-  // | frame | saturated px |
+  // The art is measured as **bright pixels in the card's centre**, not as colour: the second live loot
+  // frame (2026-11-03 04:05, a grey book worth 10 000 拜恩纸币) has almost no saturation. Measured over
+  // the centre box (0.45,0.44)-(0.55,0.56 of the frame), pixels over luma 120:
+  //
+  // | frame | centre bright px |
   // | --- | --- |
-  // | the loot card (`loot-00.jpg`) | **2 342** |
-  // | the skill detail panel (both captures) | 55 / 105 |
-  // | a battle command phase | 367 |
+  // | the grey book (`2026-11-03-loot-book/loot-book.jpg`) | **4 069** |
+  // | the gold goblet (`loot-00.jpg`) | **2 829** |
+  // | the skill detail panel | 151 |
+  // | a battle command phase | 238 |
   //
-  // Floor 500. A dedicated loot-item database (the operator's plan) will replace this with a real
+  // Floor 1 200. A dedicated loot-item database (the operator's plan) will replace this with a real
   // item-image match; until it exists, the name + image pair is the qualification.
   if (itemArtPixels(image) < ITEM_ART_MIN) return false;
   return captionInk(image) >= CAPTION_INK_MIN;
 }
 
-/** The loot item's art inside the card, as fractions of the frame (the same 16:9 rule as the card). */
-const ITEM_ART_BOX = { x0: 0.40, y0: 0.42, x1: 0.60, y1: 0.58 } as const;
-/** Saturation (max channel minus min) above which a pixel is the item art, not the card's fill. */
-const ITEM_ART_SATURATION = 60;
-/** The floor the recorded frames support: the loot card 2 342, every non-loot card at most 367. */
-const ITEM_ART_MIN = 500;
+/** The loot item's art at the card's centre, as fractions of the frame (the card's 16:9 rule). */
+const ITEM_ART_BOX = { x0: 0.45, y0: 0.44, x1: 0.55, y1: 0.56 } as const;
+/** Luma above which a pixel is the lit item art rather than the card's dark fill. */
+const ITEM_ART_LUMA = 120;
+/** The floor the recorded frames support: the two loot frames 4 069 and 2 829, the rest at most 238. */
+const ITEM_ART_MIN = 1_200;
 
-/** Saturated pixels inside the card's inner box: the loot item's own image. */
+/** Bright pixels at the card's centre: the loot item's own image. */
 function itemArtPixels(image: RgbaImage): number {
   const x0 = Math.round(image.width * ITEM_ART_BOX.x0);
   const x1 = Math.round(image.width * ITEM_ART_BOX.x1);
@@ -207,12 +211,8 @@ function itemArtPixels(image: RgbaImage): number {
   for (let y = y0; y < y1; y += 1) {
     for (let x = x0; x < x1; x += 1) {
       const o = (y * image.width + x) * 4;
-      const r = image.data[o]!;
-      const g = image.data[o + 1]!;
-      const b = image.data[o + 2]!;
-      const mx = Math.max(r, g, b);
-      const mn = Math.min(r, g, b);
-      if (mx - mn > ITEM_ART_SATURATION) count += 1;
+      const luma = (image.data[o]! * 299 + image.data[o + 1]! * 587 + image.data[o + 2]! * 114) / 1000;
+      if (luma > ITEM_ART_LUMA) count += 1;
     }
   }
   return count;
