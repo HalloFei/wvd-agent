@@ -37,7 +37,7 @@ export const BUTTON_INK_STRONG = 0.008;
 export interface FrameFacts {
   /** The minimap arrow's pixel count in the corner (`minimap.ts`). */
   readonly minimapArrowPx: number;
-  /** The centred title band's pixel count (`map.ts` G4). */
+  /** The centred title band's **text** ink (`map.ts` G4): a bright stroke with its own dark gap. */
   readonly titleBarInkPx: number;
   /** Near-white ink in the 60×60 speed window. */
   readonly speedInk: number;

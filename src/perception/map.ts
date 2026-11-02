@@ -97,29 +97,83 @@ const MAP_INK_LUMA = 185;
 const MAP_INK_SAT = 60;
 
 /**
- * G4 — a centred 28-px white title string is present (research §2). `map.png` 768, `popup.png` 770,
- * HUD 0; the floor is far below the sample and above the HUD.
+ * G4 — a centred title string is present (research §2). `map.png` 768, `popup.png` 770 pixels of it.
  */
 const TITLE_INK_X = 800;
 const TITLE_INK_Y = 40;
 const TITLE_INK_W = 400;
 const TITLE_INK_H = 40;
 const TITLE_INK_LUMA = 170;
-export const TITLE_BAR_INK_MIN = 400;
+/** A glyph's stroke carries its own dark gap (or outline) within this radius of it. */
+const TITLE_STROKE_DARK = 90;
+const TITLE_STROKE_RADIUS = 2;
+export const TITLE_BAR_INK_MIN = 20;
 
 /**
- * G4's ink count: pixels in the centred title band above `TITLE_INK_LUMA`. Exported because the band
- * also answers "this frame is not a battle" for `CombatPerceiver`, whether or not the rest of this
- * parser accepts the map: no battle draws a title bar, and every 1920×1080 battle frame measured
- * carries 0–1 px of it.
+ * G4's ink count — **text** ink: pixels in the centred title band above `TITLE_INK_LUMA` that sit within
+ * `TITLE_STROKE_RADIUS` of a pixel below `TITLE_STROKE_DARK`. A title is characters, and characters have
+ * their own dark gaps; a bright *surface* has none. Measured on the 1920×1080 corpus 2026-11-03:
+ *
+ * | frame | stroke ink | raw bright px |
+ * | --- | --- | --- |
+ * | 第四区 / 第三区 maps, Dungeon Select | 1 159–1 854 | 1 185–2 236 |
+ * | the world map | 306 | 1 583 |
+ * | the chest QTE frames, the opener panel | 31–56 | 446–5 569 |
+ * | the encounter intro | 245 | 446 |
+ * | **the 3-D view with its menu legend** | **0** | **5 227** |
+ * | the rest town | 0 | 2 473 |
+ * | battles | 0–1 | 0–1 |
+ *
+ * The menu frame is the reason the raw count is not the fact: the room's glowing wall fills the band with
+ * 5 227 bright pixels and not one stroke, so the raw count ruled the 3-D view out and left the frame
+ * unnamed (`t-mvy23qe2`, 2026-11-03). The stroke count separates it from every title in the corpus.
+ *
+ * Exported because the band also answers "this frame is not a battle" for `CombatPerceiver`, and "the
+ * 3-D view's corner says otherwise" for the evidence table (`screens.ts`): a battle draws no title, and
+ * neither does the 3-D view — but only a title's text may rule the 3-D view out.
  */
 export function titleBarInk(image: RgbaImage): number {
   const { data, width } = image;
+  const radius = TITLE_STROKE_RADIUS;
+  const padX = TITLE_INK_X - radius;
+  const padY = TITLE_INK_Y - radius;
+  const padW = TITLE_INK_W + 2 * radius;
+  const padH = TITLE_INK_H + 2 * radius;
+  if (padX < 0 || padY < 0 || width < padX + padW || image.height < padY + padH) return 0;
+  // The band's luma, then its local minimum over the stroke radius: one horizontal pass, one vertical.
+  // The minimum is associative, so two 1-D passes give the same window a full 5×5 scan would.
+  const luma = new Uint8Array(padW * padH);
+  for (let y = 0; y < padH; y += 1) {
+    const row = (padY + y) * width;
+    for (let x = 0; x < padW; x += 1) luma[y * padW + x] = lumaAt(data, (row + padX + x) * 4);
+  }
+  const across = new Uint8Array(padW * padH);
+  for (let y = 0; y < padH; y += 1) {
+    for (let x = 0; x < padW; x += 1) {
+      let low = 255;
+      for (let d = -radius; d <= radius; d += 1) {
+        const xx = x + d;
+        if (xx >= 0 && xx < padW) low = Math.min(low, luma[y * padW + xx]!);
+      }
+      across[y * padW + x] = low;
+    }
+  }
+  const near = new Uint8Array(padW * padH);
+  for (let y = 0; y < padH; y += 1) {
+    for (let x = 0; x < padW; x += 1) {
+      let low = 255;
+      for (let d = -radius; d <= radius; d += 1) {
+        const yy = y + d;
+        if (yy >= 0 && yy < padH) low = Math.min(low, across[yy * padW + x]!);
+      }
+      near[y * padW + x] = low;
+    }
+  }
   let ink = 0;
-  for (let y = TITLE_INK_Y; y < TITLE_INK_Y + TITLE_INK_H; y += 1) {
-    const row = y * width;
-    for (let x = TITLE_INK_X; x < TITLE_INK_X + TITLE_INK_W; x += 1) {
-      if (lumaAt(data, (row + x) * 4) > TITLE_INK_LUMA) ink += 1;
+  for (let y = radius; y < radius + TITLE_INK_H; y += 1) {
+    for (let x = radius; x < radius + TITLE_INK_W; x += 1) {
+      const index = y * padW + x;
+      if (luma[index]! > TITLE_INK_LUMA && near[index]! < TITLE_STROKE_DARK) ink += 1;
     }
   }
   return ink;

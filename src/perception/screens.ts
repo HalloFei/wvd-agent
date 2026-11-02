@@ -11,14 +11,17 @@
  * | fact | battles | 3-D view | maps | town | Dungeon Select | opener | chest QTE |
  * | --- | --- | --- | --- | --- | --- | --- | --- |
  * | minimap arrow px | 0 | 35 | 0 | 0 | 0 | 1 537 | 0–455 |
- * | title-band ink px | 0–1 | 0 | 759–1 824 | 2 473 | 2 236 | 865 | 5 251 |
+ * | title-band **text** ink px | 0–1 | 0 | 1 159–1 854 | 0 | 1 854 | 47 | 31–56 |
  * | both button windows ≥ 0.004 | yes | no | no (speed 0.0008–0.0019) | no | no | no | no |
  *
- * Two consequences are encoded: **a battle draws no title bar and no minimap**, and **a map, the
- * town, Dungeon Select and the opener all carry gold in the minimap's corner**, so the arrow is
- * evidence for `dungeon` and a rule-out of `combat`, never a rule-out of the chest screens. The
- * support numbers are ordinal — the strongest measured evidence clears 1, and they are not
- * calibrated probabilities (the labelled corpus is ~20 screens).
+ * Two consequences are encoded: **a battle draws no title bar and no minimap**, and **the 3-D view is
+ * the screen with a minimap**. A title is characters — `map.ts` G4 measures a bright stroke carrying
+ * its own dark gap (2026-11-03) — so the 3-D view with its menu legend open draws no title and the
+ * arrow alone decides it: the operator's rule, *whenever a minimap, it is the dungeon*. The town's
+ * name is white on a bright sky and counts as no title either; the town draws no minimap and has its
+ * own recogniser, so no rule-out is needed for it. The support numbers are ordinal — the strongest
+ * measured evidence clears 1, and they are not calibrated probabilities (the labelled corpus is ~20
+ * screens).
  */
 import type { ScreenId } from '../contracts.ts';
 import {

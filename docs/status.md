@@ -552,26 +552,26 @@ not on the list.
 today. This does not settle `t-mvzds4ku-efhjkd`: the live cast's *target tap* selected nothing, and the
 enemy side is a new point that needs the same measurement.
 
-## The 3-D view that read unknown, and asking the game first (2026-11-03)
+## A title is characters: the 3-D view with its menu legend is `dungeon` again (2026-11-03)
 
 The operator asked why the frame with the menu legend
 (`testdata/screens/2026-11-03-gmenu/gmenu-3d-view.jpg`) is not `dungeon` although the minimap is
-drawn. Measured on it: **minimap arrow 35 px** (≥ 8 — the 3-D view's evidence) and **title-band ink
-5 119 px** (≥ 400 — "a title bar is drawn"). The evidence table rules `dungeon` out on any title-band
-ink and `dungeonmap` out on the arrow, so the two cancel and nothing wins. The band's ink is not a
-title: it is the room's glowing wall behind the party — a bright scene filling the band, the same
+drawn — and set the rule: **a title bar needs a title, characters and words; with nothing there it is
+not a title bar, so it is the dungeon. Whenever a minimap, it is the dungeon.**
+
+The measured cause: the band's 5 119 bright pixels were the room's glowing wall, not text. The raw ink
+count treated any bright pixel as a title, ruled `dungeon` out, and left the frame unnamed — the same
 bright-frame case the map parser met on 2026-11-01.
 
-Two things came out of it:
+`titleBarInk` now counts **text ink**: a bright pixel within 2 px of a pixel below luma 90 — a stroke
+carrying its own dark gap. Calibrated over the 1 080p corpus (`map.ts` carries the table): real titles
+1 159–1 854 px, the world map 306, the chest QTE and opener panels 31–56 (above the floor, so their
+corner gold still rules the 3-D view out), **the menu frame 0**, the rest town 0, battles 0–1. Floor
+20. The menu frame now reads **`dungeon` 0.96** and no recogniser changed.
 
-- **The `unknown` answer carries `dungeonLike`** when the minimap arrow was drawn (contracts §3): the
-  frame's own evidence says "the 3-D view, with something on top of it". The composite decides it.
-- **The loop asks the game before it asks the model**: on a `dungeonLike` unnamed frame it presses the
-  map command once — the recovery the question's own timeout already took, moved in front of the 90 s
-  — and only a frame still unnamed afterwards becomes a question. Measured live 2026-11-02: pressing
-  the map key from exactly this state opened the map (`t-mvy23qe2`).
-
-Naming the menu view outright, so the press is not needed at all, is still `t-mvy23qe2`'s acceptance.
+`dungeonLike` and the map press before the question stay: a 3-D-like frame that no recogniser names (a
+genuinely new overlay) is still recovered by asking the game's own map, and only a frame still unnamed
+afterwards is the unnamed policy's business.
 
 **The cast exposed two things.**
 

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { Frame, Observation, Perceiver, RgbaImage } from '../src/contracts.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
 import { CombatPerceiver } from '../src/perception/combat.ts';
+import { HudPerceiver } from '../src/perception/hud.ts';
 import { readFacts, type FrameFacts } from '../src/perception/facts.ts';
 import { SCREENS, screenStandings, settlesAgainst } from '../src/perception/screens.ts';
 
@@ -62,7 +63,9 @@ describe('the screen table', () => {
   });
 
   it('rules the dungeon and the battle out on a map and on a titled screen', async () => {
-    for (const [dir, name] of [[FFXI, 'map.jpg'], [NAV, 'popup.jpg'], [FRAMES, 'town-0.jpg']] as const) {
+    // A title is characters: only real title text rules the 3-D view out (2026-11-03). The town's
+    // band is bright paint, not a title, and the town draws no minimap either.
+    for (const [dir, name] of [[FFXI, 'map.jpg'], [NAV, 'popup.jpg'], [FFXI, 'dungeon-select.jpg']] as const) {
       const standings = screenStandings(await factsAt(dir, name));
       expect(settlesAgainst(standings, 'dungeon')).toBe(true);
       expect(settlesAgainst(standings, 'combat')).toBe(true);
@@ -72,10 +75,10 @@ describe('the screen table', () => {
 
 describe('CompositePerceiver over the table', () => {
   it('drops an answer for a screen the frame rules out', async () => {
-    const town = await frameAt(FRAMES, 'town-0.jpg');
+    const select = await frameAt(FFXI, 'dungeon-select.jpg');
     const liar = new Fixed({ screen: 'dungeon', atMs: 0, confidence: 0.95 });
     const classification = await new CompositePerceiver([{ perceiver: liar, floor: 0.5 }])
-      .classify(town);
+      .classify(select);
     expect(classification.answer.screen).toBe('unknown');
   });
 
@@ -89,22 +92,27 @@ describe('CompositePerceiver over the table', () => {
       && !standing.ruledOut)).toBe(true);
   });
 
-  it('keeps the 3-D view\'s own evidence on a frame it cannot name', async () => {
-    // The 3-D view with its menu legend open (t-mvy23qe2): the minimap arrow is drawn, so the frame is
-    // the dungeon view with something on top of it, even though the scene also lights the title band.
-    const gmenu = await frameAt(GMENU, 'gmenu-3d-view.jpg');
-    const liar = new Fixed({ screen: 'dungeon', atMs: 0, confidence: 0.95 });
-    const classification = await new CompositePerceiver([{ perceiver: liar, floor: 0.5 }]).classify(gmenu);
-    expect(classification.answer).toMatchObject({ screen: 'unknown', dungeonLike: true });
-    expect(settlesAgainst(classification.standings, 'dungeon')).toBe(true);
+  it('names the 3-D view with its menu legend, whose band is bright paint and not a title', async () => {
+    // t-mvy23qe2, operator rule 2026-11-03: the minimap is the dungeon's own evidence, and a title is
+    // characters. This frame's band carries 5 227 bright pixels of glowing wall and not one stroke, so
+    // no title is drawn and the arrow stands: the frame is the 3-D view, not an unnamed one.
+    const frame = await frameAt(GMENU, 'gmenu-3d-view.jpg');
+    const facts = readFacts(await imageAt(GMENU, 'gmenu-3d-view.jpg'));
+    expect(facts.minimapArrowPx).toBeGreaterThanOrEqual(8);
+    expect(facts.titleBarInkPx).toBe(0);
+    expect(settlesAgainst(screenStandings(facts), 'dungeon')).toBe(false);
+    expect((await new HudPerceiver().observe(frame)).screen).toBe('dungeon');
+    const classification = await new CompositePerceiver([{ perceiver: new HudPerceiver(), floor: 0.5 }])
+      .classify(frame);
+    expect(classification.answer.screen).toBe('dungeon');
   });
 
   it('refuses a ruled-out answer but keeps its confidence as evidence of a drawn frame', async () => {
     // The screen is wrong; the frame is not empty. `unknown` at 0 would stop the session (§2).
-    const town = await frameAt(FRAMES, 'town-0.jpg');
+    const select = await frameAt(FFXI, 'dungeon-select.jpg');
     const liar = new Fixed({ screen: 'combat', atMs: 0, confidence: 1 });
     const classification = await new CompositePerceiver([{ perceiver: liar, floor: 0.5 }])
-      .classify(town);
+      .classify(select);
     expect(classification.answer).toEqual({ screen: 'unknown', atMs: 0, confidence: 1 });
     expect(settlesAgainst(classification.standings, 'combat')).toBe(true);
   });
