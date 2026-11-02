@@ -24,7 +24,11 @@ function fakeActuator(...results: ActionResult[]): Actuator & { readonly taps: P
 }
 
 const sleep = async (): Promise<void> => {};
-const alice: BattleOpener = { name: '爱丽丝', slot: '右上', target: 'party-front' };
+/**
+ * The operator's entry (2026-11-03): Alice's bottom-left slot is 拉巴迪奥斯的秘术, a 攻击范围=全体
+ * damage spell, so the target is an enemy and any enemy tap resolves the group.
+ */
+const alice: BattleOpener = { name: '爱丽丝', slot: '左下', target: 'enemy' };
 
 describe('the battle opener filter', () => {
   it('is a list with 爱丽丝 and nobody else', () => {
@@ -49,27 +53,27 @@ describe('the battle opener filter', () => {
   });
 
   it('reads the slot and target from the entry, not from the member type', () => {
-    const enemy: BattleOpener = { name: '本杰明', slot: '左下', target: 'enemy' };
-    const list = [alice, enemy];
-    expect(openerFor('本杰明', list)).toEqual(enemy);
+    const healer: BattleOpener = { name: '本杰明', slot: '右上', target: 'party-front' };
+    const list = [alice, healer];
+    expect(openerFor('本杰明', list)).toEqual(healer);
     expect(openerFor('拉纳维尔', list)).toBeNull();
   });
 });
 
 describe('the battle opener cast', () => {
-  it('taps the configured slot, waits for its panel, then taps the party side', async () => {
+  it('taps the configured slot, waits for its panel, then taps the enemy side', async () => {
     const actuator = fakeActuator();
     const result = await castBattleOpener(actuator, alice, sleep);
 
     expect(result).toEqual({ ok: true });
-    expect(actuator.taps).toEqual([BATTLE_SLOTS['右上'], PARTY_FRONT_AT]);
+    expect(actuator.taps).toEqual([BATTLE_SLOTS['左下'], ENEMY_TARGET_AT]);
   });
 
-  it('aims an enemy-targeted opener at the enemy side', async () => {
+  it('aims a party-targeted opener at the party side', async () => {
     const actuator = fakeActuator();
-    await castBattleOpener(actuator, { ...alice, target: 'enemy' }, sleep);
+    await castBattleOpener(actuator, { ...alice, slot: '右上', target: 'party-front' }, sleep);
 
-    expect(actuator.taps).toEqual([BATTLE_SLOTS['右上'], ENEMY_TARGET_AT]);
+    expect(actuator.taps).toEqual([BATTLE_SLOTS['右上'], PARTY_FRONT_AT]);
   });
 
   it('stops at a refused slot press and never taps the target', async () => {
@@ -80,9 +84,10 @@ describe('the battle opener cast', () => {
     expect(actuator.taps).toHaveLength(1);
   });
 
-  it('keeps the measured geometry: the slot is the top-right one, above the tabs', () => {
+  it('keeps the measured 2x2 quick-slot grid and the cast settle', () => {
     expect(BATTLE_SLOTS['左上'].y).toBe(BATTLE_SLOTS['右上'].y);
     expect(BATTLE_SLOTS['左下'].y).toBe(BATTLE_SLOTS['右下'].y);
+    expect(BATTLE_SLOTS['左下'].x).toBe(BATTLE_SLOTS['左上'].x);
     expect(BATTLE_SLOTS['右上'].x).toBeGreaterThan(BATTLE_SLOTS['左上'].x);
     expect(BATTLE_SLOTS['左下'].y).toBeGreaterThan(BATTLE_SLOTS['左上'].y);
     expect(OPENER_SETTLE_MS).toBeGreaterThanOrEqual(500);

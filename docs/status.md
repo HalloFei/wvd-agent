@@ -545,6 +545,13 @@ The heal resolved (爱丽丝's MP 161 -> 152 = the skill's 9 MP cost; 拉纳维�
 next command phase drew DragonSlayer's card gold — the member after Alice in the speed order, and
 not on the list.
 
+**Revised 2026-11-03 — the operator's call.** Alice's opener is now the **bottom-left slot**: 拉巴迪奥
+斯的秘术, whose 攻击范围 is 全体, aimed at an **enemy** — any enemy tap resolves the whole group.
+`BATTLE_OPENERS` is `{ name: '爱丽丝', slot: '左下', target: 'enemy' }`. The party-target form
+(`PARTY_FRONT_AT`) stays in the contract for a skill that covers one row; no configured member uses it
+today. This does not settle `t-mvzds4ku-efhjkd`: the live cast's *target tap* selected nothing, and the
+enemy side is a new point that needs the same measurement.
+
 **The cast exposed two things.**
 
 1. **The auto press is now a fallback** (operator rule, same evening). The loop presses 倍速 + 自動

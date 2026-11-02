@@ -1,11 +1,12 @@
 /**
  * The battle opener: cast one configured skill at the start of a battle, then let auto battle run.
  *
- * Operator rule 2026-11-02: 爱丽丝 opens every battle with the skill in her **top-right slot** — a
- * multi-heal, so one tap on a party member heals the whole party — and nobody else has an opener. Her
- * speed was reordered so she acts first, which is what makes "at the start" the first command phase.
- * For other skills the target is an enemy (one tap, the skill hits many), and the operator names them
- * case by case.
+ * Operator rule (2026-11-02, revised 2026-11-03): 爱丽丝 opens every battle with the skill in her
+ * **bottom-left slot** — 拉巴迪奥斯的秘术, whose 攻击范围 is 全体 — aimed at an enemy: any enemy tap
+ * resolves the whole group. Her speed was reordered so she acts first, which is what makes "at the
+ * start" the first command phase. Nobody else has an opener today. The party-target form stays for the
+ * case it was written for (a skill that covers one row, where the tap names the row); no configured
+ * member uses it.
  *
  * Measured live 2026-11-02 on the 1920x1080 battle screen (fixtures testdata/battle-2026-11-02/):
  * the command phase draws four quick slots in a 2x2 grid over the tab row, and tapping one opens the
@@ -27,19 +28,23 @@ export const BATTLE_SLOTS: Readonly<Record<'左上' | '右上' | '左下' | '右
 
 
 
-/** The front row's leftmost member card: measured from the battle HUD, 2026-11-02. */
+/**
+ * The party side of a party-targeted skill: the front row's leftmost member card, measured from the
+ * battle HUD, 2026-11-02. No configured opener uses it today — Alice's is enemy-targeted — but the
+ * contract's other target form resolves over this point.
+ */
 export const PARTY_FRONT_AT: Point = { x: 787, y: 939 };
 
 /**
- * An enemy in the middle of the group the battle opens with. The enemies move with the camera, so a
- * hit that misses here is a *target* miss, not an input failure — the caller logs it and falls back to
- * auto, and a named recogniser for the enemy marker is the upgrade.
+ * An enemy in the middle of the group the battle opens with — Alice's configured target. The enemies
+ * move with the camera, so a hit that misses here is a *target* miss, not an input failure; the
+ * caller logs it and falls back to auto, and a named recogniser for the enemy marker is the upgrade.
  */
 export const ENEMY_TARGET_AT: Point = { x: 1_000, y: 540 };
 
 /** The operator's configuration: a list of members with their opener. */
 export const BATTLE_OPENERS: readonly BattleOpener[] = [
-  { name: '爱丽丝', slot: '右上', target: 'party-front' },
+  { name: '爱丽丝', slot: '左下', target: 'enemy' },
 ];
 
 /**
