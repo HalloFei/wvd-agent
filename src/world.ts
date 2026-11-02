@@ -277,6 +277,15 @@ const ORIENT_CLIMB_TRIES = 2;
 const WALK_RETRIES = 2;
 
 /**
+ * The auto battle's fallback (operator rule 2026-11-02): the 倍速 + 自動 press is sent again while the
+ * battle is still waiting at a command phase — as many times as `cfg.autoBattleEnableAttempts`
+ * declares, and never closer than this gap apart. The game ignores a tap on an already-active button,
+ * so a re-press is harmless; the case the retries exist for is a press swallowed while the opener's
+ * skill resolves.
+ */
+const AUTO_PRESS_RETRY_MS = 1_500;
+
+/**
  * How long the game may take to load after an orientation travel or a climb. The travel returns when
  * the world map leaves — or the Dungeon Select row is accepted — and the frames after it are the
  * load's own fade: black, or a flat colour, at confidence 0. The session classifier must stop on
@@ -502,8 +511,10 @@ export class WvdWorld implements World {
   #task: SessionTask | null = null;
   /** Completed exit scripts this session; the loop re-enters until `cfg.cycles` is reached. */
   #cyclesDone = 0;
-  /** 倍速 + 自动 pressed for the battle currently on screen; cleared by any other screen. */
-  #battleAutoOn = false;
+  /** Auto presses sent for the battle on screen; `#track` re-arms the count when it leaves. */
+  #autoPresses = 0;
+  /** When the last auto press was sent, so the fallback retries are paced, not a tap loop. */
+  #autoPressAtMs: number | null = null;
   /** The battle's command phase was filtered for an opener; cleared with the battle. */
   #battleOpenerCast = false;
   readonly #battle: { readonly openers: readonly BattleOpener[]; readonly reader: BattleMemberReader } | undefined;
@@ -1182,7 +1193,8 @@ export class WvdWorld implements World {
   #track(observation: Observation): void {
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen !== 'combat') {
-      this.#battleAutoOn = false;
+      this.#autoPresses = 0;
+      this.#autoPressAtMs = null;
       this.#battleOpenerCast = false;
     }
     if (observation.screen !== 'loot') {
@@ -1713,7 +1725,8 @@ export class WvdWorld implements World {
     this.#qteGivenUp = false;
     this.#qteRerolls = 0;
     this.#lastQtePass = null;
-    this.#battleAutoOn = false;
+    this.#autoPresses = 0;
+    this.#autoPressAtMs = null;
     this.#battleOpenerCast = false;
     this.#lootTapAtMs = null;
     this.#lootTaps = 0;
@@ -1991,25 +2004,35 @@ export class WvdWorld implements World {
         else this.#host?.log.info('wvd: collected the loot card');
         return;
       }
-      case 'fight':
-        // One press per battle: 倍速 then 自动. The game ignores a tap on an already-active button,
-        // so a re-press after a wave would be harmless — but a fight that never leaves `combat`
-        // must not become a tap loop, so the flag is set once and cleared by the next non-combat
-        // screen (see `#track`).
-        if (this.#battleAutoOn) {
-          this.#host?.log.info('wvd: the battle is on screen; auto and 倍速 were already pressed');
+      case 'fight': {
+        // Operator rule 2026-11-02: auto is the battle's fallback — pressed until it is on. Every
+        // command phase still on screen means the press did not take (the opener's skill resolution is
+        // what swallowed the first one), so the press is sent again: paced by `AUTO_PRESS_RETRY_MS`
+        // and capped by `cfg.autoBattleEnableAttempts` (contracts §8.5) so a battle that never leaves
+        // `combat` cannot become a tap loop. `#track` re-arms the count when the screen leaves.
+        const tries = Math.max(1, this.#cfg.autoBattleEnableAttempts);
+        if (this.#autoPresses > tries) return;
+        if (this.#autoPresses === tries) {
+          this.#autoPresses += 1;
+          this.#host?.log.warn(
+            `wvd: auto was pressed ${tries} times and the battle is still waiting; leaving it to the stall clock`,
+          );
           return;
         }
-        this.#battleAutoOn = true;
-        // Operator rule 2026-11-02: the command phase's ACTIVE member is filtered against the configured
-        // opener list. On the list, that member's skill is cast before auto takes over; not on it — or a
-        // name the reader could not tell — the default (auto) runs and the battle carries on.
+        const now = context?.now ?? this.#now();
+        if (this.#autoPressAtMs !== null && now - this.#autoPressAtMs < AUTO_PRESS_RETRY_MS) return;
+        this.#autoPressAtMs = now;
+        this.#autoPresses += 1;
+        // The opener is cast once per battle, before the first auto press: the command phase's ACTIVE
+        // member is filtered against the configured list. On it, that member's skill is cast; not on it
+        // — or a name the reader could not tell — the default (auto) runs and the battle carries on.
         if (!this.#battleOpenerCast && !this.#cfg.dryRun && this.#battle !== undefined) {
           this.#battleOpenerCast = true;
           await this.#castOpener(context);
         }
         await this.#press('fight', fromScreen, () => this.#commands.enableBattleAuto());
         return;
+      }
       case 'wait':
         // The tick cadence is the wait; the next tick re-perceives.
         return;

@@ -545,11 +545,20 @@ The heal resolved (爱丽丝's MP 161 -> 152 = the skill's 9 MP cost; 拉纳维�
 next command phase drew DragonSlayer's card gold — the member after Alice in the speed order, and
 not on the list.
 
-**The cast exposed one defect (pinned).** The World presses 倍速 + 自動 on the same tick it leaves
-the cast, and both taps land on the skill's result panel, so auto never goes on; the battle then
-stops at the next command phase and the stall clock ends the session. The cast's two taps are fine —
-only the auto press that follows needs to wait for the command row. Card: `t-mvzckmbm-fz14p1` "The
-auto press is swallowed by the opener cast's result panel".
+**The cast exposed two things.**
+
+1. **The auto press is now a fallback** (operator rule, same evening). The loop presses 倍速 + 自動
+   again while the battle is still on screen — paced at 1.5 s and capped by
+   `autoBattleEnableAttempts` (contracts §8.5, the key the config declared and the loop had never
+   used), re-armed when the battle leaves (`#track`). A press swallowed while a skill resolves no
+   longer leaves the fight to the stall clock. Four world tests pin the retry, the cap, the re-arm and
+   the once-per-battle cast; 639 tests, tsc clean.
+2. **The cast did not reach its target** (pinned `t-mvzds4ku-efhjkd`). Four minutes after the two
+   taps the panel still showed the skill's *preview* (MP 161 > 152, target rows up) and the heal only
+   landed later, on the game's idle timeout — so the slot tap opens the panel and the target tap at
+   (787,939) selects nothing. Candidate causes: the 700 ms settle, or the panel layout's row geometry
+   (with the panel up the party grid moves up ~84 px). One live battle with the cast measured decides
+   it; that is the operator's call to start.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

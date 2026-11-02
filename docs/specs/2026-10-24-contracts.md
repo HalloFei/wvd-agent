@@ -440,7 +440,7 @@ object (§0 rule 3).
 
 | Key | Type | Default | Owner | Meaning |
 |---|---|---|---|---|
-| `autoBattleEnableAttempts` | integer | `3` | battle | tries to switch auto-battle on |
+| `autoBattleEnableAttempts` | integer | `3` | battle | tries to switch auto-battle on; the loop's fallback cap (§11) |
 | `fightTimeoutMs` | integer | `180000` | battle | a fight longer than this is a stall |
 | `escalateMaxPerHour` | integer | `20` | escalation | model calls before the session stops |
 | `escalateTimeoutMs` | integer | `90000` | escalation | wait for Coo's answer |
@@ -490,6 +490,11 @@ whose command phase is up is tinted gold across its face, and the panel's six na
 card order. The measurement, the guards and the rejected glyph alternative are
 `2026-11-02-battle-member-read-design.md`. A null answer — no battle HUD, no gold card, another
 screen size — is a miss, never an error, and never a tap on a slot.
+
+After the cast the loop presses 倍速 + 自動, and — because the first press can land while the skill is
+still resolving — it presses again while the battle is still on screen: paced 1.5 s apart, capped by
+`autoBattleEnableAttempts` (§8.5), re-armed when the battle leaves. That is the operator's fallback
+rule (2026-11-02): *if auto is not on, press; otherwise carry on.*
 
 ## 10. Farm tasks
 

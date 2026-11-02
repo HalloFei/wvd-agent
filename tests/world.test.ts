@@ -975,6 +975,71 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(host.logRecords.some((line) => line.message.includes('unreadable'))).toBe(true);
   });
 
+  it('presses auto again while the battle is still waiting at a command phase', async () => {
+    // Operator rule 2026-11-02: auto is the battle's fallback — pressed until it is on. A press
+    // swallowed while the opener's skill resolves must not leave the fight to the stall clock, so a
+    // later command phase presses again; the pace is the fight's own in-flight wait, not the tick.
+    const { world, host, actuator, clock } = makeWorld({ observation: combatView });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
+
+    // Inside the fight's own wait nothing is sent.
+    clock.advance(1_000);
+    await world.tick();
+    expect(actuator.calls).toHaveLength(2);
+
+    // The wait answers (the scene stands still) and the battle is unchanged: the fallback presses.
+    clock.advance(3_000);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708', 'tap 691,708', 'tap 1231,708']);
+  });
+
+  it('stops pressing auto at the configured attempts, and says so once', async () => {
+    // `autoBattleEnableAttempts` (contracts §8.5) is the cap the config already declared: three
+    // tries by default, and a fourth is not a war of attrition on the button.
+    const { world, host, actuator, clock } = makeWorld({ observation: combatView, cfg: { autoBattleEnableAttempts: 3 } });
+    await started(world, host);
+    // Press, wait for the fight's answer, press again: the third is the cap, and the fourth tick after
+    // that only says so.
+    for (let index = 0; index < 7; index += 1) {
+      clock.advance(3_000);
+      await world.tick();
+    }
+    const presses = actuator.calls.filter((call) => call === 'tap 691,708').length;
+    expect(presses).toBe(3);
+    expect(host.logRecords.filter((record) => record.message.includes('auto was pressed 3 times')).length).toBe(1);
+  });
+
+  it('re-arms the auto fallback for the next battle', async () => {
+    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: combatView });
+    await started(world, host);
+    await world.tick();
+    expect(actuator.calls.filter((call) => call === 'tap 691,708').length).toBe(1);
+
+    // The battle leaves, then a new one starts: the count belongs to the battle.
+    perceiver.observation = dungeonView;
+    clock.advance(3_000);
+    await world.tick();
+    perceiver.observation = combatView;
+    clock.advance(3_000);
+    await world.tick();
+    expect(actuator.calls.filter((call) => call === 'tap 691,708').length).toBe(2);
+  });
+
+  it('casts the opener once even when the auto press is retried', async () => {
+    const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
+    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
+    const { world, host, openerCalls, clock } = makeWorld({ observation: combatView, battle });
+    await started(world, host);
+    for (let index = 0; index < 8; index += 1) {
+      clock.advance(3_000);
+      await world.tick();
+    }
+    expect(openerCalls).toEqual(['爱丽丝']);
+  });
+
   it('puts the heal before the next command in the cycle pipeline', async () => {
     // Operator rule 2026-11-02, priority 1: safe before battle and after it. The battle sets the heal;
     // the next 3-D view tick spends it and sends nothing else, so the party is healed before the loop
