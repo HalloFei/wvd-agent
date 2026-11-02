@@ -91,6 +91,35 @@ describe('runSteps', () => {
     expect(recorder.calls).toEqual(['tap 10,20', 'key 34 60', 'double 30,40']);
   });
 
+  it('reads the harken menu and taps the row the task names, else 归还', async () => {
+    // Operator rule 2026-11-03: the list is not fixed (a harken offers a floor only once that floor's
+    // harken is restored), so the step reads the menu instead of tapping a measured row.
+    const rows = [
+      { at: { x: 960, y: 484 }, label: '第一区-城外-' },
+      { at: { x: 960, y: 556 }, label: '第二区-城内1F-' },
+      { at: { x: 960, y: 628 }, label: '第四区-城内2F深处-' },
+      { at: { x: 960, y: 700 }, label: '归还' },
+    ];
+    const menu: Observation = { screen: 'harken-menu', atMs: 0, confidence: 1, rows };
+
+    const offered = makeEnv({ observations: [menu] });
+    await expect(runSteps(script([{ op: 'harken', destination: '第四区-城内2F深处-' }]), offered.env, 'k'.repeat(32)))
+      .resolves.toMatchObject({ ok: true });
+    expect(offered.recorder.calls).toEqual(['tap 960,628']);
+
+    // A harken that offers nothing but 归还: the step backs the party out.
+    const onlyReturn = makeEnv({ observations: [{ ...menu, rows: [rows[3]!] }] });
+    await expect(runSteps(script([{ op: 'harken', destination: '第四区-城内2F深处-' }]), onlyReturn.env, 'k'.repeat(32)))
+      .resolves.toMatchObject({ ok: true });
+    expect(onlyReturn.recorder.calls).toEqual(['tap 960,700']);
+
+    // A frame that is not the menu is never tapped: the step times out on the screen it saw.
+    const noMenu = makeEnv({ observations: [screen('dungeon')] });
+    const failed = await runSteps(script([{ op: 'harken', destination: '第四区-城内2F深处-', timeoutMs: 50 }]), noMenu.env, 'k'.repeat(32));
+    expect(failed).toMatchObject({ ok: false, reason: 'expect-timeout' });
+    expect(noMenu.recorder.calls).toEqual([]);
+  });
+
   it('runs a travel step through the env and stops at its index on failure', async () => {
     const { env, recorder } = makeEnv();
     const passed = await runSteps(script([{ op: 'travel', to: 'vnh' }]), env, 'k'.repeat(32));

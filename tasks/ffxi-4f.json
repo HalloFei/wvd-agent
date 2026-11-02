@@ -9,11 +9,13 @@
       "from": "0c0280000d6ff0000d7ffc0008c37000",
       "destination": "第四区-城内2F深处-",
       "script": {
-        "timeoutMs": 90000,
+        "timeoutMs": 120000,
         "steps": [
           { "op": "expectFloor", "timeoutMs": 5000 },
           { "op": "key", "key": "f" },
           { "op": "wait", "ms": 12000 },
+          { "op": "harken", "destination": "第四区-城内2F深处-", "timeoutMs": 8000 },
+          { "op": "wait", "ms": 8000 },
           { "op": "expect", "screen": "dungeon", "timeoutMs": 30000 }
         ]
       }

@@ -46,6 +46,7 @@ const STEP_FIELDS: Record<TaskStep['op'], readonly string[]> = {
   expect: ['op', 'screen', 'timeoutMs'],
   expectFloor: ['op', 'titleKey', 'timeoutMs'],
   travel: ['op', 'to'],
+  harken: ['op', 'destination', 'timeoutMs'],
 };
 
 function parseStep(raw: unknown, index: number, knownLocations?: ReadonlySet<string>): TaskStep | Problem {
@@ -93,6 +94,18 @@ function parseStep(raw: unknown, index: number, knownLocations?: ReadonlySet<str
     return timeoutMs === undefined
       ? { op, screen: raw.screen as ScreenId }
       : { op, screen: raw.screen as ScreenId, timeoutMs: timeoutMs as number };
+  }
+  if (op === 'harken') {
+    if (raw.destination !== undefined && (typeof raw.destination !== 'string' || raw.destination.length === 0)) {
+      return problem('missing-field', `${where}: destination`);
+    }
+    const timeoutMs = raw.timeoutMs;
+    if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || (timeoutMs as number) < 1)) {
+      return problem('bad-timeout', `${where}: timeoutMs`);
+    }
+    const step: TaskStep = { op };
+    const named = raw.destination === undefined ? step : { ...step, destination: raw.destination as string };
+    return timeoutMs === undefined ? named : { ...named, timeoutMs: timeoutMs as number };
   }
   if (op === 'travel') {
     if (typeof raw.to !== 'string' || raw.to.length === 0) return problem('missing-field', `${where}: to`);

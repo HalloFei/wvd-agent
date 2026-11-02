@@ -166,6 +166,30 @@ async function runStep(step: TaskStep, index: number, env: ScriptEnv, floorKey: 
     case 'wait':
       await sleepUnlessAborted(env, step.ms!);
       return env.abort.aborted ? stopped(index, 'cancelled') : null;
+    case 'harken': {
+      // The harken's list is not fixed (operator rule 2026-11-03): read the menu, tap the row the task
+      // names, else 归还 to back out. Polls for the menu exactly as an expect step polls a screen.
+      const deadline = Date.now() + (step.timeoutMs ?? DEFAULT_EXPECT_TIMEOUT_MS);
+      for (;;) {
+        if (env.abort.aborted) return stopped(index, 'cancelled');
+        const captured = await captureWithRetry(env);
+        if (isStop(captured)) return stopped(index, captured.reason, captured.detail);
+        const observation = await env.observe(captured);
+        if (observation.screen === 'harken-menu') {
+          const wanted = step.destination === undefined
+            ? undefined
+            : observation.rows.find((row) => row.label === step.destination);
+          const row = wanted ?? observation.rows.find((row) => row.label === '归还');
+          if (row === undefined) return stopped(index, 'unknown-location', 'the harken menu offers no row to take');
+          const tapped = await env.actuator.tap(row.at);
+          if (!tapped.ok) return stopped(index, tapped.reason, tapped.detail);
+          env.log(`harken: tapped ${row.label ?? '归还'} (${row.at.x},${row.at.y})`);
+          return null;
+        }
+        if (Date.now() >= deadline) return stopped(index, 'expect-timeout', `screen stayed ${observation.screen}`);
+        await sleepUnlessAborted(env, OBSERVE_INTERVAL_MS);
+      }
+    }
     case 'expect':
       return await pollScreen(step, index, env);
     case 'expectFloor':

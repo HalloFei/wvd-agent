@@ -316,7 +316,15 @@ export type ScriptId = 'enter' | 'exit' | 'climb';
 export type TaskKeyName = 'g' | 'l' | 'q' | 'f' | 'r' | 'tab' | 'esc' | 'space';
 
 export interface TaskStep {
-  readonly op: 'tap' | 'key' | 'wait' | 'expect' | 'expectFloor' | 'travel';
+  /**
+   * `harken` reads the harken's floor menu (contracts §2 `harken-menu`) and taps one row: the
+   * `destination` row when the menu offers it (the teleport), else `归还` (the party backs out and the
+   * stair icon is the way up). A perceptual step, not a measured tile — the operator's rule 2026-11-03:
+   * the list is not fixed, so the script reads it.
+   */
+  readonly op: 'tap' | 'key' | 'wait' | 'expect' | 'expectFloor' | 'travel' | 'harken';
+  /** `harken` only: the row's label, as the menu draws it (第一区-城外- etc.). */
+  readonly destination?: string;
   readonly at?: readonly [number, number];
   readonly count?: 1 | 2;
   readonly key?: TaskKeyName;

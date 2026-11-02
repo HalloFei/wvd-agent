@@ -603,7 +603,10 @@ band, each label matched against `harken-library.ts` (第一区-城外-, 第二�
 归还). **The list is not fixed** — a harken offers a floor only once that floor's harken is reconstructed,
 so a new harken may draw nothing but 归还 — and the reader says `null` for a label it has never measured.
 The World taps the row the climb names (`goal.climb.destination`); when the menu does not offer it, it
-taps 归还 and the stair icon is the way up.
+taps 归还 and the stair icon is the way up. Because a script owns the loop while it runs, the climb also
+gets a step of its own — `{ "op": "harken", "destination": "第四区-城内2F深处-" }` polls for the menu and
+taps the named row (or 归还) — so the climb is now `expectFloor → F → wait → harken → wait → expect
+dungeon`, with no measured tile anywhere.
 
 ## The character page is a screen now, and the loop closes it (2026-11-03)
 
