@@ -69,6 +69,11 @@ directory; the source of truth stays here.
 - `src/contracts.ts` mirrors `docs/specs/2026-10-24-contracts.md` declaration for declaration; a
   change to one is a change to the other in the same commit.
 - Commit at every milestone, staged by explicit path.
+- **Branches are for size, not for ceremony.** A small change — one module and its test, no contract or
+  shared-timing change (operator rule 2026-11-03: *for small changes you don't need a feature branch;
+  editing on main is enough*) — is committed straight on `main`. A feature branch is for work that
+  spans modules or contracts, or that needs review before it lands; the fast-forward merge stays the
+  integration point.
 - **The task board is the single authority for open work.** Specs and `docs/status.md` record
   decisions and measurements; they do not keep their own backlog. A gap that is not pinned is not
   tracked, and a pinned item carries its reproduction, fixtures and acceptance test.
