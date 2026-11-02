@@ -9,6 +9,7 @@
  * detection (stallStopSeconds) and its session limit; this harness adds a wall-clock stop so a
  * wedged run cannot hold the machine forever.
  */
+import { writeFileSync } from 'node:fs';
 import { createWvdWorld } from '../src/main.ts';
 import { WVD_DEFAULTS } from '../src/config.ts';
 
@@ -29,7 +30,21 @@ const log = (level: string) => (line: string, data?: unknown): void => {
 };
 const host = {
   log: { info: log('info'), warn: log('warn'), error: log('error'), debug: (): void => {} },
-  pushEvent: async () => ({ cursor: 0 }),
+  // Keep every escalation snapshot: the frame is the only record of what the loop refused to name.
+  pushEvent: async (event: { type?: string; blobs?: ReadonlyArray<{ bytes?: Uint8Array; mime?: string }> }) => {
+    const blob = event.blobs?.find((entry) => entry.bytes !== undefined && (entry.mime ?? '').startsWith('image/'));
+    if (blob?.bytes !== undefined) {
+      const ext = (blob.mime ?? 'image/jpeg').split('/')[1] ?? 'jpg';
+      const path = '.tmp/escalation-' + stamp().replaceAll(':', '') + '.' + ext;
+      try {
+        writeFileSync(path, blob.bytes);
+        console.log(stamp() + ' SNAPSHOT ' + path);
+      } catch {
+        // scratch only: a missing .tmp changes nothing about the run
+      }
+    }
+    return { cursor: 0 };
+  },
   pushDeferred: (): void => {},
 };
 let closing = false;
@@ -56,7 +71,7 @@ while (Date.now() - began < WALL_MS) {
   const res = await world.invoke('wvd-console', 'status');
   if (res.ok) {
     const value = res.value as Record<string, unknown>;
-    const line = [value.state, value.screen, value.detail].filter((part) => part !== undefined && part !== '').join(' | ');
+    const line = [value.state, value.screen, value.mode, value.detail].filter((part) => part !== undefined && part !== '').join(' | ');
     if (line !== last) { console.log(stamp() + ' STATE ' + line); last = line; }
   }
   if (!world.isRunning()) break;

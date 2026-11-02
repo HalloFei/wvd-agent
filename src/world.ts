@@ -1300,12 +1300,16 @@ export class WvdWorld implements World {
         }
         break;
       }
+      case 'chest-prompt':
       case 'chest-open':
       case 'chest-qte':
       case 'chest-opening':
       case 'loot':
       case 'combat':
         // A screen a walk produces. Staying on one is not progress, so a fight that never ends stalls.
+        // The prompt is here because the game returns to it by itself after a chest's animation: that
+        // arrival is the farm alive again, and the loop must be given the tick to press 打开 (live
+        // 2026-11-03: the prompt appeared on the very tick the stall clock stopped the session).
         advanced = this.#lastScreen !== observation.screen;
         active = advanced;
         break;
