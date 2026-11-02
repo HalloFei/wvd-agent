@@ -25,7 +25,7 @@
  * the second layout draws them and clear the floor in both; every other screen measured is below it.
  */
 import type { Frame, Observation, Perceiver, RgbaImage } from '../contracts.ts';
-import { BUTTON_INK_MIN, BUTTON_INK_STRONG, readFacts } from './facts.ts';
+import { BUTTON_INK_MIN, BUTTON_INK_STRONG, readFacts, type FrameFacts } from './facts.ts';
 import { screenStandings, settlesAgainst } from './screens.ts';
 
 const REFERENCE_WIDTH = 1920;
@@ -43,9 +43,18 @@ export class CombatPerceiver implements Perceiver {
     if (image.width !== REFERENCE_WIDTH || image.height !== REFERENCE_HEIGHT) return unknown;
 
     const facts = readFacts(image);
-    if (settlesAgainst(screenStandings(facts), 'combat')) return unknown;
-    if (facts.speedInk < BUTTON_INK_MIN || facts.autoInk < BUTTON_INK_MIN) return unknown;
+    if (!battleHudUp(facts)) return unknown;
     const confidence = facts.speedInk >= BUTTON_INK_STRONG && facts.autoInk >= BUTTON_INK_STRONG ? 1 : 0.8;
     return { screen: 'combat', atMs: frame.atMs, confidence };
   }
+}
+
+/**
+ * The battle HUD's evidence, without the frame: both button windows are lit, and no screen fact
+ * rules a battle out. The command phase's party panel is drawn by the same HUD, so the reader that
+ * names the active member (`party.ts`) asks this before it trusts a card.
+ */
+export function battleHudUp(facts: FrameFacts): boolean {
+  if (facts.speedInk < BUTTON_INK_MIN || facts.autoInk < BUTTON_INK_MIN) return false;
+  return !settlesAgainst(screenStandings(facts), 'combat');
 }

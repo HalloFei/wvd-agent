@@ -4,7 +4,7 @@ Where the plan stands. The plan file is the specification of the work, not the r
 is the record, updated at each milestone, and `docs/plans/2026-10-24-wvd-world-v1.md` stays the
 authority on *what* each task requires.
 
-Last updated 2026-10-24 21:40, on `feat/worldmap-entry`.
+Last updated 2026-11-02 22:10, on `main`.
 
 ## Task table
 
@@ -515,6 +515,25 @@ that ended on the old screen still showing.
 **What stopped this one:** the frame after the loot — the encounter intro (camera on the opened chest,
 enemy names and an HP bar, no HUD, a ✕ at the bottom right) is named by nothing, so the loop escalated
 after 5 s and paused for its 90 s question. Pinned as `t-mvy4p2vz-...`; the party stands at that chest.
+## The battle opener's name read (2026-11-02)
+
+The opener filter (contracts §11) was complete except for the name: `BattleMemberReader` answered
+`null`, so every battle fell through to auto. The operator supplied the party's names — six members,
+in the panel's own card order — and the read is now realised off the battle party panel:
+
+- The command phase draws six member cards; **the turn card is tinted gold across its face** (mean
+  `min(r,g) - b` of 53.7 and 33.9 on the two recorded command phases, against ≤ 3.5 on the others).
+- `src/perception/party.ts` reads that card and answers the roster name (艾莉赛, 本杰明, 拉纳维尔,
+  DragonSlayer, 爱丽丝, 薇薇安娜DEX6); `main.ts` hands it to the World as the `BattleMemberReader`.
+- The ACTIVE band's glyph was measured and rejected: the band draws the name at a different size from
+  the panel, and normalised cross-correlation against all six panel templates scored 0.25–0.37 for
+  every candidate — no discrimination at all.
+- Guards: the battle HUD's own evidence first (`battleHudUp`, the same facts `CombatPerceiver` uses),
+  then the gold floor 20 and a 2.5× lead over the runner-up. Anything else is `null` — a miss, no
+  slot tap. The design record is `docs/specs/2026-11-02-battle-member-read-design.md`.
+- 635 tests, tsc clean.
+
+The cast itself still owes a live battle: the machine stood in the rest town when the read landed.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

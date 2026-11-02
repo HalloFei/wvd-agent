@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionResult, Actuator, BattleOpener, Point } from '../src/contracts.ts';
 import {
-  BATTLE_OPENERS, BATTLE_SLOTS, ENEMY_TARGET_AT, OPENER_SETTLE_MS, PARTY_FRONT_AT, castBattleOpener, openerFor,
+  BATTLE_OPENERS, BATTLE_SLOTS, ENEMY_TARGET_AT, OPENER_SETTLE_MS, PARTY_FRONT_AT, castBattleOpener, memberKey,
+  openerFor,
 } from '../src/actions/battle.ts';
 
 /**
@@ -35,6 +36,16 @@ describe('the battle opener filter', () => {
     expect(openerFor('本杰明', BATTLE_OPENERS)).toBeNull();
     // A reader that cannot tell is a miss, never an error.
     expect(openerFor(null, BATTLE_OPENERS)).toBeNull();
+  });
+
+  it('folds the traditional spelling the operator may type onto the roster name', () => {
+    // The panel draws 爱丽丝 and the operator's own notes sometimes write 愛麗絲.
+    expect(memberKey('愛麗絲')).toBe('爱丽丝');
+    expect(memberKey(' 爱丽丝 ')).toBe('爱丽丝');
+    expect(openerFor('愛麗絲', BATTLE_OPENERS)).toEqual(alice);
+    expect(openerFor('愛麗絲', [{ ...alice, name: '愛麗絲' }])).toEqual({ ...alice, name: '愛麗絲' });
+    // Folding does not make two different members equal.
+    expect(openerFor('艾莉赛', BATTLE_OPENERS)).toBeNull();
   });
 
   it('reads the slot and target from the entry, not from the member type', () => {

@@ -43,13 +43,30 @@ export const BATTLE_OPENERS: readonly BattleOpener[] = [
 ];
 
 /**
+ * The traditional spellings of the roster's own characters (`src/perception/party.ts`): the game
+ * draws simplified names, and the operator may type it in either script. Folding them keeps a config entry
+ * written as 愛麗絲 matched to the 爱丽丝 the reader answers.
+ */
+const VARIANTS: Readonly<Record<string, string>> = {
+  愛: '爱', 麗: '丽', 絲: '丝', 賽: '赛', 傑: '杰', 納: '纳', 維: '维',
+};
+
+/** The comparison key of a member's name: trimmed, and folded to the roster's own spelling. */
+export function memberKey(name: string): string {
+  let key = '';
+  for (const char of name.trim()) key += VARIANTS[char] ?? char;
+  return key;
+}
+
+/**
  * The filter: the opener configured for `name`, or null when the name is not on the list. A null answer
  * (the reader could not tell, or the member has no entry) is a miss — the caller takes its default path
  * and checks the next command phase, exactly as the operator asked.
  */
 export function openerFor(name: string | null, openers: readonly BattleOpener[]): BattleOpener | null {
   if (name === null) return null;
-  return openers.find((opener) => opener.name === name) ?? null;
+  const key = memberKey(name);
+  return openers.find((opener) => memberKey(opener.name) === key) ?? null;
 }
 
 /** How long the detail panel / target selection needs before the target tap lands on it. */

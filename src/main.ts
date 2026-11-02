@@ -37,6 +37,7 @@ import { CombatPerceiver } from './perception/combat.ts';
 import { ChestPromptPerceiver } from './perception/prompt.ts';
 import { ChestOpeningPerceiver } from './perception/chest-opening.ts';
 import { LootPerceiver } from './perception/loot.ts';
+import { activePartyMember } from './perception/party.ts';
 import { CompositePerceiver } from './perception/composite.ts';
 import { HudPerceiver } from './perception/hud.ts';
 import { TownPerceiver, WorldMapPerceiver } from './perception/location.ts';
@@ -244,12 +245,13 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
         });
       },
     },
-    // The opener list the operator configured, and the reader whose image templates are not built yet:
-    // it answers null, the filter takes that as a miss, and every battle falls through to auto. The
-    // space for the image read is this one object (contracts §11 `BattleMemberReader`).
+    // The opener list the operator configured, and the reader that names the ACTIVE member off the
+    // battle frame (contracts §11 `BattleMemberReader`): the party panel's gold card, mapped to the
+    // roster the operator filled in. A frame that does not say which card is up answers null, the
+    // filter takes that as a miss, and the battle falls through to auto.
     battle: {
       openers: BATTLE_OPENERS,
-      reader: { readActiveMember: async () => null },
+      reader: { readActiveMember: async (frame) => activePartyMember(await frame.toRgba()) },
     },
     openSession,
   });

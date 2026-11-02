@@ -485,8 +485,11 @@ export interface BattleMemberReader {
 }
 ```
 
-`readActiveMember` is the space for the image read: a name template per member matched against the
-ACTIVE card's band. A null answer is a miss, never an error.
+`readActiveMember` is realised by the party panel (`src/perception/party.ts`): the card of the member
+whose command phase is up is tinted gold across its face, and the panel's six names are the roster in
+card order. The measurement, the guards and the rejected glyph alternative are
+`2026-11-02-battle-member-read-design.md`. A null answer — no battle HUD, no gold card, another
+screen size — is a miss, never an error, and never a tap on a slot.
 
 ## 10. Farm tasks
 

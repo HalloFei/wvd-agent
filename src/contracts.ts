@@ -384,9 +384,9 @@ export interface BattleOpener {
 }
 
 /**
- * Reads the ACTIVE member's name off a battle frame, or null when it cannot tell (an unnamed frame, a
- * member whose template is missing). This is the seam the image read lands in: the filter treats null
- * exactly like a name that is not on the list — the default action, no slot tap.
+ * Reads the ACTIVE member's name off a battle frame, or null when it cannot tell (no battle HUD, no
+ * gold card, a frame the reader's geometry was not measured at). The filter treats null exactly like
+ * a name that is not on the list — the default action, no slot tap.
  */
 export interface BattleMemberReader {
   readActiveMember(frame: Frame): Promise<string | null>;
