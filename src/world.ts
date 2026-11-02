@@ -288,6 +288,15 @@ const WALK_RETRIES = 2;
 const AUTO_PRESS_RETRY_MS = 1_500;
 
 /**
+ * How long the opener's name read may take, from the battle's first command phase. The party panel is
+ * drawn a beat after the battle screen, so the first combat frame can answer nothing — live 2026-11-03
+ * 02:07: the read came back unreadable on the first frame, and on the saved frame a second later the
+ * panel showed 爱丽丝 ACTIVE (68.8 warm against ≤ 16.4). The loop waits up to this long for a readable
+ * panel before it lets auto take the battle, and it does not press auto while the read is still owed.
+ */
+const OPENER_READ_WINDOW_MS = 3_000;
+
+/**
  * How long the game may take to load after an orientation travel or a climb. The travel returns when
  * the world map leaves — or the Dungeon Select row is accepted — and the frames after it are the
  * load's own fade: black, or a flat colour, at confidence 0. The session classifier must stop on
@@ -513,6 +522,8 @@ export class WvdWorld implements World {
   #task: SessionTask | null = null;
   /** Completed exit scripts this session; the loop re-enters until `cfg.cycles` is reached. */
   #cyclesDone = 0;
+  /** When the opener's name read stops waiting for a readable panel, for this battle. */
+  #openerDeadlineMs: number | null = null;
   /** Auto presses sent for the battle on screen; `#track` re-arms the count when it leaves. */
   #autoPresses = 0;
   /** When the last auto press was sent, so the fallback retries are paced, not a tap loop. */
@@ -1244,6 +1255,7 @@ export class WvdWorld implements World {
       this.#autoPresses = 0;
       this.#autoPressAtMs = null;
       this.#battleOpenerCast = false;
+      this.#openerDeadlineMs = null;
     }
     if (observation.screen !== 'loot') {
       this.#lootTapAtMs = null;
@@ -1780,6 +1792,7 @@ export class WvdWorld implements World {
     this.#autoPresses = 0;
     this.#autoPressAtMs = null;
     this.#battleOpenerCast = false;
+    this.#openerDeadlineMs = null;
     this.#askedForMap = false;
     this.#lootTapAtMs = null;
     this.#lootTaps = 0;
@@ -2058,6 +2071,24 @@ export class WvdWorld implements World {
         return;
       }
       case 'fight': {
+        const now = context?.now ?? this.#now();
+        // The opener comes first, and a name the reader could not tell yet is *not* a miss: the party
+        // panel is drawn a beat after the battle screen (live 2026-11-03 02:07: unreadable on the first
+        // combat frame, 爱丽丝 ACTIVE on the panel a second later). The read is retried until the panel
+        // is readable or OPENER_READ_WINDOW_MS closes — and auto is not pressed while the read is owed,
+        // because auto would take the command phase the cast needs. When a name is read, the filter
+        // decides: on the list, that member's skill is cast; off it, the default (auto) runs.
+        const battle = this.#battle;
+        const wantsOpener = battle !== undefined && battle.openers.length > 0 && !this.#cfg.dryRun;
+        if (wantsOpener && !this.#battleOpenerCast) {
+          this.#openerDeadlineMs ??= now + OPENER_READ_WINDOW_MS;
+          const outcome = await this.#castOpener(context);
+          if (outcome === 'unreadable' && now < this.#openerDeadlineMs) {
+            this.#host?.log.info('wvd: the active member is not readable yet; waiting for the panel before auto');
+            return;
+          }
+          this.#battleOpenerCast = true;
+        }
         // Operator rule 2026-11-02: auto is the battle's fallback — pressed until it is on. Every
         // command phase still on screen means the press did not take (the opener's skill resolution is
         // what swallowed the first one), so the press is sent again: paced by `AUTO_PRESS_RETRY_MS`
@@ -2072,17 +2103,9 @@ export class WvdWorld implements World {
           );
           return;
         }
-        const now = context?.now ?? this.#now();
         if (this.#autoPressAtMs !== null && now - this.#autoPressAtMs < AUTO_PRESS_RETRY_MS) return;
         this.#autoPressAtMs = now;
         this.#autoPresses += 1;
-        // The opener is cast once per battle, before the first auto press: the command phase's ACTIVE
-        // member is filtered against the configured list. On it, that member's skill is cast; not on it
-        // — or a name the reader could not tell — the default (auto) runs and the battle carries on.
-        if (!this.#battleOpenerCast && !this.#cfg.dryRun && this.#battle !== undefined) {
-          this.#battleOpenerCast = true;
-          await this.#castOpener(context);
-        }
         await this.#press('fight', fromScreen, () => this.#commands.enableBattleAuto());
         return;
       }
@@ -2238,9 +2261,9 @@ export class WvdWorld implements World {
    * look it up in the configured list, and cast that entry if it is there. A miss is a fallthrough —
    * the caller goes on to auto battle — never an error and never a tap on another member's slot.
    */
-  async #castOpener(context: TickContext | undefined): Promise<void> {
+  async #castOpener(context: TickContext | undefined): Promise<'cast' | 'not-listed' | 'unreadable'> {
     const battle = this.#battle;
-    if (battle === undefined || context === undefined) return;
+    if (battle === undefined || context === undefined) return 'unreadable';
     let name: string | null = null;
     try {
       name = await battle.reader.readActiveMember(context.frame);
@@ -2252,11 +2275,12 @@ export class WvdWorld implements World {
       this.#host?.log.info(
         `wvd: the active member is ${name ?? 'unreadable'}; it is not on the opener list, so the default action runs`,
       );
-      return;
+      return name === null ? 'unreadable' : 'not-listed';
     }
     const cast = await this.#commands.battleOpener(opener);
     if (cast.ok) this.#host?.log.info(`wvd: cast ${opener.name}'s ${opener.slot} opener at ${opener.target}`);
     else this.#host?.log.warn(`wvd: ${opener.name}'s opener was not cast (${cast.reason}${cast.detail ? `: ${cast.detail}` : ''})`);
+    return 'cast';
   }
 
   /**

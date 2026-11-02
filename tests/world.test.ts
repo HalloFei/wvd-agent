@@ -968,16 +968,42 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(host.logRecords.some((line) => line.message.includes('not on the opener list'))).toBe(true);
   });
 
-  it('treats an unreadable ACTIVE member as a miss, never a tap', async () => {
+  it('treats an unreadable ACTIVE member as a miss, and waits for the panel before auto', async () => {
+    // Live 2026-11-03 02:07: the first combat frame answers nothing — the party panel is drawn a beat
+    // after the battle screen — and the old code spent the one shot on it. Now the read is retried and
+    // auto is not pressed while it is owed: auto would take the command phase the cast needs.
     const reader: BattleMemberReader = { readActiveMember: async () => null };
+    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
+    const { world, host, actuator, openerCalls, clock } = makeWorld({ observation: combatView, battle });
+    await started(world, host);
+
+    await world.tick();
+    expect(openerCalls).toEqual([]);      // no cast
+    expect(actuator.calls).toEqual([]);   // and no auto press either
+    expect(host.logRecords.some((line) => line.message.includes('not readable yet'))).toBe(true);
+
+    // The window closes: the loop stops waiting and lets auto take the battle, with no cast.
+    clock.advance(3_100);
+    await world.tick();
+    expect(openerCalls).toEqual([]);
+    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
+  });
+
+  it('casts the opener once the panel becomes readable', async () => {
+    // The 02:07 failure, fixed: null on the battle's first frame, 爱丽丝 on the next one.
+    let answer: string | null = null;
+    const reader: BattleMemberReader = { readActiveMember: async () => answer };
     const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
     const { world, host, actuator, openerCalls } = makeWorld({ observation: combatView, battle });
     await started(world, host);
 
     await world.tick();
-    expect(openerCalls).toEqual([]);
-    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
-    expect(host.logRecords.some((line) => line.message.includes('unreadable'))).toBe(true);
+    expect(actuator.calls).toEqual([]);
+
+    answer = '爱丽丝';
+    await world.tick();
+    expect(openerCalls).toEqual(['爱丽丝']);
+    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);  // the auto press follows the cast
   });
 
   it('presses auto again while the battle is still waiting at a command phase', async () => {

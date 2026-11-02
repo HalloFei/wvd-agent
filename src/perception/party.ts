@@ -2,30 +2,37 @@
  * The battle party panel: six member cards under the command row, and which card is the one whose
  * command phase is up.
  *
- * Measured 2026-11-02 on the 1920×1080 client (`testdata/battle-2026-11-02/`, `screens/2026-10-25-live/`).
- * The panel is a 3×2 grid of cards. The card of the member whose turn it is is tinted gold across its
- * whole face; the other five stay the neutral dark of the panel, and a card the enemy has marked is
- * tinted red. The gold face is the turn marker this reader keys on.
+ * Measured 2026-11-02 and 2026-11-03 on the 1920×1080 client (`testdata/battle-2026-11-02/`,
+ * `screens/2026-10-25-live/`). The panel is a 3×2 grid of cards. The card of the member whose turn it
+ * is is drawn with a **yellow-to-orange frame** — the operator's own reading, 2026-11-03: *the active
+ * icon is yellow to orange, while inactive is white* — and its face is tinted gold too. The other five
+ * frames stay white/grey, and a card the enemy has marked is tinted red.
+ *
+ * The frame is what the reader keys on: `max(r, g) - b` averaged over a 3 px ring just inside the
+ * card's edge. Measured on the three command-phase frames (1920×1080):
+ *
+ * | frame | turn card | the other five |
+ * | --- | --- | --- |
+ * | `alice-command-phase.jpg` (爱丽丝) | **68.8** | 6.0–16.4 |
+ * | `command-phase.jpg` (DragonSlayer) | **98.9** | 4.3–32.9 |
+ * | `screens/2026-10-25-live/combat-command.jpg` (DragonSlayer) | **63.2** | 3.4–17.4 |
+ *
+ * The red-marked card is the highest non-turn score (32.9) and still under the floor; a white frame
+ * scores near zero. The face tint (`min(r, g) - b` over the face, 8 px inside) separates more cleanly
+ * still — 33.9–53.7 against ≤ 3.5 — but the frame is the marker the game itself draws, so the reader
+ * follows it.
  *
  * The cards carry the names the operator gave (2026-11-02), in this fixed order — that roster is
  * `PARTY_MEMBERS`, and the reader answers the active card's roster name. A party change is a roster
  * change; the reader can only answer names it was given.
  *
- * The gold measure is `min(r, g) - b` averaged over the card's face, sampled 8 px inside the card
- * so neither its border nor its glow is counted. Measured on the two frames with the command phase
- * up: 53.7 and 33.9 on the turn card, against 3.5 at most on the other five of the same frame. A red
- * tinted card (the enemy's mark) scores 2.3, so red never reads as gold.
- *
  * Two guards, in this order:
  *
  * - The battle HUD's own evidence (`battleHudUp`): the panel is drawn by the battle, so a frame
- *   without it cannot be answered, however gold the scenery is. Over the 79 recorded 1920×1080
- *   frames the highest gold on a non-battle frame is the 3-D map `nav-2026-10-24-ffxi4f/third-floor-glow.jpg`
- *   at 18.6, and the world map's faces are uniformly gold (49.8 against 42.8) — both are refused.
- * - The floor and the lead: the turn card's face must clear `ACTIVE_GOLD_MIN` and lead the runner-up
- *   by `ACTIVE_GOLD_RATIO`. When the skill panel is open the cards are dimmed behind it (5.5 at
- *   most), so the reader answers nothing there — the World reads at the command phase, before any
- *   slot is tapped.
+ *   without it cannot be answered, however bright the scenery is.
+ * - The floor and the lead: the turn card's frame must clear `ACTIVE_FRAME_MIN` and lead the runner-up
+ *   by `ACTIVE_FRAME_RATIO`. When the skill panel is open the cards are dimmed behind it, so the
+ *   reader answers nothing there — the World reads at the command phase, before any slot is tapped.
  *
  * A frame the reader cannot answer is `null`, the contract's miss (contracts §11), never an error:
  * the loop takes its default action and no slot is tapped for a member it could not name.
@@ -47,8 +54,9 @@ export const PARTY_CARDS: readonly PixelRect[] = [
   { x: 1_056, y: 957, width: 192, height: 114 },
 ];
 
-/** The face is sampled this far inside the card: the border and the glow are not the tint. */
-const CARD_INSET = 8;
+/** The frame's ring: from this many pixels inside the card's edge, this many pixels wide. */
+const FRAME_INSET = 2;
+const FRAME_WIDTH = 4;
 
 /**
  * The party roster in card order, as the panel draws the names (operator, 2026-11-02). The names are
@@ -64,56 +72,62 @@ export const PARTY_MEMBERS: readonly string[] = [
   '薇薇安娜DEX6',
 ];
 
-/** The turn card's face clears this. Measured: 53.7 and 33.9 on the turn card, 3.5 at most otherwise. */
-export const ACTIVE_GOLD_MIN = 20;
+/** The turn card's frame clears this. Measured: 63.2–98.9 on the turn card, 32.9 at most otherwise. */
+export const ACTIVE_FRAME_MIN = 40;
 
-/** …and it leads the runner-up by this factor. Measured leading factor: 15.3 and 10.3. */
-export const ACTIVE_GOLD_RATIO = 2.5;
+/** …and it leads the runner-up by this factor. Measured leading factor: 1.9–4.2. */
+export const ACTIVE_FRAME_RATIO = 1.5;
 
 /**
- * The gold of each card's face, in card order. `null` unless the frame is the reference size: the
- * rects are geometry of the 1920×1080 client and mean nothing on another size.
+ * The warmth of each card's frame, in card order: `max(r, g) - b` averaged over a 3 px ring just
+ * inside the card's edge. A yellow-to-orange frame scores high; a white, grey or red one does not.
+ * `null` unless the frame is the reference size: the rects are geometry of the 1920×1080 client.
  */
-export function partyGoldScores(image: RgbaImage): readonly number[] | null {
+export function partyFrameWarmth(image: RgbaImage): readonly number[] | null {
   if (image.width !== REFERENCE_WIDTH || image.height !== REFERENCE_HEIGHT) return null;
-  return PARTY_CARDS.map((card) => goldOf(image, card));
+  return PARTY_CARDS.map((card) => frameWarmthOf(image, card));
 }
 
 /** The active member's name, or null when this frame does not say which card is up. */
 export function activePartyMember(image: RgbaImage): string | null {
   if (image.width !== REFERENCE_WIDTH || image.height !== REFERENCE_HEIGHT) return null;
   if (!battleHudUp(readFacts(image))) return null;
-  const scores = partyGoldScores(image);
+  const scores = partyFrameWarmth(image);
   if (scores === null) return null;
 
   let best = 0;
   for (let index = 1; index < scores.length; index += 1) {
     if (scores[index]! > scores[best]!) best = index;
   }
-  const gold = scores[best]!;
+  const warm = scores[best]!;
   const runnerUp = Math.max(...scores.filter((_, index) => index !== best));
-  if (gold < ACTIVE_GOLD_MIN || gold < ACTIVE_GOLD_RATIO * runnerUp) return null;
+  if (warm < ACTIVE_FRAME_MIN || warm < ACTIVE_FRAME_RATIO * runnerUp) return null;
   return PARTY_MEMBERS[best] ?? null;
 }
 
-/** `min(r, g) - b` over the card's face: a gold face scores high, a red or neutral one does not. */
-function goldOf(image: RgbaImage, card: PixelRect): number {
-  const x0 = card.x + CARD_INSET;
-  const y0 = card.y + CARD_INSET;
-  const x1 = card.x + card.width - CARD_INSET;
-  const y1 = card.y + card.height - CARD_INSET;
+/** `max(r, g) - b` over the card's frame ring: gold scores high, white, grey and red do not. */
+function frameWarmthOf(image: RgbaImage, card: PixelRect): number {
   const { data, width } = image;
+  const left = card.x + FRAME_INSET;
+  const top = card.y + FRAME_INSET;
+  const right = card.x + card.width - FRAME_INSET;
+  const bottom = card.y + card.height - FRAME_INSET;
   let sum = 0;
   let count = 0;
-  for (let y = y0; y < y1; y += 1) {
-    const row = y * width;
-    for (let x = x0; x < x1; x += 1) {
-      const offset = (row + x) * 4;
-      const r = data[offset]!;
-      const g = data[offset + 1]!;
-      const b = data[offset + 2]!;
-      sum += Math.min(r, g) - b;
-      count += 1;
+  const add = (x: number, y: number): void => {
+    const offset = (y * width + x) * 4;
+    const warm = Math.max(data[offset]!, data[offset + 1]!) - data[offset + 2]!;
+    sum += warm;
+    count += 1;
+  };
+  for (let d = 0; d < FRAME_WIDTH; d += 1) {
+    for (let x = left; x < right; x += 1) {
+      add(x, top + d);
+      add(x, bottom - 1 - d);
+    }
+    for (let y = top; y < bottom; y += 1) {
+      add(left + d, y);
+      add(right - 1 - d, y);
     }
   }
   return count === 0 ? 0 : sum / count;

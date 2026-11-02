@@ -587,6 +587,24 @@ afterwards is the unnamed policy's business.
    (787,939) selects nothing. Candidate causes: the 700 ms settle, or the panel layout's row geometry
    (with the panel up the party grid moves up ~84 px). One live battle with the cast measured decides
    it; that is the operator's call to start.
+## The battle read: the frame colour, and the first frame is too early (2026-11-03)
+
+The 02:07 live cycle reached its first battle with 爱丽丝 ACTIVE — and the opener did not cast. The
+saved frame explains both halves:
+
+- **The active card is told apart by its frame.** The operator's reading: *the active icon is yellow to
+  orange, while inactive is white*. The reader now measures `max(r, g) - b` over a 3 px ring inside each
+  card's edge — 68.8 / 98.9 / 63.2 on the turn card across the three command-phase frames, 32.9 at most
+  on the others (the red-marked card); floor 40 and a 1.5× lead. The face tint it used before separates
+  more, but the frame is the marker the game draws.
+- **The battle's first combat frame is not the read.** The party panel is drawn a beat after the battle
+  screen: at 02:07 the read answered nothing on the first frame, and the same panel 30 s later scores
+  68.8 on 爱丽丝's frame. The World now retries the read for `OPENER_READ_WINDOW_MS = 3 s` and does
+  **not** press 倍速/自動 while the read is owed — auto would take the command phase the cast needs. The
+  one shot is spent only by a readable window.
+
+656 tests, tsc clean; the frame numbers are in `2026-11-02-battle-member-read-design.md`.
+
 ## The game's mode: a pipeline per state (2026-11-03)
 
 The operator's rule: *a state machine for the game's states — in battle, in dungeon, chest open — so

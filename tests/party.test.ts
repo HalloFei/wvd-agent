@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import type { RgbaImage } from '../src/contracts.ts';
-import { PARTY_CARDS, PARTY_MEMBERS, activePartyMember, partyGoldScores } from '../src/perception/party.ts';
+import { PARTY_CARDS, PARTY_MEMBERS, activePartyMember, partyFrameWarmth } from '../src/perception/party.ts';
 
 const BATTLE = new URL('../testdata/battle-2026-11-02/', import.meta.url);
 const OLDER = new URL('../testdata/screens/2026-10-25-live/', import.meta.url);
@@ -23,18 +23,28 @@ describe('the battle party panel', () => {
   it('reads the turn card off the command phase', async () => {
     const image = await imageAt(BATTLE, 'command-phase.jpg');
     expect(activePartyMember(image)).toBe('DragonSlayer');
-    const scores = partyGoldScores(image);
-    expect(scores).not.toBeNull();
-    // Measured 2026-11-02: the turn card's face 53.7, every other face at most 3.5.
-    expect(scores![3]!).toBeGreaterThan(50);
-    expect(Math.max(...scores!.filter((_, index) => index !== 3))).toBeLessThan(5);
+    const warmth = partyFrameWarmth(image);
+    expect(warmth).not.toBeNull();
+    // Measured 2026-11-03: the turn card's frame 98.9, every other frame at most 32.9 (the red mark).
+    expect(warmth![3]!).toBeGreaterThan(60);
+    expect(Math.max(...warmth!.filter((_, index) => index !== 3))).toBeLessThan(35);
+  });
+
+  it('reads 爱丽丝\'s turn off the frame the game drew for it', async () => {
+    // The operator's own reading (2026-11-03): the active card's frame is yellow to orange, the
+    // inactive frames white. This is the live battle frame the run paused on: Alice's card 5.
+    const image = await imageAt(BATTLE, 'alice-command-phase.jpg');
+    expect(activePartyMember(image)).toBe('爱丽丝');
+    const warmth = partyFrameWarmth(image);
+    expect(warmth![4]!).toBeGreaterThan(60);
+    expect(Math.max(...warmth!.filter((_, index) => index !== 4))).toBeLessThan(35);
   });
 
   it('reads the turn card off an older command phase', async () => {
     const image = await imageAt(OLDER, 'combat-command.jpg');
     expect(activePartyMember(image)).toBe('DragonSlayer');
-    // Measured 2026-11-02 on the 2026-10-25 frame: 33.9, against 3.3 at most on the others.
-    expect(partyGoldScores(image)![3]!).toBeGreaterThan(30);
+    // Measured 2026-11-03 on the 2026-10-25 frame: 63.2, against 17.4 at most on the others.
+    expect(partyFrameWarmth(image)![3]!).toBeGreaterThan(50);
   });
 
   it('answers nothing while the skill panel dims the cards', async () => {
@@ -52,7 +62,7 @@ describe('the battle party panel', () => {
 
   it('answers nothing off a frame the rects were not measured at', async () => {
     const tiny: RgbaImage = { data: new Uint8Array(4 * 4 * 4), width: 4, height: 4 };
-    expect(partyGoldScores(tiny)).toBeNull();
+    expect(partyFrameWarmth(tiny)).toBeNull();
     expect(activePartyMember(tiny)).toBeNull();
   });
 });
