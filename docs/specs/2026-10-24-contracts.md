@@ -111,13 +111,16 @@ export interface Point { readonly x: number; readonly y: number }
 /** One icon drawn on the map, at its grid cell. The kind names the **glyph**; where a mechanic is
  *  asserted it is the operator's account (2026-10-24), not the picture's.
  *  - 'harken' — the white 4-point sparkle. The harken: the point a party changes floor by.
+ *  - 'stair-door' — the **door with the right arrow**, 楼梯-门 (operator's name, 2026-11-03): the stair
+ *    entrance to the next floor. The FFXI farm's area is beside it, so the climb taps this icon; the
+ *    harken teleports far from the farm and is never the way there.
  *  - 'stairs' | 'hole' — the entries and exits (the staircase; the down-arrow over an oval).
  *  - 'teleport' — the orchid ring. **Within one floor only**: it never crosses, so no route may
  *    use it to change floor.
  *  - 'chest' | 'hazard' — the resource and the obstacle.
  *  Direction is not published: no committed frame carries the mirrored `stair_down` orientation. */
 export interface MapIcon {
-  readonly kind: 'chest' | 'stairs' | 'hazard' | 'teleport' | 'hole' | 'harken';
+  readonly kind: 'chest' | 'stairs' | 'stair-door' | 'hazard' | 'teleport' | 'hole' | 'harken';
   readonly at: Point;
 }
 

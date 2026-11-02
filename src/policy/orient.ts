@@ -23,7 +23,8 @@
  * Pure and total: one observation in, one decision out; no clock and no memory. The World owns the
  * retry budgets, because a budget is a count across ticks and this module has none.
  */
-import type { Observation, TaskOrient } from '../contracts.ts';
+import type { Observation, Point, TaskOrient } from '../contracts.ts';
+import { tileOnScreen } from '../perception/map.ts';
 import { isExpectedFloor } from '../tasks/steps.ts';
 
 /** The one command the orientation sends, if any. */
@@ -35,7 +36,14 @@ export type OrientCommand =
   /** F on the map: 移動至出口. */
   | { readonly kind: 'exit' }
   /** Run the task's own climb script: the measured stair-up from the climb floor. */
-  | { readonly kind: 'climb' };
+  | { readonly kind: 'climb' }
+  /**
+   * Tap the map's **楼梯-门** icon (`MapIcon.kind === 'stair-door'`) at this screen point: the stair
+   * entrance to the next floor. The operator's rule (2026-11-03): the farm's area is beside the stair
+   * entrance, while the harken teleports far from it — so a climb walks to this glyph, never to the
+   * harken, and never to a measured tile.
+   */
+  | { readonly kind: 'stairs'; readonly at: Point };
 
 export type OrientDecision =
   /** The party stands on the farm floor: hand the loop to the farm route. */
@@ -52,6 +60,14 @@ export function nextOrientStep(observation: Observation, orient: TaskOrient): Or
     case 'dungeonmap': {
       const floor = observation.map.titleKey;
       if (isExpectedFloor(orient.floor, floor)) return { kind: 'arrived' };
+      // The operator's rule (2026-11-03): the farm's area is beside the **stair entrance** — the
+      // door-with-arrow icon (楼梯-门) — while the harken teleports somewhere far from the farm. So the
+      // way up is the icon: tap it and the game walks the party to the stairs from wherever it stands.
+      // The task's own climb script stays as the fallback for a floor without that icon.
+      const stairDoor = observation.map.icons.find((icon) => icon.kind === 'stair-door');
+      if (stairDoor !== undefined) {
+        return { kind: 'command', command: { kind: 'stairs', at: tileOnScreen(observation.map, stairDoor.at) } };
+      }
       const climb = orient.goal.climb;
       if (climb !== undefined && isExpectedFloor(climb.from, floor)) {
         return { kind: 'command', command: { kind: 'climb' } };

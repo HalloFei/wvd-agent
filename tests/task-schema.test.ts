@@ -30,22 +30,11 @@ describe('parseTask', () => {
     expect(task.entry).toBeUndefined();
     expect(task.goal?.site).toBe('ffxi-gcn');
     expect(task.goal?.zone).toBe('ffxi-zone3');
-    const threeF = '0c0280000d6ff0000d7ffc0008c37000';
-    expect(task.goal?.climb?.from).toBe(threeF);
-    const climb = task.goal!.climb!.script.steps;
-    // The climb walks to the floor's **exit** instead of tapping a measured tile (operator rule
-    // 2026-11-03): the map is open when the climb runs, F is the map's own 移动至出口, and the party
-    // walks there from wherever it stands. The old harken-menu taps (960,158 / 960,236) were a fixed
-    // layout and never matched this harken's menu.
-    expect(climb[0]).toEqual({ op: 'expectFloor', timeoutMs: 5000 });
-    expect(climb).toContainEqual({ op: 'key', key: 'f' });
-    expect(climb).toContainEqual({ op: 'wait', ms: 12000 });
-    // The harken's list is not fixed (operator rule 2026-11-03): the climb reads the menu and takes the
-    // farm floor's row, or 归还 when the harken does not offer it.
-    expect(climb).toContainEqual({ op: 'harken', destination: '第四区-城内2F深处-', timeoutMs: 8000 });
-    // It hands over to the farm loop only once the 3-D view is named: a black transition frame as
-    // the World's first tick ended a session that had already arrived (2026-11-01).
-    expect(climb.at(-1)).toEqual({ op: 'expect', screen: 'dungeon', timeoutMs: 30000 });
+    // No climb script any more (operator rule 2026-11-03): the farm's area is beside the **stair
+    // entrance**, so the climb is the map's 楼梯-门 icon — the orientation taps it and the game walks
+    // the party there from wherever it stands. The harken is *not* a way to the farm: it teleports far
+    // from the farm area, and its list is not fixed (a harken offers a floor only once it is restored).
+    expect(task.goal?.climb).toBeUndefined();
 
     // The exit walks back through both floors, harkens out, then returns to town.
     expect(task.exit).toBeDefined();

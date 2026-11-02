@@ -55,6 +55,27 @@ describe('the live map frames of 2026-11-01', () => {
   });
 });
 
+describe('the 楼梯-门 icon (operator name, 2026-11-03)', () => {
+  it('is found on the FFXI 第三区-城内2F map, one cell from the party', async () => {
+    // The door-with-arrow glyph the operator sent: the stair entrance to the next floor. The operator's
+    // rule: the farm's area is beside it and the harken teleports far from the farm, so the climb walks
+    // to this icon. The frame is the live capture kept for the reader work.
+    const url = new URL('../testdata/screens/2026-11-03-ffxi-map/map-1920.jpg', import.meta.url);
+    const bytes = await readFile(url);
+    const image = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+    const map = await readMap({
+      atMs: 0,
+      width: image.width,
+      height: image.height,
+      toRgba: async () => ({ data: image.data, width: image.width, height: image.height }),
+    });
+    expect(map).not.toBeNull();
+    expect(map!.player).toEqual({ x: 13, y: 25 });
+    const stairs = map!.icons.filter((icon) => icon.kind === 'stair-door');
+    expect(stairs).toEqual([{ kind: 'stair-door', at: { x: 13, y: 26 } }]);
+  });
+});
+
 describe('readMap', () => {
   it('reads the floor token, the party cell and the icons from map.jpg', async () => {
     const map = await readMap(await jpegFrame('map.jpg'));

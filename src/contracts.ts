@@ -65,7 +65,7 @@ export interface Point { readonly x: number; readonly y: number }
  * picture's. Navigation design §6 records what is measured and what is not.
  */
 export interface MapIcon {
-  readonly kind: 'chest' | 'stairs' | 'hazard' | 'teleport' | 'hole' | 'harken';
+  readonly kind: 'chest' | 'stairs' | 'stair-door' | 'hazard' | 'teleport' | 'hole' | 'harken';
   readonly at: Point;
 }
 

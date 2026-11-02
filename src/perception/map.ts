@@ -281,6 +281,12 @@ const CHEST_NCC_FLOOR = 0.9;
 const STAIRS_NCC_FLOOR = 0.85;
 
 /**
+ * 楼梯-门: measured 1.000 at the icon's own cell on the FFXI 第三区-城内2F map and 0.92 at one pixel
+ * off its centre (the lattice supplies that pixel); no other glyph on the map reaches it. Floor 0.85.
+ */
+const STAIR_DOOR_NCC_FLOOR = 0.85;
+
+/**
  * Hole — the white down-arrow over an oval, a 31×33 glyph inside a 36×36 cell (第三区 x 512–542,
  * y 466–498). Two instances in the corpus, both at cell centre + (−1, +1), NCC 1.00 and 0.98; the
  * best score anywhere else in any committed map frame is 0.65. One floor sample of the glyph, but a
@@ -314,6 +320,18 @@ const TELEPORT_AREA_MIN = 30;
 const HARKEN_NCC_FLOOR = 0.7;
 const HARKEN_INK_MIN = 30;
 const HARKEN_INK_MAX = 140;
+
+/**
+ * 楼梯-门 — the **door with the right arrow**, the stair entrance to the next floor (operator's name,
+ * 2026-11-03: *name the icon as 楼梯-门, and use that to climb for the FFIX farm*). A 36×36 cell-sized
+ * crop at (938,137) on `testdata/screens/2026-11-03-ffxi-map/map-1920.jpg`, including the bright cell
+ * frame the icon sits in. Measured on that frame: 1.000 at the icon's own cell, best match anywhere
+ * else 0.92 one pixel off its centre — the lattice enumeration supplies that pixel, so the cell is the
+ * unit. The farm's area is close to the stair entrance, while the harken teleports far from it, so the
+ * climb walks to this glyph and never to the harken.
+ */
+const STAIR_DOOR_TEMPLATE_B64 =
+  'R0xQVFJSUE1JREJAQUFCQ0RDQUBBQ0FBQkFBQEFBQ0RCQklSTlFSUVFMUE1IQ0BAQEFFR0hGQj9BQ0VERERFRkZGRERDQ0pTT0tHRlNPTUtHQ0BAQEFDRkhHREFCQ0NBQEFCRENDQ0RDREpRU0xKUXN4eHd1dHNyc3Nxc3V2dnV0dHV0cnJzdHNzdXV1dnp+VU1OXZOdmpqZmZmZmZqampubmpmYmJybmpqam5ycm5qam52fTUVIWZafoJ+dm5qZmZmbm5uampufoaSioJ2amZiZmpmZm56gT0hNXJqfmJWRjIiGhYWChIeIipCaoauoopqQiYaFhoaGio6SSUtOW52alIiDenNzbGlrbnySoaSkp6mll6Wgn5V3b29vdYOFR0tPXZ2YjnxxaGFZUlpYboqco6SlpqaTamBxiZKQb2BaYmpwRElQXpyWiXViVlFGPUlgfpqioKGioKCUZTI4UXGYgGRRUlZiRElQX5yUhXVdSkg/OEmCk5+dm56fm5yfhzsaGzptj4FhUE9hR0pQX5yVgG1WRDwyO2KWmZqYmJucnJual1EcCxQud5J6VUlcTExQXZyWfWNPQjEmRoeWl5mamJWXmpySlWElDQgMQoOIY0RTUVBRXJuXfWBMPi8yXJqXmJqal5WVl5mWmG8sDgQIGWGGd0hPVFNSXJuXfGFMODFHcJiampiWl5ucmpWbmHc0EAEJCkd9hlBSWVtZYp6Ygl9PPSpcipWOjpOcmpqelJqYmHk4CwQGCipqkFxRW11faaWdg2NOODBllJheY4GZmZqem5mZmXc2DQgJByVnkV9TVlhdaqeeh3VkUE52mpNdL0F3mKGbm5yfnnk2DggGBiFjk2NUTU9TZKSempeMgX+LnI9iGxlIdpWYn5+fnns5DQUDCCBilGRSTEtOYKWkqqCAe3hxd2xDFhAaQHyVm6Ccmno5DQYHCiBilGRSTkxOYKiqr45CODctLSkaCwkDFUl4l6Khn3s3DAcKCCBilGRTT05PYamqtIgeEhAJBgcEBQsJAQxAfJOfpX02DgkGBCFllWRUUE9SY6mor4scFRIOBwkLCQMJCgMYOXeTpHs0EAoCAyJol2VVT1BSYqmrtIceGw8JCQgECAQKBQcNKmaWpno8DwQMByJnmWhVT1BSY6mrsYUfGA8KBwQSCQMLBQYZSH+epns8EQQGByJnmWhWUFBSZKqsuY4oFw4NCgsAAAYJBBhEfZumpnw7EgcFByJnmmlXUlFUZqysr488JRYSCwsRCgsGFUt9o6enpX04DwsIByJom2pYVFJVZ62rtbCQjISFfnpdIgsXSIagqKemqYM4DAkIByJonGxZVVNWaa2pp6mkoZObmZOCJBZFg6Wmp6iqrYc7DQgGCCNpnW1aVVNWaaummIuEdmeHn6F+M0Z7oqmkqqmoonk2DgkICCRqnm1bVFJWaKqkjXBfRzhsmaOLXoCapqqnqKegj2QqCwkJCSVrnm5bUVRWZq6kinNWPzZqm6egoaWqpKmunKF+SB0MDAoDBSRnoWtfUVRWaLGnjnJYRThpm6etqaitqKafg0stEgoJBgcMCCVqo2xfUFNWabGnkW9VRDNnn6qpqqiiiW5UMx0LAgoMBAIIBiJqpG1eUVNXarOokG1VQjBoo6mtrJt7TzIsIh8dHBwdHRsZHTN1pW5dUVRZbLWqjm9YQzNwqaqwq5NxT0FMUlBWVlFRV1dTUFuFn2xc';
 
 /** Hazard: a translucent red bar with white spikes; colour is a difference rule (research §6). */
 const HAZARD_RB_MIN = 45;
@@ -425,6 +443,7 @@ const HARKEN_TEMPLATE_B64_12 =
   'Hx4gJB1qlkcjIyIjHBwcHzeSuG8mISIhHBoeI263uqM/HyIjIyAgOIvCvLRrMSAeIC5EbaKwsbmhYEUtRGiLlKKWo7nBr5VroqyXiImImrC3vL25iaCbkIqSmLG+wb6pOVVwlJ2lobXAonVNJC05XaC1sr+TSy8mICAjMYy8vrdbJB4hISIkJVKsu4wzHh4j';
 
 const STAIRS_TEMPLATE = decodeTemplate(STAIRS_TEMPLATE_B64, 36, 36);
+const STAIR_DOOR_TEMPLATE = decodeTemplate(STAIR_DOOR_TEMPLATE_B64, 36, 36);
 const HOLE_TEMPLATE = decodeTemplate(HOLE_TEMPLATE_B64, 36, 36);
 const HARKEN_TEMPLATES = [
   decodeTemplate(HARKEN_TEMPLATE_B64_16, 16, 16),
@@ -1207,6 +1226,10 @@ function findIcons(
 
       const hole = bestNcc(data, width, HOLE_TEMPLATE, cx, cy);
       if (hole.score >= HOLE_NCC_FLOOR) push('hole', toGrid(cx + hole.dx, cy + hole.dy));
+
+      // 楼梯-门: the door-with-arrow — the stair entrance the FFXI farm is next to (operator, 2026-11-03).
+      const stairDoor = bestNcc(data, width, STAIR_DOOR_TEMPLATE, cx, cy);
+      if (stairDoor.score >= STAIR_DOOR_NCC_FLOOR) push('stair-door', toGrid(cx + stairDoor.dx, cy + stairDoor.dy));
 
       // The harken is cell-centred on every instance and drawn at two sizes, so both scales are
       // matched at the cell centre and the better one decides.

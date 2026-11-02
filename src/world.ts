@@ -2312,6 +2312,12 @@ export class WvdWorld implements World {
         await this.#press(command.kind, fromScreen, send);
         return;
       }
+      case 'stairs': {
+        // The 楼梯-门 icon the map reader named: one tap starts the game's own walk to the stairs. The
+        // in-flight bookkeeping is the walk's (arrival by stillness), exactly like a tile walk.
+        await this.#press('move', fromScreen, () => this.#commands.tapPoint(command.at));
+        return;
+      }
       case 'climb': {
         const task = this.#task;
         if (task === null) return;

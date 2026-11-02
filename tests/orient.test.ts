@@ -42,6 +42,28 @@ describe('nextOrientStep', () => {
     expect(nextOrientStep(mapOf('600004007f3ffe007ffefe0002032200'), orient)).toEqual({ kind: 'arrived' });
   });
 
+  it('walks to the 楼梯-门 icon on any floor that is not the farm', () => {
+    // Operator rule 2026-11-03: the farm's area is beside the stair entrance and the harken teleports
+    // somewhere far from it, so the climb is the door-with-arrow icon on the map — tapped from wherever
+    // the party stands — not a teleport and not a measured tile.
+    const base = mapOf(CLIMB) as { map: MapState };
+    const withStairs: Observation = {
+      ...mapOf(CLIMB),
+      map: {
+        ...base.map,
+        icons: [
+          { kind: 'chest', at: { x: 12, y: 12 } },
+          { kind: 'stair-door', at: { x: 13, y: 12 } },
+        ],
+      },
+    } as Observation;
+    const decision = nextOrientStep(withStairs, orient);
+    expect(decision).toMatchObject({ kind: 'command', command: { kind: 'stairs' } });
+    if (decision.kind !== 'command' || decision.command.kind !== 'stairs') return;
+    // tileOnScreen: origin + (tile - player) * TILE_PX (36 px), with the y axis inverted.
+    expect(decision.command.at).toEqual({ x: 960 + 3 * 36, y: 540 - 2 * 36 });
+  });
+
   it('climbs from the floor that carries the measured stair-up', () => {
     expect(nextOrientStep(mapOf(CLIMB), orient)).toEqual({ kind: 'command', command: { kind: 'climb' } });
   });
