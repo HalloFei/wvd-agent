@@ -28,6 +28,14 @@ export const AUTO_MOVE_TEMPLATE: MatchTemplate = {
 /** The floor the live frames support: the element scores 1.0, a map frame with none at most 0.28. */
 export const AUTO_MOVE_FLOOR = 0.7;
 
+/**
+ * The pill is drawn at a slightly different size than the frame its glyph was cut from — the map's zoom
+ * leaves it at ~0.9 of it (measured 2026-11-03 22:12: 25x20 px against the template's 28x28) — so the
+ * finder scans a small range around scale 1 rather than exactly 1. One scale missed every attempt while
+ * the pill was plainly on the screen ("could not move: no 自動移動 element", eight times in a row).
+ */
+export const AUTO_MOVE_SCALES: readonly number[] = [0.85, 0.9, 0.95, 1.0, 1.05];
+
 /** The pill's glyph, in the frame's own pixels. */
 export interface AutoMoveElement {
   readonly at: Point;
@@ -59,7 +67,7 @@ export function findAutoMoveElement(image: RgbaImage, near: Point): AutoMoveElem
     const height = Math.min(image.height, near.y + band.down) - y;
     if (width < AUTO_MOVE_TEMPLATE.width || height < AUTO_MOVE_TEMPLATE.height) continue;
     const area: PixelRect = { x, y, width, height };
-    const match = findTemplate(image, area, AUTO_MOVE_TEMPLATE, { scales: [1], minScore: AUTO_MOVE_FLOOR });
+    const match = findTemplate(image, area, AUTO_MOVE_TEMPLATE, { scales: AUTO_MOVE_SCALES, minScore: AUTO_MOVE_FLOOR });
     if (match === null) continue;
     return {
       at: { x: Math.round(match.at.x + match.width / 2), y: Math.round(match.at.y + match.height / 2) },
