@@ -13,11 +13,16 @@
  * `docs/status.md`), and the FFXI 4F route is the one this World runs. Pointer mode is the path that
  * answers on every floor, so a walk is aimed at a tile rather than left to the game's own choice.
  *
- * The popup tap is the one blind gesture here: the 自动移动 element is not detected, it is assumed
- * where it was measured — 79–84 px above the clicked tile. A tile that is not walkable raises no
- * popup, so the second tap lands on the map and pointer mode ignores it: the walk simply does not
- * start, which the loop's in-flight rules already treat as "changed nothing". That is the deliberate
- * trade for not putting a second recogniser on the critical path.
+ * The 自动移动 element the tile click raises is **detected** (`perception/automove.ts`, measured
+ * 2026-11-02) and tapped where the game drew it; the measured 79–84 px rise is only the fallback for a
+ * caller with no frame source. A tile the game cannot walk to raises no element at all — the walk is
+ * refused in so many words and the World skips that chest, instead of tapping the map blind.
+ *
+ * **How long the element may take.** A tile click is answered by the game's own animation, not by the
+ * click: the element is drawn on a later frame, and on a map that has just opened the whole panel is
+ * still settling. The operator's rule (2026-11-03) is to click first and then *wait several frames*
+ * before deciding nothing was raised — the 2026-11-03 live run had two chests refused with the old
+ * 450 ms window, both clicks on a map that had opened a second earlier.
  *
  * `Actuator` (contracts §4) is the only tie to the machine. Every function returns the actuator's
  * `ActionResult` unchanged: a `rejected` press (the game is not foreground) stops the chain and is
@@ -74,13 +79,23 @@ const POPUP_RISE_PX = 81;
  */
 export interface AutoMoveProbe {
   readonly capture: () => Promise<Frame>;
-  /** How long the pill may take to appear. Measured: present 120 ms after the tap. */
+  /**
+   * How long the pill may take to appear. Measured: present 120 ms after the tap on a settled map;
+   * a map that has just opened is slower, so the default waits the operator's five frames many times
+   * over (see `ELEMENT_WAIT_MS`).
+   */
   readonly waitMs?: number;
   readonly pollMs?: number;
 }
 
-/** How long to look for the element, and how often: four polls inside half a second. */
-const ELEMENT_WAIT_MS = 450;
+/**
+ * How long to look for the element, and how often. The operator's rule (2026-11-03): click the chest
+ * icon, then wait five or so frames for the 自动移动 element before calling the cell unreachable. At
+ * the contract's 30 fps a frame is ~33 ms and the loop's own tick is 100 ms, so this is twelve polls
+ * over 1.2 s — generous enough for a map that is still settling, short enough that a genuinely
+ * unreachable cell costs one second, not a stall.
+ */
+const ELEMENT_WAIT_MS = 1_200;
 const ELEMENT_POLL_MS = 100;
 
 /** Resolve after `ms`. The only timing this module owns; it reads no clock and imports none. */
