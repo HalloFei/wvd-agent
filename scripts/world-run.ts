@@ -15,6 +15,11 @@ import { WVD_DEFAULTS } from '../src/config.ts';
 
 const TASK = process.env.WVD_TASK ?? 'tasks/ffxi-4f.json';
 const WALL_MS = Number(process.env.WVD_WALL_MS ?? 45 * 60_000);
+/**
+ * Stop the loop at the first stall (an escalation, i.e. a frame it could not name and would wait on),
+ * leaving the game on that frame: the operator's "pause when stall" for a diagnosis run.
+ */
+const PAUSE_ON_STALL = process.env.WVD_PAUSE_ON_STALL === '1';
 const cfg = {
   ...WVD_DEFAULTS,
   enabled: true,
@@ -43,11 +48,17 @@ const host = {
         // scratch only: a missing .tmp changes nothing about the run
       }
     }
+    if (PAUSE_ON_STALL && event.type === 'wvd.stuck') {
+      pausedOnStall = true;
+      console.log(stamp() + ' PAUSE-ON-STALL (type=' + event.type + '); the loop is stopping at this frame');
+    }
     return { cursor: 0 };
   },
   pushDeferred: (): void => {},
 };
 let closing = false;
+/** Set by the host when the loop stops being able to help itself; the main loop ends the run on it. */
+let pausedOnStall = false;
 async function finish(why: string): Promise<void> {
   if (closing) return;
   closing = true;
@@ -74,6 +85,7 @@ while (Date.now() - began < WALL_MS) {
     const line = [value.state, value.screen, value.mode, value.detail].filter((part) => part !== undefined && part !== '').join(' | ');
     if (line !== last) { console.log(stamp() + ' STATE ' + line); last = line; }
   }
+  if (pausedOnStall) { await finish('paused on stall'); break; }
   if (!world.isRunning()) break;
 }
 await finish(world.isRunning() ? 'wall clock' : 'session ended');
