@@ -11,6 +11,7 @@ const FFXI = new URL('../testdata/screens/2026-10-24-ffxi/', import.meta.url);
 const NAV = new URL('../testdata/nav-1024-0213/', import.meta.url);
 const LIVE = new URL('../testdata/screens/2026-10-25-live/', import.meta.url);
 const FRAMES = new URL('../testdata/frames/', import.meta.url);
+const GMENU = new URL('../testdata/screens/2026-11-03-gmenu/', import.meta.url);
 
 async function imageAt(dir: URL, name: string): Promise<RgbaImage> {
   const decoded = jpeg.decode(await readFile(new URL(name, dir)), { useTArray: true });
@@ -86,6 +87,16 @@ describe('CompositePerceiver over the table', () => {
     expect(classification.answer.screen).toBe('combat');
     expect(classification.standings.some((standing) => standing.screen === 'combat'
       && !standing.ruledOut)).toBe(true);
+  });
+
+  it('keeps the 3-D view\'s own evidence on a frame it cannot name', async () => {
+    // The 3-D view with its menu legend open (t-mvy23qe2): the minimap arrow is drawn, so the frame is
+    // the dungeon view with something on top of it, even though the scene also lights the title band.
+    const gmenu = await frameAt(GMENU, 'gmenu-3d-view.jpg');
+    const liar = new Fixed({ screen: 'dungeon', atMs: 0, confidence: 0.95 });
+    const classification = await new CompositePerceiver([{ perceiver: liar, floor: 0.5 }]).classify(gmenu);
+    expect(classification.answer).toMatchObject({ screen: 'unknown', dungeonLike: true });
+    expect(settlesAgainst(classification.standings, 'dungeon')).toBe(true);
   });
 
   it('refuses a ruled-out answer but keeps its confidence as evidence of a drawn frame', async () => {

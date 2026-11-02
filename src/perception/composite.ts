@@ -77,10 +77,20 @@ export class CompositePerceiver implements Classifier {
       }
       if (observation.confidence > seen) seen = observation.confidence;
     }
+    // The 3-D view's own corner evidence survives the ruling: a frame with the minimap arrow is the
+    // dungeon view with something drawn over it (its menu legend, a bright scene in the title band),
+    // and the loop can ask the game's map about it instead of the model (operator rule 2026-11-03).
+    const dungeonLike = standings.some((standing) => standing.screen === 'dungeon' && standing.support > 0);
     return {
       atMs: frame.atMs,
       standings,
-      answer: { screen: 'unknown', atMs: frame.atMs, confidence: seen },
+      answer: {
+        screen: 'unknown',
+        atMs: frame.atMs,
+        confidence: seen,
+        // Absent unless true, so an unnamed frame carries the fact only when it has one.
+        ...(dungeonLike ? { dungeonLike: true } : {}),
+      },
     };
   }
 }

@@ -259,6 +259,11 @@ function walkCalls(map: MapState, target: Point = CHEST, holdMs = 60): string[] 
 const walkOne = (holdMs = 60): string[] => walkCalls(mapOf(dungeonMap), CHEST, holdMs);
 
 const unknownButSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0.2 };
+/**
+ * The 3-D view with something drawn over it: the frame's own evidence says dungeon (the minimap arrow),
+ * nothing named it. This is the frame the loop asks the game's map about (operator rule 2026-11-03).
+ */
+const dungeonLikeUnknown: Observation = { screen: 'unknown', atMs: 100, confidence: 0.8, dungeonLike: true };
 const nothingSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0 };
 const waiting: Observation = { screen: 'loading', atMs: 100, confidence: 0.9 };
 const dungeonView: Observation = { screen: 'dungeon', atMs: 100, confidence: 0.9 };
@@ -1433,6 +1438,44 @@ describe('the escalation exchange', () => {
     clock.advance(200);                  // 1 100 ms: it has outlasted the window
     await world.tick();
     expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(1);
+  });
+
+  it('asks the game for its map about a 3-D-looking frame before the question', async () => {
+    // Operator rule 2026-11-03: the 3-D view can read unnamed (a bright scene fills the title band,
+    // the menu legend draws a panel — t-mvy23qe2). The map states the floor in text, so the loop
+    // presses it once before it spends the model's 90 s question.
+    const { world, host, actuator } = makeWorld({ observation: dungeonLikeUnknown, cfg: { escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(0);
+    expect(actuator.calls).toEqual(['key ' + SCAN.G + ' 60', 'key ' + SCAN.G + ' 60']);
+    expect(host.logRecords.some((record) => record.message.includes('opening the map to ask the game'))).toBe(true);
+  });
+
+  it('asks once: a frame still unnamed after the map press becomes the question', async () => {
+    const { world, host } = makeWorld({ observation: dungeonLikeUnknown, cfg: { escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();   // the map press
+    await world.tick();   // still unnamed: the question
+
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(1);
+    expect(host.logRecords.filter((record) => record.message.includes('opening the map to ask the game'))).toHaveLength(1);
+  });
+
+  it('a map that opens after the press settles the frame without a question', async () => {
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: dungeonLikeUnknown, cfg: { escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();                  // the map press
+    perceiver.observation = dungeonMap;  // the game answered with its map
+    clock.advance(500);
+    await world.tick();
+
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(0);
+    expect(actuator.calls.slice(0, 2)).toEqual(['key ' + SCAN.G + ' 60', 'key ' + SCAN.G + ' 60']);
   });
 
   it('says "cooling down" once per cooldown, not once per tick', async () => {

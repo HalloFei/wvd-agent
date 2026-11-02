@@ -146,10 +146,19 @@ export type Observation =
   | { readonly screen: 'dungeonmap'; readonly atMs: number; readonly confidence: number; readonly map: MapState }
   | { readonly screen: 'chest-qte'; readonly atMs: number; readonly confidence: number; readonly qte: QteState }
   | { readonly screen: 'chest-open'; readonly atMs: number; readonly confidence: number; readonly opener: OpenerPanel }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open'>;
+  | { readonly screen: 'unknown'; readonly atMs: number; readonly confidence: number;
+      /** The minimap arrow is drawn, yet nothing named the frame: the 3-D view with something over it. */
+      readonly dungeonLike?: boolean }
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }
+
+`dungeonLike` is the one payload an `unknown` answer may carry: the frame's own evidence drew the
+minimap arrow (the 3-D view's corner) but no recogniser named the frame — the 3-D view with something
+over it, its menu legend or a bright scene in the title band. The loop asks the game's own map about
+such a frame before it asks the model (operator rule 2026-11-03): one map command, once per unnamed
+episode, and only a frame still unnamed afterwards becomes a question.
 
 /**
  * One screen's standing on one frame (§2). `support` is the frame's cheap evidence for the screen,

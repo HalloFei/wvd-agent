@@ -552,6 +552,27 @@ not on the list.
 today. This does not settle `t-mvzds4ku-efhjkd`: the live cast's *target tap* selected nothing, and the
 enemy side is a new point that needs the same measurement.
 
+## The 3-D view that read unknown, and asking the game first (2026-11-03)
+
+The operator asked why the frame with the menu legend
+(`testdata/screens/2026-11-03-gmenu/gmenu-3d-view.jpg`) is not `dungeon` although the minimap is
+drawn. Measured on it: **minimap arrow 35 px** (≥ 8 — the 3-D view's evidence) and **title-band ink
+5 119 px** (≥ 400 — "a title bar is drawn"). The evidence table rules `dungeon` out on any title-band
+ink and `dungeonmap` out on the arrow, so the two cancel and nothing wins. The band's ink is not a
+title: it is the room's glowing wall behind the party — a bright scene filling the band, the same
+bright-frame case the map parser met on 2026-11-01.
+
+Two things came out of it:
+
+- **The `unknown` answer carries `dungeonLike`** when the minimap arrow was drawn (contracts §3): the
+  frame's own evidence says "the 3-D view, with something on top of it". The composite decides it.
+- **The loop asks the game before it asks the model**: on a `dungeonLike` unnamed frame it presses the
+  map command once — the recovery the question's own timeout already took, moved in front of the 90 s
+  — and only a frame still unnamed afterwards becomes a question. Measured live 2026-11-02: pressing
+  the map key from exactly this state opened the map (`t-mvy23qe2`).
+
+Naming the menu view outright, so the press is not needed at all, is still `t-mvy23qe2`'s acceptance.
+
 **The cast exposed two things.**
 
 1. **The auto press is now a fallback** (operator rule, same evening). The loop presses 倍速 + 自動

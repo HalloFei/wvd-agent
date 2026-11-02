@@ -517,6 +517,12 @@ export class WvdWorld implements World {
   #autoPressAtMs: number | null = null;
   /** The battle's command phase was filtered for an opener; cleared with the battle. */
   #battleOpenerCast = false;
+  /**
+   * The map was asked for before the question, once per unnamed episode (operator rule 2026-11-03):
+   * an unnamed frame is often the 3-D view with something drawn over it, and the map names the floor
+   * in text. Cleared by the next named screen.
+   */
+  #askedForMap = false;
   readonly #battle: { readonly openers: readonly BattleOpener[]; readonly reader: BattleMemberReader } | undefined;
   #unsubscribe: (() => void) | null = null;
   #running = false;
@@ -1105,8 +1111,15 @@ export class WvdWorld implements World {
     else this.#blankSinceMs = null;
 
     const unnamed = observation.screen === 'unknown' && observation.confidence > 0;
+    // The frame's own evidence says the dungeon view, but no recogniser named it: the 3-D view with
+    // something drawn over it. That is the frame the loop asks the game's map about (§3, operator rule
+    // 2026-11-03).
+    const dungeonLike = observation.screen === 'unknown' && observation.dungeonLike === true;
     if (unnamed) this.#unnamedSinceMs ??= now;
-    else this.#unnamedSinceMs = null;
+    else {
+      this.#unnamedSinceMs = null;
+      this.#askedForMap = false;
+    }
     const unnamedSinceMs = this.#unnamedSinceMs;
 
     let verdict = this.#classify(state, spent, this.#cfg.escalateMaxPerHour);
@@ -1119,6 +1132,25 @@ export class WvdWorld implements World {
       return;
     }
     if (verdict === 'ok' && stalledMs >= this.#stallEscalateMs()) verdict = 'escalate';
+
+    // Operator rule 2026-11-03: ask the game before asking the model. An unnamed frame is often the
+    // 3-D view with something over it — the menu legend draws a panel whose ink reads as a map title,
+    // and a bright scene fills the title band (measured on
+    // testdata/screens/2026-11-03-gmenu/gmenu-3d-view.jpg: minimap arrow 35 px, title-band ink 5 119 px,
+    // t-mvy23qe2). The map states the floor in text and is one command away, so that command is sent
+    // once per unnamed episode; only a frame still unnamed afterwards becomes a question. This is the
+    // same recovery the question's own timeout already takes, moved in front of the 90 s.
+    if (verdict === 'escalate' && dungeonLike && !this.#askedForMap && !waiting) {
+      this.#askedForMap = true;
+      this.#host?.log.info('wvd: the frame is unnamed; opening the map to ask the game before the question');
+      await this.#execute(fallbackIntent(observation.screen), observation.screen, {
+        session,
+        frame,
+        observation,
+        now,
+      });
+      return;
+    }
 
     switch (verdict) {
       case 'stop':
@@ -1728,6 +1760,7 @@ export class WvdWorld implements World {
     this.#autoPresses = 0;
     this.#autoPressAtMs = null;
     this.#battleOpenerCast = false;
+    this.#askedForMap = false;
     this.#lootTapAtMs = null;
     this.#lootTaps = 0;
     // A new cycle orients afresh: the climb budget is per cycle, and the next cycle may leave the

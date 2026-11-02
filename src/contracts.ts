@@ -110,7 +110,19 @@ export type Observation =
   | { readonly screen: 'dungeonmap'; readonly atMs: number; readonly confidence: number; readonly map: MapState }
   | { readonly screen: 'chest-qte'; readonly atMs: number; readonly confidence: number; readonly qte: QteState }
   | { readonly screen: 'chest-open'; readonly atMs: number; readonly confidence: number; readonly opener: OpenerPanel }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open'>;
+  | {
+      readonly screen: 'unknown';
+      readonly atMs: number;
+      readonly confidence: number;
+      /**
+       * The frame carries the dungeon's own corner evidence (the minimap arrow) although no recogniser
+       * named it: the 3-D view with something drawn over it — a menu legend, a bright scene filling the
+       * title band. The loop asks the game's own map about such a frame before it asks the model
+       * (operator rule 2026-11-03).
+       */
+      readonly dungeonLike?: boolean;
+    }
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }
