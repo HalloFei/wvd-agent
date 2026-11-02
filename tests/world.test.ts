@@ -2370,17 +2370,25 @@ describe('the orientation', () => {
     expect(actuator.calls).toEqual(walkCalls(mapOf(farm), CHEST));
   });
 
-  it('stops on a floor it has no measured way off, before pressing anything', async () => {
+  it('stops on a floor it has no measured way off, after its patience and with the frame attached', async () => {
+    // Operator rule 2026-11-03: a readable map without the 楼梯-门 icon is a perception miss on the first
+    // few frames — the reader found the icon on the same floor and tile minutes earlier — so the World
+    // re-reads for its patience and only then stops, leaving the frame as the evidence.
     const { task } = goalTask();
-    const { world, host, actuator } = makeWorld({ observation: mapWith(STRANGER), task });
+    const { world, host, actuator, clock } = makeWorld({ observation: mapWith(STRANGER), task });
     await started(world, host);
 
     await world.tick();
-
     expect(actuator.calls).toEqual([]);
+    expect(world.isRunning()).toBe(true);
+
+    for (let index = 0; index < 25; index += 1) { clock.advance(200); await world.tick(); }
+
     expect(world.isRunning()).toBe(false);
+    const note = host.pushed.find((pushed) => pushed.event.type === 'wvd.note');
+    expect(note?.event.text).toContain('carries no 楼梯-门 icon');
     const stopped = host.pushed.find((pushed) => pushed.event.type === 'wvd.stopped');
-    expect(stopped?.event.text).toContain('neither the farm floor');
+    expect(stopped?.event.text).toContain('carries no 楼梯-门 icon');
   });
 
   it('never abandons a chest: a prompt during the orientation is the route that finishes it', async () => {

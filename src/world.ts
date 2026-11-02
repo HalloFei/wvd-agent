@@ -80,6 +80,7 @@ import {
   type WvdEvent,
 } from './escalation/event.ts';
 import { sceneIsStill, sceneSignature, type SceneSignature } from './frames/stillness.ts';
+import { nowIso } from 'cortico/core/util.ts';
 import { snapshotBlob, takeSnapshot, type SnapshotSource } from './escalation/image.ts';
 import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
 import { tapOpenerCard } from './actions/opener.ts';
@@ -308,6 +309,13 @@ const OPENER_READ_WINDOW_MS = 3_000;
 
 /** How many X 关闭 taps a character page may take before the loop leaves it to the stall clock. */
 const PAGE_CLOSE_TRIES = 3;
+
+/**
+ * How many ticks a readable map that carries no 楼梯-门 icon gets before the orientation stops. The
+ * reader can miss the glyph on one frame (live 2026-11-03 22:07: the same floor and party tile as a
+ * frame where it was found) — a frame is not a dead end, and twenty ticks are two seconds of looking.
+ */
+const ORIENT_MAP_ICON_PATIENCE = 20;
 
 /**
  * How long after a battle's or a chest's last screen a heal is still owed. The flag is set by the
@@ -547,6 +555,8 @@ export class WvdWorld implements World {
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
   #pageCloseTries = 0;
   #pageCloseWarned = false;
+  /** Ticks in a row with a readable map that carries no 楼梯-门 icon (the orientation's patience). */
+  #mapIconWaits = 0;
   /** The pacing primitive for the loop's direct taps (policy/pacing.ts): stable frame, one per pace. */
   #pacer = new Pacer();
   /** 倍速 presses sent for the battle on screen; `#track` re-arms the counts when it leaves. */
@@ -1293,11 +1303,23 @@ export class WvdWorld implements World {
           this.#orienting = false;
           this.#host?.log.info(`wvd: on the farm floor (${orient.floor}); the farm takes over`);
         } else if (decision.kind === 'wait') {
+          if (decision.reason !== 'map-icon') return;
+          this.#mapIconWaits += 1;
+          if (this.#mapIconWaits <= ORIENT_MAP_ICON_PATIENCE) return;
+          const icons = observation.screen === 'dungeonmap'
+            ? observation.map.icons.map((icon) => icon.kind).join(', ') || 'none'
+            : 'not the map';
+          await this.#stopWithEvidence(
+            session,
+            frame,
+            `the map carries no 楼梯-门 icon after ${ORIENT_MAP_ICON_PATIENCE} reads (icons: ${icons})`,
+          );
           return;
         } else if (decision.kind === 'stop') {
-          await this.#endSession(decision.reason, { report: true });
+          await this.#stopWithEvidence(session, frame, decision.reason);
           return;
         } else if (decision.kind === 'command') {
+          this.#mapIconWaits = 0;
           await this.#orientTo(decision.command, observation.screen);
           return;
         }
@@ -2517,6 +2539,32 @@ export class WvdWorld implements World {
     if (this.#supervisor.isOpen()) {
       this.#host?.log.warn('wvd: the model turn ended with the question unanswered; still waiting');
     }
+  }
+
+  /**
+   * A stop that leaves its evidence: the frame is pushed with the reason as a note, so the reason has a
+   * picture beside it instead of a description ("the map carries no 楼梯-门 icon") the operator has to
+   * take on trust. The script that hosts the World writes the image (scripts/world-run.ts saves any
+   * image blob as `.tmp/note-*.jpeg`); a note that cannot be pushed never blocks the stop.
+   */
+  async #stopWithEvidence(session: WvdSession, frame: Frame, reason: string): Promise<void> {
+    try {
+      const snapshot = await takeSnapshot(session.snapshot, this.#cfg.escalationImageWidth);
+      const note: WvdEvent = {
+        type: 'wvd.note',
+        source: 'wvd',
+        senderKey: 'wvd.note',
+        ts: nowIso(this.#timezone, new Date()),
+        tags: snapshot === null ? [] : ['snapshot'],
+        text: `[wvd.note] The session stops: ${reason}`,
+        meta: { reason, screen: this.#lastObservation?.screen ?? 'unknown' },
+        ...(snapshot === null ? {} : { blobs: [snapshotBlob(snapshot)] }),
+      };
+      await this.#host?.pushEvent(note, { trigger: 'flush' });
+    } catch {
+      // Evidence is a courtesy; the stop is the contract.
+    }
+    await this.#endSession(reason, { report: true });
   }
 
   /** Close the session exactly once: settle the paused tick first, then release the engine. */

@@ -48,7 +48,16 @@ export type OrientCommand =
 export type OrientDecision =
   /** The party stands on the farm floor: hand the loop to the farm route. */
   | { readonly kind: 'arrived' }
-  | { readonly kind: 'wait'; readonly reason: 'loading' | 'unnamed' }
+  | {
+      readonly kind: 'wait';
+      /**
+       * `map-icon`: the map is readable — the floor and the party's tile are there — but the 楼梯-门
+       * icon is not on this frame. One frame without it is a perception miss, not a dead end (live
+       * 2026-11-03 22:07: the same floor and tile as a frame where the reader found it), so the World
+       * re-reads for a few ticks before it stops. The policy stays pure and only says what it sees.
+       */
+      readonly reason: 'loading' | 'unnamed' | 'map-icon';
+    }
   /** A screen the farm route owns: let the route act on it. */
   | { readonly kind: 'yield' }
   | { readonly kind: 'command'; readonly command: OrientCommand }
@@ -72,10 +81,9 @@ export function nextOrientStep(observation: Observation, orient: TaskOrient): Or
       if (climb !== undefined && isExpectedFloor(climb.from, floor)) {
         return { kind: 'command', command: { kind: 'climb' } };
       }
-      return {
-        kind: 'stop',
-        reason: `the map is neither the farm floor (${orient.floor}) nor the climb floor (${climb?.from ?? 'none'}): read ${floor}`,
-      };
+      // Readable map, no icon: a miss on this frame rather than a dead end — the World's patience, not
+      // this module, decides when a run of misses becomes a stop (operator rule 2026-11-03).
+      return { kind: 'wait', reason: 'map-icon' };
     }
     case 'dungeon':
       return { kind: 'command', command: { kind: 'open-map' } };

@@ -68,16 +68,17 @@ describe('nextOrientStep', () => {
     expect(nextOrientStep(mapOf(CLIMB), orient)).toEqual({ kind: 'command', command: { kind: 'climb' } });
   });
 
-  it('stops on a floor it has no measured way off, rather than pressing a blind tile', () => {
+  it('waits, rather than stops, when a readable map carries no 楼梯-门 icon', () => {
+    // Operator rule 2026-11-03: a frame without the icon is a perception miss, not a dead end (live
+    // 22:07 read the same floor and party tile as a frame where the reader found it). The World owns
+    // the patience; the policy only says what the frame showed.
     const other = 'ffffffffffffffffffffffffffffffff';
-    const decision = nextOrientStep(mapOf(other), orient);
-    expect(decision).toMatchObject({ kind: 'stop' });
-    if (decision.kind === 'stop') expect(decision.reason).toContain(other);
+    expect(nextOrientStep(mapOf(other), orient)).toEqual({ kind: 'wait', reason: 'map-icon' });
   });
 
-  it('stops on another floor when the task carries no climb at all', () => {
+  it('waits on another floor too when the task carries no climb at all', () => {
     const noClimb: TaskOrient = { goal: { site: 'ffxi-gcn' }, floor: FARM };
-    expect(nextOrientStep(mapOf(CLIMB), noClimb)).toMatchObject({ kind: 'stop' });
+    expect(nextOrientStep(mapOf(CLIMB), noClimb)).toEqual({ kind: 'wait', reason: 'map-icon' });
   });
 
   it('opens the map from the 3-D view: the map is the only surface that prints the floor', () => {
