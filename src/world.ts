@@ -71,6 +71,7 @@ import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
 import { chooseQtePass, type QtePass } from './policy/qte.ts';
 import { advanceMode, INITIAL_MODE, type ModeMemory } from './policy/mode.ts';
+import { Pacer } from './policy/pacing.ts';
 import {
   fallbackPhrase,
   observationLine,
@@ -534,6 +535,8 @@ export class WvdWorld implements World {
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
   #pageCloseTries = 0;
   #pageCloseWarned = false;
+  /** The pacing primitive for the loop's direct taps (policy/pacing.ts): stable frame, one per pace. */
+  #pacer = new Pacer();
   /** 倍速 presses sent for the battle on screen; `#track` re-arms the counts when it leaves. */
   #speedPresses = 0;
   /** 自動 presses sent for the battle on screen. */
@@ -1067,6 +1070,10 @@ export class WvdWorld implements World {
     // holds it — the battle keeps its mode through a skill's resolution and the revive QTE, the chest
     // through its bar's fades. The tick dispatches by this, not by the single frame.
     this.#mode = advanceMode(this.#mode, observation);
+    // The session's first frame is the state the loop opened on, not a transition through it: seeding
+    // the pacer there keeps a loop that starts on a static screen from spending a tick proving it.
+    if (this.#ticks === 1) this.#pacer.observe(observation.screen);
+    this.#pacer.observe(observation.screen);
     this.#track(observation);
     this.#measureProgress(observation, now);
 
@@ -1129,6 +1136,11 @@ export class WvdWorld implements World {
     // go back to the dungeon*. Its X 关闭 tile is the evidence that names it, so the close is verified
     // by the next frame rather than hoped for; a page that stays costs one tap per tick, capped.
     if (!waiting && observation.screen === 'character-page') {
+      // Paced (operator rule 2026-11-03): the page animates while it closes, and a tap sent into that
+      // animation lands on the 3-D view and opens another member's page. One tap per pace, on a frame
+      // that has stopped moving.
+      if (!this.#pacer.ready(now)) return;
+      this.#pacer.act(now);
       if (this.#pageCloseTries >= PAGE_CLOSE_TRIES) {
         if (!this.#pageCloseWarned) {
           this.#pageCloseWarned = true;
@@ -1831,6 +1843,7 @@ export class WvdWorld implements World {
     this.#battleOpenerCast = false;
     this.#openerDeadlineMs = null;
     this.#askedForMap = false;
+    this.#pacer.reset();
     this.#lootTapAtMs = null;
     this.#lootTaps = 0;
     // A new cycle orients afresh: the climb budget is per cycle, and the next cycle may leave the
@@ -2125,6 +2138,9 @@ export class WvdWorld implements World {
         const tries = Math.max(1, this.#cfg.autoBattleEnableAttempts);
         const paced = this.#togglePressAtMs === null || now - this.#togglePressAtMs >= AUTO_PRESS_RETRY_MS;
         const pressToggle = async (which: 'speed' | 'auto'): Promise<void> => {
+          // Paced like every direct operation: the battle's HUD redraws as a toggle takes, and a press
+          // inside that redraw is a press the game may not read.
+          if (!this.#pacer.ready(now)) return;
           const presses = which === 'speed' ? this.#speedPresses : this.#autoPresses;
           // The cap is spent: one line when it is reached, and silence after that.
           if (presses > tries) return;
@@ -2137,6 +2153,7 @@ export class WvdWorld implements World {
             return;
           }
           if (!paced) return;
+          this.#pacer.act(now);
           this.#togglePressAtMs = now;
           if (which === 'speed') this.#speedPresses += 1;
           else this.#autoPresses += 1;
@@ -2157,11 +2174,22 @@ export class WvdWorld implements World {
         const wantsOpener = battle !== undefined && battle.openers.length > 0 && !this.#cfg.dryRun;
         if (wantsOpener && !this.#battleOpenerCast) {
           this.#openerDeadlineMs ??= now + OPENER_READ_WINDOW_MS;
+          // The cast is one operation of two taps with its own settle; its *start* is paced like any
+          // other, so a battle that redraws while the panel opens is not cast into.
+          if (!this.#pacer.ready(now)) return;
           const outcome = await this.#castOpener(context);
+          if (outcome === 'cast') {
+            // A cast was sent: 自動 is the next operation, not this tick's (one primitive at a time).
+            this.#pacer.act(now);
+            this.#battleOpenerCast = true;
+            return;
+          }
           if (outcome === 'unreadable' && now < this.#openerDeadlineMs) {
             this.#host?.log.info('wvd: the active member is not readable yet; waiting for the panel before auto');
             return;
           }
+          // A readable window that is not on the list: no tap was sent, so nothing is paced and the
+          // default (auto) takes the battle this tick.
           this.#battleOpenerCast = true;
         }
         // 3. Auto: the battle plays itself from here.

@@ -948,13 +948,20 @@ describe('a walk stays in flight through the screens it produces', () => {
 
     await world.tick();
     expect(openerCalls).toEqual(['爱丽丝']);
+    // The cast is this tick's one operation: 自動 waits for the next (operator rule 2026-11-03).
+    expect(actuator.calls).toEqual([]);
+    clock.advance(800);
+    await world.tick();
     expect(actuator.calls).toEqual(['tap 1231,708']);
 
     // The battle leaves; once the fight's own wait settles, a new battle starts and re-arms the filter.
     perceiver.observation = dungeonView;
     for (let index = 0; index < 14; index += 1) { clock.advance(500); await world.tick(); }
     perceiver.observation = combatView;
+    // The battle's first frame is a transition: the pacing primitive waits for a stable frame.
     clock.advance(500);
+    await world.tick();
+    clock.advance(800);
     await world.tick();
     expect(openerCalls).toEqual(['爱丽丝', '爱丽丝']);
   });
@@ -998,7 +1005,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     let answer: string | null = null;
     const reader: BattleMemberReader = { readActiveMember: async () => answer };
     const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
-    const { world, host, actuator, openerCalls } = makeWorld({ observation: combatView, battle });
+    const { world, host, actuator, openerCalls, clock } = makeWorld({ observation: combatView, battle });
     await started(world, host);
 
     await world.tick();
@@ -1007,7 +1014,10 @@ describe('a walk stays in flight through the screens it produces', () => {
     answer = '爱丽丝';
     await world.tick();
     expect(openerCalls).toEqual(['爱丽丝']);
-    expect(actuator.calls).toEqual(['tap 1231,708']);  // the auto press follows the cast
+    expect(actuator.calls).toEqual([]);                 // the cast is this tick's one operation
+    clock.advance(800);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 1231,708']);   // then 自動, as its own operation
   });
 
   it('presses auto again while the battle is still waiting at a command phase', async () => {
@@ -1059,6 +1069,8 @@ describe('a walk stays in flight through the screens it produces', () => {
     await world.tick();
     perceiver.observation = combatView;
     clock.advance(3_000);
+    await world.tick();            // the transition frame: the pacer waits for stability
+    clock.advance(800);
     await world.tick();
     expect(actuator.calls.filter((call) => call === 'tap 1231,708').length).toBe(2);
   });
@@ -1079,8 +1091,11 @@ describe('a walk stays in flight through the screens it produces', () => {
 
     perceiver.observation = speedOnView;      // the game shows 倍速 on
     clock.advance(2_000);                     // past the toggle pacing
-    await world.tick();                       // 2. the opener, 3. auto
+    await world.tick();                       // 2. the opener — one operation this tick
     expect(openerCalls).toEqual(['爱丽丝']);
+    expect(actuator.calls).toEqual(['tap 691,708']);
+    clock.advance(800);
+    await world.tick();                       // 3. 自動 — the next operation
     expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
   });
 
@@ -1398,8 +1413,8 @@ describe('the character page', () => {
     await world.tick();
     expect(actuator.calls).toEqual(['tap 699,1012']);
 
-    // The page is still up: one tap per tick, and the cap says so once.
-    for (let index = 0; index < 4; index += 1) { clock.advance(200); await world.tick(); }
+    // The page is still up: one tap per pace (700 ms), and the cap says so once.
+    for (let index = 0; index < 4; index += 1) { clock.advance(800); await world.tick(); }
     expect(actuator.calls.filter((call) => call === 'tap 699,1012')).toHaveLength(3);
     expect(host.logRecords.filter((line) => line.message.includes('did not close after 3 taps')).length).toBe(1);
 
