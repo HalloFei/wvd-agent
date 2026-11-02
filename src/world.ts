@@ -310,6 +310,13 @@ const OPENER_READ_WINDOW_MS = 3_000;
 const PAGE_CLOSE_TRIES = 3;
 
 /**
+ * How long after a battle's or a chest's last screen a heal is still owed. The flag is set by the
+ * battle/chest and spent on the 3-D view; a trip through the dungeon (a climb, a travel) cancels it,
+ * and this bound is the backstop so a stale flag cannot fire on a later arrival.
+ */
+const HEAL_WINDOW_MS = 30_000;
+
+/**
  * How long the game may take to load after an orientation travel or a climb. The travel returns when
  * the world map leaves — or the Dungeon Select row is accepted — and the frames after it are the
  * load's own fade: black, or a flat colour, at confidence 0. The session classifier must stop on
@@ -595,8 +602,13 @@ export class WvdWorld implements World {
   #lastQtePass: QtePass | null = null;
   /** The reroll budget is spent with nothing better: the bar is taken as the last attempt. */
   #qteGivenUp = false;
-  /** A battle or a chest happened: heal when the loop is back on the 3-D view. */
+  /**
+   * A battle or a chest happened: heal when the loop is back on the 3-D view — and only then. The flag
+   * is bounded (`#healDueAtMs`) and cancelled by an orientation command, so entering the dungeon on a
+   * climb or a travel never heals (operator rule 2026-11-03: *only heal after battle and chest open*).
+   */
   #healDue = false;
+  #healDueAtMs = 0;
 
   /**
    * The orientation phase (contracts §10, the goal form). True from the session start until the map
@@ -1128,6 +1140,7 @@ export class WvdWorld implements World {
 
     // The heal is the game's own quick heal, and it is only valid from the 3-D view: a battle or a
     // chest set the flag, this tick spends it as one command (the four taps carry their own settles).
+    if (this.#healDue && now - this.#healDueAtMs > HEAL_WINDOW_MS) this.#healDue = false;
     if (!waiting && this.#healDue && observation.screen === 'dungeon') {
       this.#healDue = false;
       const healed = await this.#commands.healParty();
@@ -1418,7 +1431,12 @@ export class WvdWorld implements World {
       this.#qteGivenUp = false;
       // Both are the moments after which the party is hurt: heal once the loop is back on the view.
       this.#healDue = true;
+      this.#healDueAtMs = now;
     }
+    // A screen that changed is not the screen the command failed on: the lockout is per screen, not
+    // per episode. (The map-open press can fail by toggling an already-open map shut; without this the
+    // orientation refused G forever and the stall clock ended the session — live 2026-11-03 21:49.)
+    if (this.#lastScreen !== observation.screen) this.#failed.clear();
     this.#lastScreen = observation.screen;
     if (active) this.#lastProgressAtMs = now;
     // The farm moved on: a command that failed before may be worth sending again.
@@ -2297,6 +2315,14 @@ export class WvdWorld implements World {
    * opens is not pressed twice, and a walk is waited out by arrival like any other.
    */
   async #orientTo(command: OrientCommand, fromScreen: ScreenId): Promise<void> {
+    // The orientation's commands are primitives like every other tap (operator rule 2026-11-03): one per
+    // pace, on a frame that has stopped moving. Without this the loop pressed G twice a tick while the
+    // map's own open was still animating (live 2026-11-03 21:49: thirty "changed nothing" warnings and
+    // an escalation) — and a party heal is cancelled by the trip: the operator's rule is to heal after a
+    // battle or a chest, never on the way through the dungeon.
+    if (!this.#pacer.ready(this.#now())) return;
+    this.#pacer.act(this.#now());
+    this.#healDue = false;
     switch (command.kind) {
       case 'open-map':
       case 'exit': {

@@ -2409,16 +2409,19 @@ describe('the orientation', () => {
     await world.tick();
     expect(world.isRunning()).toBe(true);
 
-    // The window is a wait, not a shield: the first named frame closes it and the loop acts at once.
-    clock.advance(500);
+    // The window is a wait, not a shield: the first named frame closes it and the loop acts — after the
+    // pacing primitive sees that screen stable and the pace has passed (operator rule 2026-11-03).
     perceiver.observation = { screen: 'dungeon-select', atMs: 100, confidence: 0.9 } as Observation;
-    await world.tick();
+    clock.advance(800);
+    await world.tick();                       // the first frame of the new screen: not stable yet
+    clock.advance(800);
+    await world.tick();                       // stable, and the pace has passed
     expect(travelCalls).toEqual(['ffxi-gcn', 'ffxi-zone3']);
   });
 
   it('retries the world-map travel once, then stops with the reason', async () => {
     const { task } = goalTask();
-    const { world, host, travelCalls } = makeWorld({
+    const { world, host, travelCalls, clock } = makeWorld({
       observation: townView,
       task,
       travelResult: { ok: false, reason: 'location-not-found', detail: 'not in view' },
@@ -2429,6 +2432,8 @@ describe('the orientation', () => {
     expect(travelCalls).toEqual(['ffxi-gcn']);
     expect(world.isRunning()).toBe(true);
 
+    // The retry waits the pace: one operation at a time (operator rule 2026-11-03).
+    clock.advance(800);
     await world.tick();
     expect(travelCalls).toEqual(['ffxi-gcn', 'ffxi-gcn']);
     expect(world.isRunning()).toBe(false);
@@ -2437,7 +2442,7 @@ describe('the orientation', () => {
   it('re-orients after the exit script instead of running a scripted entry', async () => {
     const definition = goalDefinition();
     const { task, calls } = goalTask(definition);
-    const { world, host, perceiver, travelCalls } = makeWorld({
+    const { world, host, perceiver, travelCalls, clock } = makeWorld({
       // A farm floor with no chest left: the route next move is the exit.
       observation: mapWith(FARM),
       task,
@@ -2449,8 +2454,12 @@ describe('the orientation', () => {
     await world.tick();
     expect(calls).toEqual(['exit']);
 
-    // The exit script ends in town; the next cycle must orient back in, not run an entry.
+    // The exit script ends in town; the next cycle must orient back in, not run an entry — after the
+    // pacing primitive sees the town stable and the pace has passed.
     perceiver.observation = townView;
+    clock.advance(800);
+    await world.tick();
+    clock.advance(800);
     await world.tick();
     expect(calls).not.toContain('enter');
     expect(travelCalls).toEqual(['ffxi-gcn']);
