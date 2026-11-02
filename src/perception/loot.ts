@@ -139,6 +139,22 @@ function isFlat(image: RgbaImage): boolean {
   return Math.sqrt(Math.max(0, sumSq / count - mean * mean)) < FLAT_STD_DEV;
 }
 
+/**
+ * The contents card's frame: the two border lines, their gain, and the height between them. The card
+ * gate below adds the interior and the caption; the banner gate needs the *absence* of this frame (the
+ * card is already collected there).
+ */
+function hasCardFrame(image: RgbaImage): boolean {
+  const top = borderLine(image, TOP_BAND);
+  const bottom = borderLine(image, BOTTOM_BAND);
+  if (top === null || bottom === null) return false;
+  if (top.peak < BORDER_PEAK_MIN || bottom.peak < BORDER_PEAK_MIN) return false;
+  if (top.gain < BORDER_GAIN_MIN || bottom.gain < BORDER_GAIN_MIN) return false;
+  const cardHeight = bottom.at - top.at;
+  if (cardHeight < CARD_HEIGHT_MIN || cardHeight > CARD_HEIGHT_MAX) return false;
+  return lineSpanRatio(image, top.at) >= LINE_SPAN_RATIO && lineSpanRatio(image, bottom.at) >= LINE_SPAN_RATIO;
+}
+
 /** The card's two border lines and the flat field between them, then its caption. */
 function isLootOverlay(image: RgbaImage): boolean {
   const top = borderLine(image, TOP_BAND);
@@ -155,7 +171,51 @@ function isLootOverlay(image: RgbaImage): boolean {
     if (interior.mean < INTERIOR_MEAN_MIN || interior.mean > INTERIOR_MEAN_MAX) return false;
     if (interior.spread > INTERIOR_SPREAD_MAX) return false;
   }
+  // The operator's rule (2026-11-03): **a qualified loot frame carries the loot item's name AND its
+  // image.** The name is the caption below the card; the image is the saturated raster drawn inside
+  // it. The name alone was not enough: the battle's skill **detail panel** (关闭 / 队列 over the party
+  // panel) passes the border, interior and caption gates and was named `loot` live at 03:17 — the loop
+  // then tapped the loot card's point ten times into the battle. Measured over the card's inner box
+  // (0.40,0.42)-(0.60,0.58 of the frame), pixels with saturation over 60:
+  //
+  // | frame | saturated px |
+  // | --- | --- |
+  // | the loot card (`loot-00.jpg`) | **2 342** |
+  // | the skill detail panel (both captures) | 55 / 105 |
+  // | a battle command phase | 367 |
+  //
+  // Floor 500. A dedicated loot-item database (the operator's plan) will replace this with a real
+  // item-image match; until it exists, the name + image pair is the qualification.
+  if (itemArtPixels(image) < ITEM_ART_MIN) return false;
   return captionInk(image) >= CAPTION_INK_MIN;
+}
+
+/** The loot item's art inside the card, as fractions of the frame (the same 16:9 rule as the card). */
+const ITEM_ART_BOX = { x0: 0.40, y0: 0.42, x1: 0.60, y1: 0.58 } as const;
+/** Saturation (max channel minus min) above which a pixel is the item art, not the card's fill. */
+const ITEM_ART_SATURATION = 60;
+/** The floor the recorded frames support: the loot card 2 342, every non-loot card at most 367. */
+const ITEM_ART_MIN = 500;
+
+/** Saturated pixels inside the card's inner box: the loot item's own image. */
+function itemArtPixels(image: RgbaImage): number {
+  const x0 = Math.round(image.width * ITEM_ART_BOX.x0);
+  const x1 = Math.round(image.width * ITEM_ART_BOX.x1);
+  const y0 = Math.round(image.height * ITEM_ART_BOX.y0);
+  const y1 = Math.round(image.height * ITEM_ART_BOX.y1);
+  let count = 0;
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
+      const o = (y * image.width + x) * 4;
+      const r = image.data[o]!;
+      const g = image.data[o + 1]!;
+      const b = image.data[o + 2]!;
+      const mx = Math.max(r, g, b);
+      const mn = Math.min(r, g, b);
+      if (mx - mn > ITEM_ART_SATURATION) count += 1;
+    }
+  }
+  return count;
 }
 
 /**
@@ -169,11 +229,18 @@ function isLootOverlay(image: RgbaImage): boolean {
  */
 function isResultBanner(image: RgbaImage): boolean {
   if (captionInk(image) < CAPTION_INK_MIN) return false;
+  // The card is *collected* on this screen, so its frame must be gone. Without this the battle's skill
+  // detail panel — which draws a card-like border pair and a bright line of text — qualified as the
+  // banner (live 2026-11-03 03:17: the loop tapped the loot card's point ten times into the battle).
+  if (hasCardFrame(image)) return false;
   const box = autoLabel(image);
   // The banner sits on the dark 3-D floor, so the AUTO box is mostly dark with a dim label in it:
-  // measured live, 2 % of the box is over luma 40 against 100 % on an opening frame (the lit chest
-  // fills it) and 36 % on the 3-D view after a QTE cancel (HUD text, 596 bright px against 0 here).
-  if (box.over40 > box.count * 0.15) return false;
+  // measured 0.93 % of the box over luma 40 on the loot frame against 100 % on an opening frame (the
+  // lit chest fills it) and 36 % on the 3-D view after a QTE cancel. The banner measures 2.00 %, a
+  // battle's skill detail panel 3.08 % (measured 2026-11-03 — that panel is the false positive that put
+  // ten loot taps into a battle), so the bound is 2.5 %. Thin, and temporary - the operator's loot-item
+  // database replaces it: a qualified loot frame carries the item's name and its image (2026-11-03).
+  if (box.over40 > box.count * 0.025) return false;
   if (box.bright > Math.max(2, Math.round(box.count * 0.02))) return false;
   return box.ink >= Math.max(12, Math.round(40 * (image.width * image.height) / (1_920 * 1_080)));
 }

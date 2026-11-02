@@ -170,6 +170,26 @@ describe('tapLoot', () => {
  * one screen that needs a single tap — the continue arrow at (1203, 1040).
  */
 const BANNER = new URL('../testdata/chest/2026-11-01-loot-banner/', import.meta.url);
+const BATTLE = new URL('../testdata/battle-2026-11-02/', import.meta.url);
+
+/**
+ * The operator's rule (2026-11-03): *the loot screen has the loot name and the loot item image, and
+ * thus in no case can perception be wrong with it.* A qualified loot frame carries **both** — the
+ * caption below the card and the saturated item art inside it. The battle's skill detail panel
+ * (关闭 / 队列) passed the name-only gates and was named `loot` live at 03:17; the loop then tapped
+ * the loot card's point (960,510) ten times into the battle. This is the regression guard.
+ */
+describe('a qualified loot frame', () => {
+  it('needs the item image as well as the name', async () => {
+    for (const name of ['slot-panel-opening.jpg', 'slot-panel-slow-attack.jpg', 'alice-command-phase.jpg']) {
+      const observation = await new LootPerceiver().observe(frameOf(await image(name, BATTLE)));
+      expect(observation.screen).toBe('unknown');
+    }
+    // The real loot card still qualifies: the same caption, and 2 342 saturated pixels of item art.
+    const loot = await new LootPerceiver().observe(frameOf(await image('loot-00.jpg', LOOT)));
+    expect(loot.screen).toBe('loot');
+  });
+});
 
 describe('the loot result banner', () => {
   it('is named loot, so the route has a rule for it', async () => {
