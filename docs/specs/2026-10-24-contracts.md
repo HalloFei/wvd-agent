@@ -494,6 +494,7 @@ export interface BattleOpener {
   readonly name: string;          // as the ACTIVE card draws it
   readonly slot: BattleSlot;
   readonly target: BattleTarget;  // multi-target: the tap names the side
+  readonly confirm?: Point;       // the skill's own 确认 button; pressed instead of `target` when set
 }
 
 export interface BattleMemberReader {

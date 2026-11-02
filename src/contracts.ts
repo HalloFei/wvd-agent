@@ -419,6 +419,14 @@ export interface BattleOpener {
   readonly name: string;
   readonly slot: BattleSlot;
   readonly target: BattleTarget;
+  /**
+   * The **确认** button the skill's target step draws, when it draws one. The operator's correction
+   * (2026-11-03): the cast's second press is *确认* at the bottom of the panel, not a tap on an enemy;
+   * a skill that wants 确认 sets this point and the cast presses it instead of `target`. Left unset
+   * until it is measured live — an unmeasured point is a guess, and a guess on the cast path costs a
+   * battle.
+   */
+  readonly confirm?: Point;
 }
 
 /**

@@ -69,6 +69,16 @@ describe('the battle opener cast', () => {
     expect(actuator.taps).toEqual([BATTLE_SLOTS['左下'], ENEMY_TARGET_AT]);
   });
 
+  it('presses the skill\'s own 确认 instead of a target side when it is configured', async () => {
+    // Operator correction 2026-11-03: the cast's second press is 确认 at the bottom of the panel, not a
+    // tap on the enemy. The point is a config parameter until it is measured live.
+    const actuator = fakeActuator();
+    const confirm: Point = { x: 960, y: 1_032 };
+    await castBattleOpener(actuator, { ...alice, confirm }, sleep);
+
+    expect(actuator.taps).toEqual([BATTLE_SLOTS['左下'], confirm]);
+  });
+
   it('aims a party-targeted opener at the party side', async () => {
     const actuator = fakeActuator();
     await castBattleOpener(actuator, { ...alice, slot: '右上', target: 'party-front' }, sleep);

@@ -28,16 +28,19 @@ function recording(): Actuator & { readonly taps: Point[] } {
 }
 
 describe('the one-key heal', () => {
-  it('runs party card -> sparkle -> 恢复 -> close, one tap each', async () => {
+  it('runs party card -> sparkle -> 恢复 -> close, the close its own two taps', async () => {
     const actuator = recording();
+    const sleep = async (): Promise<void> => {};
     await expect(openCharacterPage(actuator)).resolves.toEqual({ ok: true });
     await expect(openAutoHeal(actuator)).resolves.toEqual({ ok: true });
     await expect(confirmAutoHeal(actuator)).resolves.toEqual({ ok: true });
-    await expect(closeCharacterPage(actuator)).resolves.toEqual({ ok: true });
+    await expect(closeCharacterPage(actuator, sleep)).resolves.toEqual({ ok: true });
     expect(actuator.taps).toEqual([
       { x: 1_009, y: 900 },
       { x: 1_220, y: 574 },
       { x: 1_070, y: 813 },
+      { x: 699, y: 1_012 },
+      // The second close tap: live 2026-11-03 the single one left the page up (the harken's 归还 lesson).
       { x: 699, y: 1_012 },
     ]);
   });

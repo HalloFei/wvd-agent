@@ -80,8 +80,11 @@ export const OPENER_SETTLE_MS = 700;
 const targetAt = (target: BattleTarget): Point => (target === 'enemy' ? ENEMY_TARGET_AT : PARTY_FRONT_AT);
 
 /**
- * Cast the opener: the slot, a settle, the target. Two taps and one pause; a refused press ends the
- * chain and is returned unchanged, never retried — the caller logs it and lets auto battle run.
+ * Cast the opener: the slot, a settle, then the press that resolves it — the skill's own **确认**
+ * button when the operator configured its point, the target side otherwise. The operator's correction
+ * (2026-11-03): *the skill cast is actually pressing 确认, not a tap on the enemy*. Two taps and one
+ * pause; a refused press ends the chain and is returned unchanged, never retried — the caller logs it
+ * and lets auto battle run.
  */
 export async function castBattleOpener(
   actuator: Actuator,
@@ -91,5 +94,5 @@ export async function castBattleOpener(
   const slot = await actuator.tap(BATTLE_SLOTS[opener.slot]);
   if (!slot.ok) return slot;
   await sleep(OPENER_SETTLE_MS);
-  return actuator.tap(targetAt(opener.target));
+  return actuator.tap(opener.confirm ?? targetAt(opener.target));
 }
