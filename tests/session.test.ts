@@ -9,7 +9,7 @@ const CONFIDENT = 0.9;
 const CAP = 20;
 
 function state(observation: Observation, willpower: number[] = [80], chestsRemaining = 1): RouteState {
-  return { observation, willpower, chestsRemaining, unreachable: [] };
+  return { observation, mode: 'unknown', willpower, chestsRemaining, unreachable: [] };
 }
 
 /** A screen with no payload of its own, at any confidence. */

@@ -59,6 +59,7 @@ import type {
   Point,
   RouteState,
   ScreenId,
+  GameMode,
   ScriptResult,
   SessionTask,
   SessionVerdict,
@@ -69,6 +70,7 @@ import type {
 import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
 import { chooseQtePass, type QtePass } from './policy/qte.ts';
+import { advanceMode, INITIAL_MODE, type ModeMemory } from './policy/mode.ts';
 import {
   fallbackPhrase,
   observationLine,
@@ -533,6 +535,8 @@ export class WvdWorld implements World {
   #timer: ReturnType<typeof setTimeout> | null = null;
 
   #sessionStartedAtMs = 0;
+  /** Which pipeline owns the screen, held through unnamed frames (policy/mode.ts, contracts §6). */
+  #mode: ModeMemory = INITIAL_MODE;
   #lastProgressAtMs = 0;
   #lastScreen: ScreenId | null = null;
   #lastMapRead: MapRead | null = null;
@@ -780,6 +784,7 @@ export class WvdWorld implements World {
       detail,
       nowMs: now,
       screen: observation?.screen ?? null,
+      mode: this.#mode.mode,
       floor: read?.floor ?? null,
       x: read?.player.x ?? null,
       y: read?.player.y ?? null,
@@ -898,6 +903,8 @@ export class WvdWorld implements World {
       const now = this.#now();
       this.#running = true;
       this.#sessionStartedAtMs = now;
+      // A new session starts with no mode: the first named frame sets it (the game may be anywhere).
+      this.#mode = INITIAL_MODE;
       this.#lastProgressAtMs = now;
       this.#lastScreen = null;
       this.#lastMapRead = null;
@@ -1033,6 +1040,10 @@ export class WvdWorld implements World {
 
     const now = this.#now();
     this.#lastObservation = observation;
+    // The game's mode (operator rule 2026-11-03): a named screen moves it, an unnamed or loading frame
+    // holds it — the battle keeps its mode through a skill's resolution and the revive QTE, the chest
+    // through its bar's fades. The tick dispatches by this, not by the single frame.
+    this.#mode = advanceMode(this.#mode, observation);
     this.#track(observation);
     this.#measureProgress(observation, now);
 
@@ -1092,6 +1103,7 @@ export class WvdWorld implements World {
 
     const state: RouteState = {
       observation,
+      mode: this.#mode.mode,
       willpower: this.#willpower,
       chestsRemaining: this.#chestsRemaining,
       unreachable: this.#unreachable,
@@ -1126,6 +1138,10 @@ export class WvdWorld implements World {
     if (verdict === 'escalate' && unnamedSinceMs !== null && now - unnamedSinceMs < this.#cfg.escalateSettleMs) {
       verdict = 'ok';
     }
+    // Operator rule 2026-11-03: inside a known mode an unnamed frame is that mode's own business — a
+    // battle is still the battle while its skill resolves or its revive QTE is up, a chest still the
+    // chest while its bar fades. Only the unknown mode asks the model about a frame nothing named.
+    if (verdict === 'escalate' && unnamed && this.#mode.mode !== 'unknown') verdict = 'ok';
     // The nothing-perceived stop is the transition's, not one frame's: hold it while the blank frames
     // are still young. A session whose frames never come back stops at `escalateSettleMs`.
     if (verdict === 'stop' && blank && now - (this.#blankSinceMs ?? now) < this.#cfg.escalateSettleMs) {
@@ -2435,6 +2451,7 @@ export class WvdWorld implements World {
     if (this.#inFlight) {
       parts.push(`waiting for ${this.#inFlight.kind} ${this.#inFlight.walking ? 'to arrive' : 'to take effect'}`);
     }
+    parts.push(`mode ${this.#mode.mode}`);
     if (this.#lastObservation) parts.push(`last observation ${observationLine(this.#lastObservation)}`);
     const open = this.#supervisor.open;
     if (open) {

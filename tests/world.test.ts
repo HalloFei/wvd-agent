@@ -1333,6 +1333,66 @@ describe('the stall policy', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// The game's mode: which pipeline owns the screen (operator rule 2026-11-03)
+// ---------------------------------------------------------------------------------------------
+
+describe('the mode owns the screens inside it', () => {
+  const asked = (host: FakeHost) => host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck');
+
+  it('does not ask about the unnamed frames inside a battle', async () => {
+    // The measured case: a member died, the revive QTE draws (testdata/battle-2026-11-02/revive-qte.jpg,
+    // unknown 0.80) and the loop used to spend a 90 s question on a battle it was already in.
+    const { world, host, perceiver, clock } = makeWorld({ observation: combatView });
+    await started(world, host);
+    await world.tick();                        // the command phase: battle
+
+    perceiver.observation = unknownButSeen;    // the revive QTE / a skill's resolution
+    for (let index = 0; index < 6; index += 1) {
+      clock.advance(500);
+      await world.tick();
+    }
+    expect(asked(host)).toHaveLength(0);
+
+    perceiver.observation = combatView;        // the battle carries on
+    clock.advance(500);
+    await world.tick();
+    expect(asked(host)).toHaveLength(0);
+  });
+
+  it('does not ask about the unnamed frames inside a chest', async () => {
+    const { world, host, perceiver, clock } = makeWorld({ observation: chestPrompt });
+    await started(world, host);
+    await world.tick();                        // the prompt: chest
+
+    perceiver.observation = unknownButSeen;    // the lid's animation
+    for (let index = 0; index < 6; index += 1) {
+      clock.advance(500);
+      await world.tick();
+    }
+    expect(asked(host)).toHaveLength(0);
+  });
+
+  it('still asks about an unnamed frame outside any mode', async () => {
+    const { world, host } = makeWorld({ observation: unknownButSeen, cfg: { escalateTimeoutMs: 20 } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(asked(host)).toHaveLength(1);
+  });
+
+  it('reports the mode in the console status', async () => {
+    const { world, host } = makeWorld({ observation: combatView });
+    await started(world, host);
+    await world.tick();
+
+    const status = await world.invoke('wvd-console', 'status');
+    if (!status.ok) throw new Error('the status call failed');
+    expect((status.value as { mode?: string }).mode).toBe('battle');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // The escalation exchange
 // ---------------------------------------------------------------------------------------------
 

@@ -587,6 +587,24 @@ afterwards is the unnamed policy's business.
    (787,939) selects nothing. Candidate causes: the 700 ms settle, or the panel layout's row geometry
    (with the panel up the party grid moves up ~84 px). One live battle with the cast measured decides
    it; that is the operator's call to start.
+## The game's mode: a pipeline per state (2026-11-03)
+
+The operator's rule: *a state machine for the game's states — in battle, in dungeon, chest open — so
+each state triggers its own module or pipeline.* The reason is measured: the loop perceived only
+**screens**, so a battle's own moments (a skill's resolution, a fade, the **revive QTE** on
+`testdata/battle-2026-11-02/revive-qte.jpg`, `unknown` 0.80) each became an unnamed frame — a 5 s
+settle, a 90 s question, a fallback that does not fit the battle it was already in.
+
+`src/policy/mode.ts` holds the mode: `modeOf` reads the named screens into `battle`, `chest`,
+`dungeon`, `travel`, `town` (or none), and `advanceMode` holds it through every unnamed or loading
+frame. `battle` and `chest` are **modal**: two named frames of another mode are needed to leave them,
+so a battle's fade cannot end the battle and a chest's bar may vanish between passes. `RouteState.mode`
+carries it (contracts §6), the World does not ask about unnamed frames inside a mode, and the console
+status prints `mode battle`.
+
+The revive QTE is now *held* rather than questioned; its ring timing is the next card (`t-mvy6dvsw`).
+The design record is `2026-11-03-game-mode-design.md`.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

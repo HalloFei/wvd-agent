@@ -252,8 +252,20 @@ export type Intent =
   | { kind: 'wait'; ms: number }
   | { kind: 'stop'; reason: string };
 
+/**
+ * The game's mode: which pipeline owns the screen, held between frames (operator rule 2026-11-03).
+ *
+ * `battle` and `chest` are modal — they own the screen until their named end, and hold through the
+ * unnamed frames inside them (a skill's resolution, the revive QTE, a QTE bar's fade). `dungeon` is the
+ * 3-D view and its map, `travel` the world map and Dungeon Select, `town` the rest town. `unknown`
+ * is the mode nothing has named yet: the only one where an unnamed frame is the loop's own problem.
+ */
+export type GameMode = 'unknown' | 'battle' | 'chest' | 'dungeon' | 'travel' | 'town';
+
 export interface RouteState {
   readonly observation: Observation;
+  /** Which pipeline owns this screen; the World dispatches by it (contracts §6, `policy/mode.ts`). */
+  readonly mode: GameMode;
   readonly willpower: readonly number[];
   readonly chestsRemaining: number;
   /**

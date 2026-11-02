@@ -6,7 +6,7 @@ const AT = 1_000;
 const CONFIDENCE = 0.9;
 
 function routeState(observation: Observation, willpower: number[], chestsRemaining: number, unreachable: Point[] = []): RouteState {
-  return { observation, willpower, chestsRemaining, unreachable };
+  return { observation, mode: 'unknown', willpower, chestsRemaining, unreachable };
 }
 
 /** A screen with no payload, at any confidence. */

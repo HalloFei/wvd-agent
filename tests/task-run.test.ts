@@ -313,6 +313,7 @@ describe('createTaskPolicy', () => {
   const KEY = 'a'.repeat(32);
   const state = (id: Observation['screen'], chests: number, mapKey = KEY) => ({
     observation: id === 'dungeonmap' ? mapObservation(mapKey) : screen(id),
+    mode: 'unknown' as const,
     willpower: [100],
     chestsRemaining: chests,
     unreachable: [],

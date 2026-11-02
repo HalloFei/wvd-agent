@@ -352,7 +352,7 @@ describe('HudPerceiver', () => {
  */
 describe('a black frame and a busy frame it cannot name reach different verdicts', () => {
   const perceiver = new CompositePerceiver([{ perceiver: new HudPerceiver(), floor: ACTING_FLOOR }]);
-  const state = (observation: Observation): RouteState => ({ observation, willpower: [], chestsRemaining: 1, unreachable: [] });
+  const state = (observation: Observation): RouteState => ({ observation, mode: 'unknown', willpower: [], chestsRemaining: 1, unreachable: [] });
 
   it('stops on a black frame: nothing was perceived', async () => {
     const black = await perceiver.observe(frameOf(uniformImage(1920, 1080, 0), 1_000));

@@ -343,8 +343,12 @@ export type Intent =
   | { kind: 'wait'; ms: number }
   | { kind: 'stop'; reason: string };
 
+/** Which pipeline owns the screen; held through unnamed frames (2026-11-03, `policy/mode.ts`). */
+export type GameMode = 'unknown' | 'battle' | 'chest' | 'dungeon' | 'travel' | 'town';
+
 export interface RouteState {
   readonly observation: Observation;
+  readonly mode: GameMode;                // battle | chest | dungeon | travel | town | unknown
   readonly willpower: readonly number[];
   readonly chestsRemaining: number;
   /**

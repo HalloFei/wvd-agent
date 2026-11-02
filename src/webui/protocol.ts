@@ -41,6 +41,8 @@ export interface ConsoleStatus {
   readonly detail: string | null;
   readonly nowMs: number;
   readonly screen: string | null;
+  /** The game's mode — the pipeline that owns the screen (contracts §6, `policy/mode.ts`). */
+  readonly mode: string;
   /** The last map read, kept while the loop is on another screen: the party's own account of where it is. */
   readonly floor: string | null;
   readonly x: number | null;
