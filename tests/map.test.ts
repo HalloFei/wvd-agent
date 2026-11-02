@@ -74,6 +74,27 @@ describe('the 楼梯-门 icon (operator name, 2026-11-03)', () => {
     const stairs = map!.icons.filter((icon) => icon.kind === 'stair-door');
     expect(stairs).toEqual([{ kind: 'stair-door', at: { x: 13, y: 26 } }]);
   });
+
+  it('is found again after the party moves, at the same tile', async () => {
+    // The live run 2026-11-03 21:34 stopped on exactly this: the same floor read six cells and one row
+    // away (player 7,24) and the icon vanished, because the search lattice rides with the party's
+    // chevron while the glyph is drawn a few px off the cell centre. The reader seeds around the cell
+    // before sweeping, so the glyph is found from any party position.
+    const url = new URL('../.tmp/map-live2.jpg', import.meta.url);
+    const bytes = await readFile(url);
+    const image = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+    const map = await readMap({
+      atMs: 0,
+      width: image.width,
+      height: image.height,
+      toRgba: async () => ({ data: image.data, width: image.width, height: image.height }),
+    });
+    expect(map).not.toBeNull();
+    expect(map!.player).toEqual({ x: 7, y: 24 });
+    expect(map!.icons.filter((icon) => icon.kind === 'stair-door')).toEqual([
+      { kind: 'stair-door', at: { x: 13, y: 26 } },
+    ]);
+  });
 });
 
 describe('readMap', () => {
@@ -508,7 +529,11 @@ describe('readMap — floor-transition markers', () => {
     expect(of(map!, 'teleport')).toEqual(['12,18', '17,13', '17,15', '4,9', '7,13']);
     // Five rings move the party *within* the floor; the one harken is what crosses it.
     expect(of(map!, 'harken')).toEqual(['10,23']);
-    expect(map!.icons).toHaveLength(6);
+    // And the floor draws its own 楼梯-门 (the stairs back up), found by the same reader: the icon is
+    // the way the FFXI climb works (operator rule 2026-11-03), so its presence here is the rule, not a
+    // false positive.
+    expect(of(map!, 'stair-door')).toEqual(['16,26']);
+    expect(map!.icons).toHaveLength(7);
     expect(of(map!, 'chest')).toEqual([]);
     expect(of(map!, 'hole')).toEqual([]);
   });

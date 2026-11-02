@@ -285,6 +285,18 @@ const STAIRS_NCC_FLOOR = 0.85;
  * off its centre (the lattice supplies that pixel); no other glyph on the map reaches it. Floor 0.85.
  */
 const STAIR_DOOR_NCC_FLOOR = 0.85;
+/** The stair-door's own search radius, once a seed has said a glyph is near. */
+const STAIR_DOOR_OFFSET = 9;
+/**
+ * The seeds tried per cell before the sweep. The glyph is drawn a few px off the cell centre (measured
+ * 2026-11-03: −4/−3 px on 第三区-城内2F, the same on two frames 6 cells apart), so a single sample at
+ * the centre can score below the coarse floor while the glyph is right there.
+ */
+const STAIR_DOOR_SEEDS: readonly (readonly [number, number])[] = [
+  [0, 0], [-4, -3], [4, 3], [-4, 3], [4, -3], [0, -3], [-4, 0], [4, 0], [0, 3],
+];
+/** The coarse score a seed must reach to justify the sweep: the glyph's own seeds measure 0.9+. */
+const STAIR_DOOR_COARSE_FLOOR = 0.7;
 
 /**
  * Hole — the white down-arrow over an oval, a 31×33 glyph inside a 36×36 cell (第三区 x 512–542,
@@ -595,12 +607,14 @@ function parseImage(image: RgbaImage): MapParse {
   const chevron = findChevron(panel.yellow, width, latticeX.phase, latticeY.phase);
   if (!chevron) return { ok: false, gate: 'no-chevron' };
 
-  // 7. Icons, all positioned relative to the chevron. ---------------------------------------
-  // The chevron is the anchor the click transform is defined from (contracts §3 `origin`), so the
-  // icon reader enumerates the cell lattice from it. The lattice fit only gates the frame and
-  // validates the chevron's own cell: on a translucent floor its phase is a couple of px off (live
-  // 2026-10-31 第四区: pitch 35.9, phase 3.1 px east of the drawn 36-px grid) and a ±2 px template
-  // search around that error misses every chest while the colour blobs and the chevron still read.
+  // 7. Icons, enumerated on the **map's own cell grid**. -------------------------------------
+  // The chevron is the anchor the *click* transform is defined from (contracts §3 `origin`), but it
+  // is not the icon grid: the chevron moves with the party on a fixed map panel, so anchoring the
+  // search on it leaves the glyphs of a floor between cells whenever the party's pixel is off the
+  // grid. Measured 2026-11-03: the 楼梯-门 glyph sat 4.7 px from the chevron-anchored cell and the
+  // ±3 px template window missed it (the chest/hole/harken glyphs happened to sit closer and read);
+  // enumerating from the fitted lattice phase puts every glyph back on a cell centre. The phase can
+  // be a couple px off on a translucent floor (2026-10-31 第四区: 3.1 px) — the ±3 window absorbs it.
   const icons = findIcons(data, width, panel, readout, chevron);
 
   const map: MapState = {
@@ -1189,8 +1203,10 @@ function findIcons(
   const icons: MapIcon[] = [];
   const seen = new Set<string>();
   // The chevron is the party's cell centre — the one screen point this floor's click transform is
-  // anchored at — so the cell lattice the glyphs sit on is enumerated from it. Anchoring the cell
-  // windows anywhere else would make identification and aiming disagree by the anchor's error.
+  // anchored at — so the cell lattice the glyphs sit on is enumerated from it. It rides with the party,
+  // so a glyph can fall between cells (measured 2026-11-03: the 楼梯-门 sat 4.7 px from the nearest
+  // cell, outside the ±3 template window); the stair-door therefore gets a wider *refined* search —
+  // its coarse score at the cell centre says whether a glyph is near before the expensive sweep.
   const cellPhaseX = chevron.x;
   const cellPhaseY = chevron.y;
 
@@ -1215,6 +1231,22 @@ function findIcons(
     for (let kx = firstX; kx <= lastX; kx += 1) {
       const cx = cellPhaseX + kx * TILE_PX;
 
+      // 楼梯-门 before the bright-ink prefilter: the door glyph's cell is mostly *dark* (a black door on
+      // a bright frame), and that prefilter — sized to notice a chest — can drop it. Measured
+      // 2026-11-03: the glyph matched 1.000 offline on a frame the live run read as "no stair-door",
+      // 4.7 px from the chevron-anchored cell — a coarse score there decides whether to sweep wider.
+      let coarseDoor = -1;
+      for (const seed of STAIR_DOOR_SEEDS) {
+        const score = templateNcc(data, width, STAIR_DOOR_TEMPLATE, cx + seed[0], cy + seed[1]);
+        if (score > coarseDoor) coarseDoor = score;
+      }
+      if (coarseDoor >= STAIR_DOOR_COARSE_FLOOR) {
+        const stairDoor = bestNcc(data, width, STAIR_DOOR_TEMPLATE, cx, cy, STAIR_DOOR_OFFSET);
+        if (stairDoor.score >= STAIR_DOOR_NCC_FLOOR) {
+          push('stair-door', toGrid(cx + stairDoor.dx, cy + stairDoor.dy));
+        }
+      }
+
       const bright = brightCount(data, width, cx, cy);
       if (bright < ICON_BRIGHT_MIN) continue;
 
@@ -1227,9 +1259,6 @@ function findIcons(
       const hole = bestNcc(data, width, HOLE_TEMPLATE, cx, cy);
       if (hole.score >= HOLE_NCC_FLOOR) push('hole', toGrid(cx + hole.dx, cy + hole.dy));
 
-      // 楼梯-门: the door-with-arrow — the stair entrance the FFXI farm is next to (operator, 2026-11-03).
-      const stairDoor = bestNcc(data, width, STAIR_DOOR_TEMPLATE, cx, cy);
-      if (stairDoor.score >= STAIR_DOOR_NCC_FLOOR) push('stair-door', toGrid(cx + stairDoor.dx, cy + stairDoor.dy));
 
       // The harken is cell-centred on every instance and drawn at two sizes, so both scales are
       // matched at the cell centre and the better one decides.
@@ -1292,10 +1321,12 @@ function bestNcc(
   template: Template,
   cx: number,
   cy: number,
+  /** The search radius around the cell centre; the icons' own window unless a caller says otherwise. */
+  radius: number = ICON_OFFSET,
 ): NccResult {
   let best: NccResult = { score: -1, dx: 0, dy: 0 };
-  for (let dy = -ICON_OFFSET; dy <= ICON_OFFSET; dy += 1) {
-    for (let dx = -ICON_OFFSET; dx <= ICON_OFFSET; dx += 1) {
+  for (let dy = -radius; dy <= radius; dy += 1) {
+    for (let dx = -radius; dx <= radius; dx += 1) {
       const score = templateNcc(data, width, template, cx + dx, cy + dy);
       if (score > best.score) best = { score, dx, dy };
     }
