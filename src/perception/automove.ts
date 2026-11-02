@@ -35,26 +35,36 @@ export interface AutoMoveElement {
 }
 
 /**
- * How far from the tapped cell the pill may be drawn. The measured rise is 78 px up and 36 px left;
- * the band keeps room for the map's own scroll and for a pill the game clamps at the panel's edge.
+ * How far from the tapped cell the pill may be drawn, as bands tried in order. The first is the measured
+ * chest geometry (78 px up, 36 px left). A cell at the panel's **top edge** clamps the pill *below*
+ * itself instead (live 2026-11-03 21:56: the 楼梯-门's pill was drawn ~65 px under the tapped cell, and
+ * the walk gave up with "no 自動移動 element" while the prompt was on the screen) — the second band
+ * covers that. Each band is searched on its own: one wide band loses the pill, because the matcher keeps
+ * only its four best coarse candidates and a bigger area offers it more distractors.
  */
-const BAND = { left: 120, right: 120, up: 130, down: 40 } as const;
+const BANDS: readonly { readonly left: number; readonly right: number; readonly up: number; readonly down: number }[] = [
+  { left: 120, right: 120, up: 130, down: 40 },
+  { left: 120, right: 160, up: 40, down: 140 },
+];
 
 /**
  * The element a tile tap raised, or null when the tap raised none — the cell has no path. Cheap: one
  * small-band match, run once per walk.
  */
 export function findAutoMoveElement(image: RgbaImage, near: Point): AutoMoveElement | null {
-  const x = Math.max(0, near.x - BAND.left);
-  const y = Math.max(0, near.y - BAND.up);
-  const width = Math.min(image.width, near.x + BAND.right) - x;
-  const height = Math.min(image.height, near.y + BAND.down) - y;
-  if (width < AUTO_MOVE_TEMPLATE.width || height < AUTO_MOVE_TEMPLATE.height) return null;
-  const area: PixelRect = { x, y, width, height };
-  const match = findTemplate(image, area, AUTO_MOVE_TEMPLATE, { scales: [1], minScore: AUTO_MOVE_FLOOR });
-  if (match === null) return null;
-  return {
-    at: { x: Math.round(match.at.x + match.width / 2), y: Math.round(match.at.y + match.height / 2) },
-    score: match.score,
-  };
+  for (const band of BANDS) {
+    const x = Math.max(0, near.x - band.left);
+    const y = Math.max(0, near.y - band.up);
+    const width = Math.min(image.width, near.x + band.right) - x;
+    const height = Math.min(image.height, near.y + band.down) - y;
+    if (width < AUTO_MOVE_TEMPLATE.width || height < AUTO_MOVE_TEMPLATE.height) continue;
+    const area: PixelRect = { x, y, width, height };
+    const match = findTemplate(image, area, AUTO_MOVE_TEMPLATE, { scales: [1], minScore: AUTO_MOVE_FLOOR });
+    if (match === null) continue;
+    return {
+      at: { x: Math.round(match.at.x + match.width / 2), y: Math.round(match.at.y + match.height / 2) },
+      score: match.score,
+    };
+  }
+  return null;
 }

@@ -213,6 +213,27 @@ describe('the 自動移動 element', () => {
     expect(actuator.taps).toEqual([tile, { x: 1_212, y: 690 }]);
   });
 
+  it('finds the pill the game clamped below a cell at the top edge', async () => {
+    // Live 2026-11-03 21:45: the World walked to the 楼梯-门 at the top of the map, the tap raised the
+    // 自動移動 pill **below** the cell instead of above it, the finder's measured band only reached
+    // 40 px down, and the walk gave up with "no 自動移動 element" while the prompt was on the screen.
+    // The frame is the World's own escalation snapshot of that moment, upscaled to the client size.
+    const frame = await liveFrame('../testdata/nav-2026-11-03-stairdoor-pill/pill-below-cell.jpg');
+    const actuator = fakeActuator();
+    const tile = { x: 960, y: 158 };
+
+    const result = await automoveToTile(actuator, tile, PRESS_MS, {
+      capture: async () => frame,
+      waitMs: 60,
+      pollMs: 10,
+    });
+
+    expect(result).toEqual({ ok: true });
+    // The pill's glyph is 77 px *below* the tap here; the measured chest band cannot reach it.
+    expect(actuator.taps).toHaveLength(2);
+    expect(actuator.taps[1]).toEqual({ x: 924, y: 235 });
+  });
+
   it('refuses a cell whose tap raised no element, and never taps a second time', async () => {
     // The same map with no pill: the chest cell at (924,154) is 18 rows up, the game has no path.
     const frame = await liveFrame('../testdata/nav-2026-11-02-4f-top-edge/map-player-20-5.jpg');
