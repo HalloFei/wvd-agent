@@ -3,6 +3,7 @@ import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import type { Frame, Observation, Perceiver, RgbaImage } from '../src/contracts.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
+import { CharacterPagePerceiver } from '../src/perception/character-page.ts';
 import { CombatPerceiver } from '../src/perception/combat.ts';
 import { HudPerceiver } from '../src/perception/hud.ts';
 import { readFacts, type FrameFacts } from '../src/perception/facts.ts';
@@ -14,6 +15,7 @@ const LIVE = new URL('../testdata/screens/2026-10-25-live/', import.meta.url);
 const FRAMES = new URL('../testdata/frames/', import.meta.url);
 const GMENU = new URL('../testdata/screens/2026-11-03-gmenu/', import.meta.url);
 const BATTLE = new URL('../testdata/battle-2026-11-02/', import.meta.url);
+const PAGE = new URL('../testdata/screens/2026-11-03-character-page/', import.meta.url);
 
 async function imageAt(dir: URL, name: string): Promise<RgbaImage> {
   const decoded = jpeg.decode(await readFile(new URL(name, dir)), { useTArray: true });
@@ -81,6 +83,21 @@ describe('CompositePerceiver over the table', () => {
     const classification = await new CompositePerceiver([{ perceiver: liar, floor: 0.5 }])
       .classify(select);
     expect(classification.answer.screen).toBe('unknown');
+  });
+
+  it('names the character page from its own X 关闭 tile', async () => {
+    // Live 2026-11-03: the heal opens this menu and could not see that it was still up, so a swallowed
+    // close left a 90 s question and a stalled run on it. The tile is 61x67 at (683,983).
+    const perceiver = new CharacterPagePerceiver();
+    const page = await perceiver.observe(await frameAt(PAGE, 'page-1920.jpg'));
+    expect(page.screen).toBe('character-page');
+    expect(page.confidence).toBeGreaterThan(0.7);
+    for (const [dir, name] of [
+      [LIVE, 'combat-command.jpg'], [BATTLE, 'command-phase.jpg'], [BATTLE, 'alice-command-phase.jpg'],
+      [BATTLE, 'revive-qte.jpg'], [FRAMES, 'town-0.jpg'], [NAV, 'popup.jpg'], [GMENU, 'gmenu-3d-view.jpg'],
+    ] as const) {
+      expect((await perceiver.observe(await frameAt(dir, name))).screen).toBe('unknown');
+    }
   });
 
   it('reads the battle toggles from their highlight', async () => {

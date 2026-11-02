@@ -969,6 +969,7 @@ function emptyScreens(): Record<ScreenId, number> {
     loot: 0,
     loading: 0,
     'dungeon-select': 0,
+    'character-page': 0,
     unknown: 0,
   };
 }

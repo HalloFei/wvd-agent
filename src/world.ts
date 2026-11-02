@@ -123,6 +123,8 @@ export interface RouteCommands {
   dismissLoot(): Promise<ActionResult>;
   /** The game's one-key heal: party card, sparkle, 恢复, close, with its own settles. */
   healParty(): Promise<ActionResult>;
+  /** Leave the character page: its measured X 关闭 tile (2026-11-03; the page is a named screen). */
+  closeCharacterPage(): Promise<ActionResult>;
   /** The battle's 倍速 toggle: one press, sent only when the frame says it is off (contracts §2). */
   battleSpeed(): Promise<ActionResult>;
   /** The battle's 自動 toggle: one press, sent only when the frame says it is off. */
@@ -297,6 +299,9 @@ const AUTO_PRESS_RETRY_MS = 1_500;
  * panel before it lets auto take the battle, and it does not press auto while the read is still owed.
  */
 const OPENER_READ_WINDOW_MS = 3_000;
+
+/** How many X 关闭 taps a character page may take before the loop leaves it to the stall clock. */
+const PAGE_CLOSE_TRIES = 3;
 
 /**
  * How long the game may take to load after an orientation travel or a climb. The travel returns when
@@ -526,6 +531,9 @@ export class WvdWorld implements World {
   #cyclesDone = 0;
   /** When the opener's name read stops waiting for a readable panel, for this battle. */
   #openerDeadlineMs: number | null = null;
+  /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
+  #pageCloseTries = 0;
+  #pageCloseWarned = false;
   /** 倍速 presses sent for the battle on screen; `#track` re-arms the counts when it leaves. */
   #speedPresses = 0;
   /** 自動 presses sent for the battle on screen. */
@@ -1116,6 +1124,25 @@ export class WvdWorld implements World {
       return;
     }
 
+    // The character page: a menu the heal (or an operator) opens, and a screen the loop *finishes* —
+    // operator rule 2026-11-03: *after open and heal there shall be a close of the character panel, so
+    // go back to the dungeon*. Its X 关闭 tile is the evidence that names it, so the close is verified
+    // by the next frame rather than hoped for; a page that stays costs one tap per tick, capped.
+    if (!waiting && observation.screen === 'character-page') {
+      if (this.#pageCloseTries >= PAGE_CLOSE_TRIES) {
+        if (!this.#pageCloseWarned) {
+          this.#pageCloseWarned = true;
+          this.#host?.log.warn(`wvd: the character page did not close after ${PAGE_CLOSE_TRIES} taps`);
+        }
+        return;
+      }
+      this.#pageCloseTries += 1;
+      const closed = await this.#commands.closeCharacterPage();
+      if (closed.ok) this.#host?.log.info('wvd: closed the character page');
+      else this.#host?.log.warn(`wvd: the character page close was refused (${closed.reason})`);
+      return;
+    }
+
     const state: RouteState = {
       observation,
       mode: this.#mode.mode,
@@ -1255,6 +1282,10 @@ export class WvdWorld implements World {
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
   #track(observation: Observation): void {
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
+    if (observation.screen !== 'character-page') {
+      this.#pageCloseTries = 0;
+      this.#pageCloseWarned = false;
+    }
     if (observation.screen !== 'combat') {
       this.#speedPresses = 0;
       this.#autoPresses = 0;

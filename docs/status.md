@@ -587,6 +587,24 @@ afterwards is the unnamed policy's business.
    (787,939) selects nothing. Candidate causes: the 700 ms settle, or the panel layout's row geometry
    (with the panel up the party grid moves up ~84 px). One live battle with the cast measured decides
    it; that is the operator's call to start.
+## The character page is a screen now, and the loop closes it (2026-11-03)
+
+The one-key heal opens a party member's page; twice tonight (03:18, 03:39) the close tap was swallowed
+and the page — named by nothing — held the loop: a 90 s question, then a stall. The frame is saved as
+`testdata/screens/2026-11-03-character-page/page-1920.jpg` and its **X 关闭 tile** (61×67 at (683,983))
+is the evidence: template-matched in the bottom band it scores **1.000** on the page and **at most 0.357**
+on every other 1920×1080 frame recorded (battle command phases, the 3-D view with its menu legend, a
+dungeon map, the town, the opener panel, the revive QTE). `character-page` is a `ScreenId` now, with a
+perceiver of its own.
+
+The World *finishes* the page: one tap on the close per tick (capped at three, warned once), and the
+next frame proves it left. The close was measured live: one tap at (699,1012) drops the page and the
+frame answers `dungeon` 0.88; a second tap at the same point on the 3-D view opens *another* member's
+page, so the close is never doubled blindly. The heal waits `HEAL_CLOSE_SETTLE_MS = 1.5 s` after 恢复
+before its close — the 03:18 failure was that window.
+
+661 tests, tsc clean.
+
 ## The battle order: speed → opener → auto → finish (2026-11-03)
 
 The operator's rule: *1. check multi speed on, 2. team member open skill cast if set, 3. auto battle

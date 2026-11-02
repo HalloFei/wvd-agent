@@ -31,6 +31,7 @@ import { CompositePerceiver } from '../src/perception/composite.ts';
 import { ChestPromptPerceiver } from '../src/perception/prompt.ts';
 import { ChestOpeningPerceiver } from '../src/perception/chest-opening.ts';
 import { LootPerceiver } from '../src/perception/loot.ts';
+import { CharacterPagePerceiver } from '../src/perception/character-page.ts';
 import { CombatPerceiver } from '../src/perception/combat.ts';
 import { HudPerceiver } from '../src/perception/hud.ts';
 import { TownPerceiver, WorldMapPerceiver } from '../src/perception/location.ts';
@@ -66,7 +67,8 @@ function perceiver(): CompositePerceiver {
     // does the same). A CLI that answered chest-opening for a loot screen was the 2026-11-02 find.
     { perceiver: new LootPerceiver(), floor: 0.5 },
     { perceiver: new ChestOpeningPerceiver(), floor: 0.5 },
-    { perceiver: new CombatPerceiver(), floor: 0.5 },
+    { perceiver: new CharacterPagePerceiver(), floor: 0.5 },
+  { perceiver: new CombatPerceiver(), floor: 0.5 },
     { perceiver: new HudPerceiver(), floor: 0.5 },
     { perceiver: new WorldMapPerceiver(), floor: 0.5 },
     { perceiver: new TownPerceiver(), floor: 0.5 },

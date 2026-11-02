@@ -56,6 +56,7 @@ export const SCREENS: readonly ScreenId[] = [
   'loot',
   'loading',
   'dungeon-select',
+  'character-page',
 ];
 
 export function screenStandings(facts: FrameFacts): readonly ScreenStanding[] {
@@ -75,6 +76,9 @@ export function screenStandings(facts: FrameFacts): readonly ScreenStanding[] {
     // The chest screens carry no unique corner ink and no title band; only their own recognisers
     // can speak about them.
     { screen: 'chest-open', support: 0, ruledOut: false },
+    // The character page is a menu over the view: its own tile is the only evidence, and no cheap
+    // fact rules it in or out (2026-11-03).
+    { screen: 'character-page', support: 0, ruledOut: false },
     { screen: 'chest-prompt', support: 0, ruledOut: false },
     { screen: 'chest-qte', support: 0, ruledOut: false },
     // The opening (lid lifting, hands reaching, no bar, no HUD): only its own recogniser speaks.

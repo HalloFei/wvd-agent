@@ -65,8 +65,14 @@ encoder changes one module and no parser.
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'loot' | 'loading' | 'chest-prompt'
-  | 'dungeon-select' | 'unknown';
+  | 'dungeon-select' | 'character-page' | 'unknown';
 ```
+
+`character-page` is the menu a party HUD card opens (2026-11-03): a member's page with its stat block
+and the bottom tab row (关闭 / 强度 / 技能 / 咒文 / 装备 / 背包). Its evidence is the X 关闭 tile at
+(683,983), 61×67, template-matched (`perception/character-page.ts`): 1.000 on the page, at most 0.357 on
+every other recorded screen. The World *finishes* it — one tap on the close per tick, capped — because
+the one-key heal opens it and an unclosed page used to hold the loop on an unnamed screen.
 
 `dungeon-select` is the FFXI Dungeon Select list between the world map node and the 3D dungeon. Its
 recogniser matches the legacy zone rows in the list band (第三区 0.781 @0.70, 第一区 0.762 @0.66);

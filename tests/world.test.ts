@@ -33,6 +33,7 @@ import type {
 } from '../src/contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 import { acceptChestPrompt, cancelQte, DISARM_SCAN, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from '../src/actions/chest.ts';
+import { closeCharacterPage } from '../src/actions/heal.ts';
 import { timeQte, type QteTimer, type QteTimingOptions } from '../src/actions/qte.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { MAX_PRESS_HOLD_MS } from '../src/contracts.ts';
@@ -409,6 +410,8 @@ function makeWorld(options: {
       dismissLoot: () => dismissLoot(actuator),
       // The heal's taps are pinned in tests/heal.test.ts; the world tests only need the command.
       healParty: async () => ({ ok: true }),
+      // The page's close is one measured tap, so the world tests can see it.
+      closeCharacterPage: () => closeCharacterPage(actuator),
       battleSpeed: () => pressBattleSpeed(actuator),
       battleAuto: () => pressBattleAuto(actuator),
       // The opener's taps are pinned in tests/battle-opener.test.ts; the world tests need the call.
@@ -1377,6 +1380,34 @@ describe('the stall policy', () => {
     clock.advance(200); // past the cooldown
     await world.tick();
     expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The character page: a menu the loop finishes (operator rule 2026-11-03)
+// ---------------------------------------------------------------------------------------------
+
+describe('the character page', () => {
+  it('closes a page, and the next frame proves it', async () => {
+    // Operator rule 2026-11-03: after open and heal there shall be a close of the character panel, so
+    // go back to the dungeon. The page is a named screen now, so the close is verified, not hoped for.
+    const page: Observation = { screen: 'character-page', atMs: 100, confidence: 1 };
+    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: page });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 699,1012']);
+
+    // The page is still up: one tap per tick, and the cap says so once.
+    for (let index = 0; index < 4; index += 1) { clock.advance(200); await world.tick(); }
+    expect(actuator.calls.filter((call) => call === 'tap 699,1012')).toHaveLength(3);
+    expect(host.logRecords.filter((line) => line.message.includes('did not close after 3 taps')).length).toBe(1);
+
+    // The page left: nothing more is sent.
+    perceiver.observation = dungeonView;
+    clock.advance(200);
+    await world.tick();
+    expect(actuator.calls.filter((call) => call === 'tap 699,1012')).toHaveLength(3);
   });
 });
 

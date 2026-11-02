@@ -14,7 +14,7 @@ function state(observation: Observation, willpower: number[] = [80], chestsRemai
 
 /** A screen with no payload of its own, at any confidence. */
 function screen(
-  kind: 'town' | 'worldmap' | 'dungeon' | 'dungeon-select' | 'loot' | 'loading' | 'unknown',
+  kind: 'town' | 'worldmap' | 'dungeon' | 'dungeon-select' | 'loot' | 'loading' | 'unknown' | 'character-page',
   confidence = CONFIDENT,
 ): Observation {
   return { screen: kind, atMs: AT, confidence };
@@ -55,6 +55,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   loot: screen('loot'),
   loading: screen('loading'),
   'dungeon-select': screen('dungeon-select'),
+  'character-page': screen('character-page'),
 };
 
 /** The route's acting floor from both sides, plus the out-of-contract zero and a negative. */
