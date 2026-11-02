@@ -48,26 +48,29 @@ export async function confirmAutoHeal(actuator: Actuator): Promise<ActionResult>
 }
 
 /**
- * Close the character page; the toast 「已恢复。」 rides over it.
+ * Close the character page; the toast 「已恢复。」 rides over it. **One tap**, and it works — measured
+ * live 2026-11-03 03:47: the tap at (699,1012) dropped the page and the frame answered `dungeon` 0.88.
  *
- * **Two taps** (operator rule 2026-11-03: *after open and heal there shall be a close of the character
- * panel, so go back to the dungeon*). Live 2026-11-03 03:18: the single tap left 本杰明's page up, the
- * frame read `unknown` and the loop stalled on it. The same two-tap lesson came from the harken's 归还
- * (2026-11-02) and the Dungeon Select row: the first tap takes the focus, the second is the press the
- * game acts on. A second tap on an already-closed page lands on the 3-D view and is harmless.
+ * The 03:18 failure was timing, not the point: the close was sent 900 ms after 恢复, while the dialog
+ * was still being retired, and was swallowed. The settle before the close is now its own, longer one.
+ *
+ * A **second** tap is *not* harmless: on the 3-D view the same point opens another member's page
+ * (measured the same night), so a blind re-close would trade one page for another.
  */
-export async function closeCharacterPage(
-  actuator: Actuator,
-  sleep: (ms: number) => Promise<void>,
-): Promise<ActionResult> {
-  const first = await actuator.tap(CHARACTER_PAGE_CLOSE_AT);
-  if (!first.ok) return first;
-  await sleep(300);
+export async function closeCharacterPage(actuator: Actuator): Promise<ActionResult> {
   return actuator.tap(CHARACTER_PAGE_CLOSE_AT);
 }
 
 /** How long each screen of the heal needs before the next tap lands on it (measured live ~1 s). */
 export const HEAL_STEP_SETTLE_MS = 900;
+
+/**
+ * The pause between 恢复 and the close. Longer than a step: the dialog animates out and the toast rides
+ * over the page, and the close sent inside that window is swallowed (live 2026-11-03 03:18 — the page
+ * stayed up and the loop stalled on it). Measured 2026-11-03 03:47: a close after the dialog was gone
+ * dropped the page in one tap.
+ */
+export const HEAL_CLOSE_SETTLE_MS = 1_500;
 
 /**
  * The whole heal in one command: party card -> sparkle -> 恢复 -> close, one tap per screen with the
@@ -78,11 +81,12 @@ export async function healParty(
   actuator: Actuator,
   sleep: (ms: number) => Promise<void>,
 ): Promise<ActionResult> {
-  // The page, the sparkle, 恢复 — then the close, which is two taps of its own (closeCharacterPage).
+  // The page, the sparkle, 恢复 — then the close after the dialog has retired (HEAL_CLOSE_SETTLE_MS).
   for (const at of [CHARACTER_PAGE_AT, AUTO_HEAL_AT, AUTO_HEAL_CONFIRM_AT]) {
     const result = await actuator.tap(at);
     if (!result.ok) return result;
     await sleep(HEAL_STEP_SETTLE_MS);
   }
-  return closeCharacterPage(actuator, sleep);
+  await sleep(HEAL_CLOSE_SETTLE_MS - HEAL_STEP_SETTLE_MS);
+  return closeCharacterPage(actuator);
 }
