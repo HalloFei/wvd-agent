@@ -118,7 +118,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     { perceiver: new ChestPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new MapPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new ChestPromptPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The loot screen comes before the opening: the result banner (`获得了…` over the opened chest)
+    // The item-claim screen comes before the opening: the result banner (`获得了…` over the opened chest)
     // also clears the opening's gates — live 2026-11-01 it was named `chest-opening` 0.60 and the
     // loop waited on it — while the loot recogniser's caption + AUTO test separates the two.
     { perceiver: new LootPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },

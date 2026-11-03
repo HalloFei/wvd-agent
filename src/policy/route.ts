@@ -72,9 +72,9 @@ export function nextIntent(state: RouteState): Intent {
     case 'town':
       // a dungeon route: nothing in town to farm
       return { kind: 'exit' };
-    case 'loot':
-      // The loot card is the chest module's moment: tap its measured centre and let the next
-      // screen move the route on. A card that stays is the stall clock's business.
+    case 'drop-item-claim':
+      // The item-claim overlay is the chest module's moment: tap its measured centre and let the
+      // next screen move the route on. A card that stays is the stall clock's business.
       return { kind: 'loot' };
     case 'dungeon-select':
     case 'worldmap':

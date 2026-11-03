@@ -8,7 +8,7 @@ const at = (screen: Observation['screen'], confidence = 0.9): Observation => ({ 
 describe('the mode a named screen belongs to', () => {
   it('reads the six modes out of the screens', () => {
     expect(modeOf(at('combat'))).toBe('battle');
-    for (const screen of ['chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'loot'] as const) {
+    for (const screen of ['chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'drop-item-claim'] as const) {
       expect(modeOf(at(screen))).toBe('chest');
     }
     expect(modeOf(at('dungeon'))).toBe('dungeon');

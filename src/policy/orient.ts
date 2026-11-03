@@ -100,7 +100,7 @@ export function nextOrientStep(observation: Observation, orient: TaskOrient): Or
       // session classifier escalates it. The orientation never guesses over an unnamed frame.
       return { kind: 'wait', reason: 'unnamed' };
     default:
-      // chest-prompt, chest-open, chest-qte, chest-opening, loot, combat: the farm route finishes
+      // chest-prompt, chest-open, chest-qte, chest-opening, drop-item-claim, combat: the farm route finishes
       // what the party is already doing. Adding a screen to `ScreenId` lands here — a yield, never
       // a blind command.
       return { kind: 'yield' };

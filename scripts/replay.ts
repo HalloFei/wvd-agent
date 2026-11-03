@@ -966,7 +966,7 @@ function emptyScreens(): Record<ScreenId, number> {
     'chest-opening': 0,
     'chest-qte': 0,
     'chest-prompt': 0,
-    loot: 0,
+    'drop-item-claim': 0,
     loading: 0,
     'dungeon-select': 0,
     'character-page': 0,

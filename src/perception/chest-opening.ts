@@ -19,11 +19,11 @@
  * | 3-D view, FFXI dungeon  | **1 634**          | **0.22** |
  * | chest QTE               | 3 070              | 0.39 |
  * | opener panel            | 2 199              | 0.29 |
- * | loot                    | 8                  | 0.03 |
+ * | drop-item-claim         | 8                  | 0.03 |
  * | 打开 prompt              | 889                | 0.27 |
  *
  * So: **the HUD is gone** (its bright text count is under 40) **and the chest fills the middle**
- * (warm pixels are at least 6 % of the central half-frame). The loot screen is excluded by the warm
+ * (warm pixels are at least 6 % of the central half-frame). The item-claim screen is excluded by the warm
  * floor, and the 打开 prompt by its own 889 bright pixels — still, `ChestPromptPerceiver` runs before
  * this one in the composite, so the composition never depends on that margin.
  *
@@ -52,7 +52,7 @@ const HUD_TEXT_BANDS: ReadonlyArray<{ x0: number; x1: number; y0: number; y1: nu
 ];
 /** Bright enough to be the HUD's white text; measured 0-12 px on the eight opening frames. */
 const HUD_TEXT_BRIGHT = 205;
-/** Under this the HUD is not drawn (measured: opening 0-12, every other screen ≥ 153 except loot). */
+/** Under this the HUD is not drawn (measured: opening 0-12, every other screen ≥ 153 except drop-item-claim). */
 const HUD_TEXT_MAX = 40;
 
 /** The chest's mass: the middle half of the frame, where the lid and hands fill the view. */

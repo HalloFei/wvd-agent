@@ -48,7 +48,7 @@ and total; no clock and no memory (retry budgets belong to the World, which coun
 | `dungeon-select` | `travel goal.zone ?? goal.site` | the row that opens the zone |
 | `town`, `worldmap` | `travel goal.site` | the atlas travel, proven 10/10 in 220 s |
 | `loading`, `unknown` | `wait` | a transition resolves itself; a persisting one is the stall clock's |
-| `chest-prompt`, `chest-open`, `chest-qte`, `chest-opening`, `loot`, `combat` | `yield` | never abandon a chest or a fight |
+| `chest-prompt`, `chest-open`, `chest-qte`, `chest-opening`, `drop-item-claim`, `combat` | `yield` | never abandon a chest or a fight |
 
 `yield` falls through to the farm route *in the same tick*, so a chest the party walked into while
 orienting is opened, and its battle fought, exactly as during farming.

@@ -40,7 +40,7 @@ export function modeOf(observation: Observation): GameMode | null {
     case 'chest-open':
     case 'chest-qte':
     case 'chest-opening':
-    case 'loot':
+    case 'drop-item-claim':
       return 'chest';
     case 'dungeon':
     case 'dungeonmap':

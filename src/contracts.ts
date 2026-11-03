@@ -42,7 +42,7 @@ export interface FrameSource {
  *  means something is drawn and no recogniser can name it, which escalates. */
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
-  | 'chest-open' | 'chest-qte' | 'chest-opening' | 'loot' | 'loading' | 'chest-prompt'
+  | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'harken-menu' | 'unknown';
 
 // §3 Perception

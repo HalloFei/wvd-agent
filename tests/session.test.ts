@@ -14,7 +14,7 @@ function state(observation: Observation, willpower: number[] = [80], chestsRemai
 
 /** A screen with no payload of its own, at any confidence. */
 function screen(
-  kind: 'town' | 'worldmap' | 'dungeon' | 'dungeon-select' | 'loot' | 'loading' | 'unknown' | 'character-page',
+  kind: 'town' | 'worldmap' | 'dungeon' | 'dungeon-select' | 'drop-item-claim' | 'loading' | 'unknown' | 'character-page',
   confidence = CONFIDENT,
 ): Observation {
   return { screen: kind, atMs: AT, confidence };
@@ -52,7 +52,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
     confidence: CONFIDENT,
     qte: { zones: [], markerX: 0, button: { x: 0, y: 0 }, attempts: null },
   },
-  loot: screen('loot'),
+  'drop-item-claim': screen('drop-item-claim'),
   loading: screen('loading'),
   'dungeon-select': screen('dungeon-select'),
   'character-page': screen('character-page'),
@@ -151,8 +151,8 @@ describe('the session classifier', () => {
       expect(nextIntent(state(identified[kind])).kind, kind).toBe('wait');
       expect(classify(state(identified[kind]), 0, CAP), kind).toBe('ok');
     }
-    expect(nextIntent(state(identified.loot))).toEqual({ kind: 'loot' });
-    expect(classify(state(identified.loot), 0, CAP)).toBe('ok');
+    expect(nextIntent(state(identified['drop-item-claim']))).toEqual({ kind: 'loot' });
+    expect(classify(state(identified['drop-item-claim']), 0, CAP)).toBe('ok');
   });
 
   it('says ok on the opener panel, which the route now acts on', () => {

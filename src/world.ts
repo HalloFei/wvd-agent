@@ -248,7 +248,7 @@ const MOVEMENT_SCAN: Readonly<Record<string, number>> = { w: 0x11, a: 0x1e, s: 0
  * would never arrive — the loop then escalates instead of pressing 打开.
  */
 const ARRIVAL_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
-  'chest-prompt', 'chest-open', 'loot', 'combat',
+  'chest-prompt', 'chest-open', 'drop-item-claim', 'combat',
 ]);
 
 function fallbackIntent(screen: ScreenId | null): Intent {
@@ -637,7 +637,7 @@ export class WvdWorld implements World {
   /** The loot card's tap clock and count, so a modal that never leaves is bounded (lootTap*). */
   #lootTapAtMs: number | null = null;
   #lootTaps = 0;
-  /** The result banner's continue arrow was sent for this visit to the loot screen. */
+  /** The result banner's continue arrow was sent for this visit to the item-claim screen. */
   #lootDismissed = false;
   /** Commands sent and waiting for their screen to answer (one at a time). */
   #inFlight: InFlight | null = null;
@@ -1371,7 +1371,7 @@ export class WvdWorld implements World {
       this.#battleOpenerCast = false;
       this.#openerDeadlineMs = null;
     }
-    if (observation.screen !== 'loot') {
+    if (observation.screen !== 'drop-item-claim') {
       this.#lootTapAtMs = null;
       this.#lootTaps = 0;
       this.#lootDismissed = false;
@@ -1430,7 +1430,7 @@ export class WvdWorld implements World {
       case 'chest-open':
       case 'chest-qte':
       case 'chest-opening':
-      case 'loot':
+      case 'drop-item-claim':
       case 'combat':
         // A screen a walk produces. Staying on one is not progress, so a fight that never ends stalls.
         // The prompt is here because the game returns to it by itself after a chest's animation: that
@@ -1443,11 +1443,11 @@ export class WvdWorld implements World {
         // `dungeon`, `loading`, `town`, `worldmap`, `unknown`: the map readout is the measure.
         break;
     }
-    // The reroll budget is per chest: the prompt starts one, and loot or a battle closes it. The
+    // The reroll budget is per chest: the prompt starts one, and the item claim or a battle closes it. The
     // panel (`chest-open`) deliberately does not reset it — a reroll goes QTE → panel → QTE.
     // Not at `chest-prompt`: a reroll's own re-engagement passes through it, and the budget belongs
     // to the chest, not to the approach.
-    if (observation.screen === 'loot' || observation.screen === 'combat') {
+    if (observation.screen === 'drop-item-claim' || observation.screen === 'combat') {
       this.#qteRerolls = 0;
       this.#lastQtePass = null;
       this.#qteGivenUp = false;

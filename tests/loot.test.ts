@@ -78,7 +78,7 @@ describe('LootPerceiver', () => {
 
   it('names the committed loot overlay', async () => {
     const observation = await perceiver.observe(frameOf(await image('loot-00.jpg', LOOT)));
-    expect(observation.screen).toBe('loot');
+    expect(observation.screen).toBe('drop-item-claim');
     expect(observation.confidence).toBeGreaterThanOrEqual(0.5);
   });
 
@@ -86,7 +86,7 @@ describe('LootPerceiver', () => {
     // Synthetic: the committed capture is 1280x720 and no native 1920 loot frame exists. The
     // perceiver measures fractions, so the same card must land at the World's size.
     const observation = await perceiver.observe(frameOf(scaled(await image('loot-00.jpg', LOOT), 1920, 1080)));
-    expect(observation.screen).toBe('loot');
+    expect(observation.screen).toBe('drop-item-claim');
     expect(observation.confidence).toBeGreaterThanOrEqual(0.5);
   });
 
@@ -106,7 +106,7 @@ describe('LootPerceiver', () => {
     ];
     for (const [name, dir] of cases) {
       const observation = await perceiver.observe(frameOf(await image(name, dir)));
-      expect(observation.screen, name).not.toBe('loot');
+      expect(observation.screen, name).not.toBe('drop-item-claim');
     }
   });
 
@@ -114,7 +114,7 @@ describe('LootPerceiver', () => {
     // A QTE bar crop (631x699): the overlay's fractions do not survive a crop, so the frame is not
     // measured at all.
     const narrow = await perceiver.observe(frameOf(await image('bar.jpg', NARROW)));
-    expect(narrow.screen).not.toBe('loot');
+    expect(narrow.screen).not.toBe('drop-item-claim');
 
     // A flat field is "nothing was drawn": the only refusal that may end a session (contracts §2).
     const black: RgbaImage = { data: new Uint8Array(640 * 360 * 4), width: 640, height: 360 };
@@ -190,16 +190,16 @@ describe('a qualified loot frame', () => {
     // the card's centre) and the grey book of 2026-11-03 04:05 (4 069). The second is why the measure is
     // brightness, not colour.
     const goblet = await new LootPerceiver().observe(frameOf(await image('loot-00.jpg', LOOT)));
-    expect(goblet.screen).toBe('loot');
+    expect(goblet.screen).toBe('drop-item-claim');
     const book = await new LootPerceiver().observe(frameOf(await image('loot-book.jpg', BOOK)));
-    expect(book.screen).toBe('loot');
+    expect(book.screen).toBe('drop-item-claim');
   });
 });
 
 describe('the loot result banner', () => {
-  it('is named loot, so the route has a rule for it', async () => {
+  it('is named drop-item-claim, so the route has a rule for it', async () => {
     const observation = await new LootPerceiver().observe(frameOf(await image('result.jpg', BANNER)));
-    expect(observation.screen).toBe('loot');
+    expect(observation.screen).toBe('drop-item-claim');
   });
 
   it('is dismissed with one tap at the measured continue arrow', async () => {

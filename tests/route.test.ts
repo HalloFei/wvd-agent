@@ -11,7 +11,7 @@ function routeState(observation: Observation, willpower: number[], chestsRemaini
 
 /** A screen with no payload, at any confidence. */
 function screen(
-  kind: 'town' | 'worldmap' | 'dungeon' | 'loot' | 'loading' | 'unknown',
+  kind: 'town' | 'worldmap' | 'dungeon' | 'drop-item-claim' | 'loading' | 'unknown',
   confidence = CONFIDENCE,
 ): Observation {
   return { screen: kind, atMs: AT, confidence };
@@ -158,7 +158,7 @@ describe('the FFXI 4F route state machine', () => {
   });
 
   it('taps the loot card, which the chest module owns', () => {
-    expect(nextIntent(routeState(screen('loot'), [80], 3))).toEqual({ kind: 'loot' });
+    expect(nextIntent(routeState(screen('drop-item-claim'), [80], 3))).toEqual({ kind: 'loot' });
   });
 
   it('waits on the world map, which the loop owns', () => {

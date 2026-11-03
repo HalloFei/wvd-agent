@@ -1,6 +1,7 @@
 /**
- * The chest's loot result: the brown contents card with its item icons, the `获得了…` caption under
- * it, and the small AUTO label at the frame's bottom left.
+ * The `drop-item-claim` screen: the chest's loot result — the brown contents card with its item icons,
+ * the `获得了…` caption under it, and the small AUTO label at the frame's bottom left (the operator's
+ * name for the screen, 2026-11-03; it was `loot` before).
  *
  * Before this module the overlay had no name. The party HUD is not drawn on it, the bar is gone (or
  * was never drawn), and the opener panel has left — so the composite fell through to `unknown`, and
@@ -107,7 +108,7 @@ export class LootPerceiver implements Perceiver {
     }
     if (isFlat(image)) return refusal(frame, 0);
     if (!isLootOverlay(image) && !isResultBanner(image)) return refusal(frame, UNNAMED_CONFIDENCE);
-    return { screen: 'loot', atMs: frame.atMs, confidence: LOOT_CONFIDENCE };
+    return { screen: 'drop-item-claim', atMs: frame.atMs, confidence: LOOT_CONFIDENCE };
   }
 }
 

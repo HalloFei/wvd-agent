@@ -704,7 +704,7 @@ describe('the chest QTE', () => {
   });
 
   it('taps the loot card at its measured point, once per pace', async () => {
-    const loot: Observation = { screen: 'loot', atMs: 120, confidence: 0.6 };
+    const loot: Observation = { screen: 'drop-item-claim', atMs: 120, confidence: 0.6 };
     const { world, host, perceiver, actuator, clock } = makeWorld({ observation: loot });
     await started(world, host);
 
@@ -1167,7 +1167,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(healed()).toBe(1);
 
     // A chest sets it again: loot, then the view.
-    perceiver.observation = { screen: 'loot', atMs: 100, confidence: 1 };
+    perceiver.observation = { screen: 'drop-item-claim', atMs: 100, confidence: 1 };
     clock.advance(100);
     await world.tick();
     perceiver.observation = dungeonView;
@@ -1987,7 +1987,7 @@ describe('the opener click', () => {
     // loop does not wait for a QTE bar that may never appear; it taps the loot card at its measured
     // centre — not a second opener click — but the claim is a new operation and waits the pace since
     // the card click (operator rule 2026-11-03).
-    perceiver.observation = { screen: 'loot', atMs: 200, confidence: 1 };
+    perceiver.observation = { screen: 'drop-item-claim', atMs: 200, confidence: 1 };
     clock.advance(100);
     await world.tick();
     expect(actuator.calls).toEqual(['tap 963,784']);
@@ -2256,7 +2256,7 @@ describe('the chest module is paced', () => {
 
     // The loot card replaces the panel 100 ms later: claiming it is a new operation and the pace has
     // not passed. Without the pacer the loop tapped the card centre on that very frame.
-    perceiver.observation = { screen: 'loot', atMs: 200, confidence: 1 };
+    perceiver.observation = { screen: 'drop-item-claim', atMs: 200, confidence: 1 };
     clock.advance(100);
     await world.tick();
     expect(actuator.calls).toEqual(['tap 963,784']);
@@ -2267,7 +2267,7 @@ describe('the chest module is paced', () => {
   });
 
   it("paces the loot banner's continue arrow like any other tap", async () => {
-    const loot: Observation = { screen: 'loot', atMs: 120, confidence: 0.6 };
+    const loot: Observation = { screen: 'drop-item-claim', atMs: 120, confidence: 0.6 };
     const { world, host, actuator, clock } = makeWorld({
       observation: loot,
       cfg: { lootTapMax: 1, lootTapIntervalMs: 1 },
@@ -2288,7 +2288,7 @@ describe('the chest module is paced', () => {
   });
 
   it('keeps a configured loot interval longer than the pace', async () => {
-    const loot: Observation = { screen: 'loot', atMs: 120, confidence: 0.6 };
+    const loot: Observation = { screen: 'drop-item-claim', atMs: 120, confidence: 0.6 };
     const { world, host, actuator, clock } = makeWorld({ observation: loot, cfg: { lootTapIntervalMs: 2_000 } });
     await started(world, host);
 

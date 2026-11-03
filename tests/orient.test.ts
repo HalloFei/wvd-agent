@@ -106,7 +106,7 @@ describe('nextOrientStep', () => {
   });
 
   it('yields every screen the farm owns: a chest or a fight is never abandoned', () => {
-    for (const id of ['chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'loot', 'combat'] as const) {
+    for (const id of ['chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'drop-item-claim', 'combat'] as const) {
       expect(nextOrientStep(screen(id), orient), id).toEqual({ kind: 'yield' });
     }
   });

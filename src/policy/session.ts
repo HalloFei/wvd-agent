@@ -18,7 +18,7 @@
  *   a screen with too little confidence for the route to act on (below the route's 0.5 floor). A
  *   human can look at that frame and decide.
  * - `ok`: everything else, including identified screens the route hands off by design (`loading`, a
- *   QTE, loot, the world map, the opener panel). Those are transient: escalating them every 100 ms
+ *   QTE, the world map, the Dungeon Select list). Those are transient: escalating them every 100 ms
  *   would spend the hourly budget in seconds. A screen that *stays* is a stall, and the loop owns
  *   that "N ticks in a row" counter — it is not one observation's business (controller ruling).
  *

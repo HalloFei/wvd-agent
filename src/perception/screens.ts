@@ -53,7 +53,7 @@ export const SCREENS: readonly ScreenId[] = [
   'chest-prompt',
   'chest-qte',
   'chest-opening',
-  'loot',
+  'drop-item-claim',
   'loading',
   'dungeon-select',
   'character-page',
@@ -86,7 +86,7 @@ export function screenStandings(facts: FrameFacts): readonly ScreenStanding[] {
     { screen: 'chest-qte', support: 0, ruledOut: false },
     // The opening (lid lifting, hands reaching, no bar, no HUD): only its own recogniser speaks.
     { screen: 'chest-opening', support: 0, ruledOut: false },
-    { screen: 'loot', support: 0, ruledOut: false },
+    { screen: 'drop-item-claim', support: 0, ruledOut: false },
     { screen: 'loading', support: 0, ruledOut: false },
     // The Dungeon Select rows are the only evidence; its own recogniser speaks.
     { screen: 'dungeon-select', support: 0, ruledOut: false },

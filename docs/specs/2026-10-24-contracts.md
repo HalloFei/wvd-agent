@@ -64,9 +64,15 @@ encoder changes one module and no parser.
 ```ts
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
-  | 'chest-open' | 'chest-qte' | 'chest-opening' | 'loot' | 'loading' | 'chest-prompt'
+  | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'harken-menu' | 'unknown';
 ```
+
+`drop-item-claim` is the chest's item-claim overlay: the contents card with the `获得了…` caption, and
+ the result banner after that card is collected. It was named `loot` until 2026-11-03 (operator
+ naming). §6's Intent `{kind:'loot'}` keeps its name too: that is the action (collect the card), not
+ the screen; the perceiver and the tap actions keep their `loot` names (`perception/loot.ts`,
+ `actions/chest.ts`).
 
 `harken-menu` is the floor list a harken offers (2026-11-03): a centred list of destination rows
 (`第一区-城外-`, `第二区-城内1F-`, `第四区-城内2F深处-`, `归还` on the measured frame), followed by the
