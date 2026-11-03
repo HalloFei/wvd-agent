@@ -189,7 +189,7 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
         minimum: 1,
       },
       'worlds.wvd.lootTapIntervalMs': {
-        type: 'integer', title: '拾取间隔', description: '连续点击拾取的间隔，毫秒。',
+        type: 'integer', title: '拾取间隔', description: '连续点击拾取的间隔，毫秒；实际间隔不小于操作节奏的 700 毫秒。',
       },
       'worlds.wvd.lootTapMax': {
         type: 'integer', title: '拾取上限', description: '放弃前最多点击几次。',

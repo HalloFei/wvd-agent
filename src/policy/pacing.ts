@@ -12,8 +12,11 @@
  * The primitive: an observation key (the screen, so a transition restarts the count), a count of
  * consecutive frames carrying that key, and the time of the last tap. An operation is allowed when the
  * key has held for `STABLE_FRAMES` frames **and** `OPERATION_PACE_MS` has passed since the previous
- * one. Commands that carry their own arrival/stillness answer (`World#press`) keep it; this is for the
- * direct ones: the character page's close, the battle's toggles, the opener's cast.
+ * one. The pacer does not replace a command's own bookkeeping: a command whose effect is answered by
+ * arrival or stillness (`World#press`) still waits for that answer — the pacer only decides when an
+ * operation may be sent at all. It gates the direct ones: the character page's close, the battle's
+ * toggles and opener cast, the harken's rows and the orientation's commands, the chest's opener card
+ * and its loot claim.
  */
 export const OPERATION_PACE_MS = 700;
 /** Frames with the same screen before an operation may be sent: the first frame of a transition is not stable. */

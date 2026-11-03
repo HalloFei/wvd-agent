@@ -703,7 +703,7 @@ describe('the chest QTE', () => {
     expect(world.isRunning()).toBe(true);
   });
 
-  it('taps the loot card at its measured point, once per interval', async () => {
+  it('taps the loot card at its measured point, once per pace', async () => {
     const loot: Observation = { screen: 'loot', atMs: 120, confidence: 0.6 };
     const { world, host, perceiver, actuator, clock } = makeWorld({ observation: loot });
     await started(world, host);
@@ -711,10 +711,10 @@ describe('the chest QTE', () => {
     await world.tick();
     expect(actuator.calls).toEqual(['tap 960,510']);
     clock.advance(100);
-    await world.tick();                 // inside lootTapIntervalMs: no second tap
+    await world.tick();                 // inside both the 400 ms interval and the 700 ms pace
     expect(actuator.calls).toEqual(['tap 960,510']);
-    clock.advance(400);
-    await world.tick();                 // the interval has passed: one more tap
+    clock.advance(700);
+    await world.tick();                 // past the pace and the configured interval: one more tap
     expect(actuator.calls).toEqual(['tap 960,510', 'tap 960,510']);
 
     perceiver.observation = dungeonMap; // the card left; the route moves on
@@ -893,10 +893,15 @@ describe('the chest QTE', () => {
       (line) => line.message.includes('open-chest took effect: the screen is now chest-qte'),
     )).toBe(true);
 
-    // The bar ended with the panel still up: the click is not outstanding, so the route chooses.
+    // The bar ended with the panel still up: the click is not outstanding, so the route chooses. The
+    // returning panel's first frame is a transition for the pacer (the pace itself passed long ago),
+    // so the card click waits for the panel to hold (operator rule 2026-11-03).
     perceiver.observation = openerPanel;
+    clock.advance(800);
+    await world.tick();                 // the first frame of the panel: not stable yet
+    expect(actuator.calls).toEqual(['tap 963,784']);
     clock.advance(100);
-    await world.tick();
+    await world.tick();                 // the panel has held for two frames
     expect(actuator.calls).toEqual(['tap 963,784', 'tap 963,784']);
   });
 });
@@ -1980,9 +1985,13 @@ describe('the opener click', () => {
 
     // The screen after the panel is whatever follows: loot, for an untrapped chest (chest §3a). The
     // loop does not wait for a QTE bar that may never appear; it taps the loot card at its measured
-    // centre — not a second opener click — and re-perceives.
+    // centre — not a second opener click — but the claim is a new operation and waits the pace since
+    // the card click (operator rule 2026-11-03).
     perceiver.observation = { screen: 'loot', atMs: 200, confidence: 1 };
     clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784']);
+    clock.advance(800);
     await world.tick();
     expect(actuator.calls).toEqual(['tap 963,784', 'tap 960,510']);
     expect(world.isRunning()).toBe(true);
@@ -2013,15 +2022,20 @@ describe('the opener click', () => {
     expect(actuator.calls).toEqual(['tap 955,858']);
 
     // 4.6 s after the click — the live panel arrived in 4.6–8 s — the panel is the screen. It is the
-    // answer to the prompt click, and the same tick may choose a card from it.
+    // answer to the prompt click, but its first frame is a transition for the pacing primitive: the
+    // card click follows on the frame that holds (operator rule 2026-11-03).
     perceiver.observation = openerPanel;
     clock.advance(4_600);
     await world.tick();
 
-    expect(actuator.calls).toEqual(['tap 955,858', 'tap 963,784']);
+    expect(actuator.calls).toEqual(['tap 955,858']);
     expect(
       host.logRecords.some((record) => record.message.includes('open-chest took effect: the screen is now chest-open')),
     ).toBe(true);
+
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858', 'tap 963,784']);
   });
 
   it('waits through the chest-opening animation instead of escalating the unnamed frame', async () => {
@@ -2047,7 +2061,9 @@ describe('the opener click', () => {
 
     perceiver.observation = openerPanel;
     clock.advance(100);
-    await world.tick();
+    await world.tick();                 // the panel's first frame: a transition to the pacer
+    clock.advance(100);
+    await world.tick();                 // stable: the card click
     expect(actuator.calls).toEqual(['tap 955,858', 'tap 963,784']);
   });
 
@@ -2092,7 +2108,11 @@ describe('the opener click', () => {
 
     // The panel arrives later. A screen the loop did not produce is the farm advancing, so the
     // failed latch must not survive it — the live bug held `intent: open-chest` for 25 s instead.
+    // Its first frame is a transition: the card click follows on the frame that holds (pacing primitive).
     perceiver.observation = openerPanel;
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858']);
     clock.advance(100);
     await world.tick();
     expect(actuator.calls).toEqual(['tap 955,858', 'tap 963,784']);
@@ -2166,6 +2186,120 @@ describe('the opener click', () => {
     await tick;
 
     expect(actuator.calls.filter((call) => call.startsWith('tap '))).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The chest module is paced (operator rule 2026-11-03)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The operator's rule: *a tap is one primitive operation in game control; each has to be done with
+ * stable frames or animations, with 0.5 to 1 second pacing.* `policy/pacing.ts` implements the
+ * primitive and the World applies it to the chest's direct operations outside the QTE sub-loop — the
+ * member card that chooses who opens the chest, and the loot taps that claim the item once the chest
+ * opens (a trapped chest has the bar before it; an untrapped one goes straight to the loot).
+ * The QTE itself is the timing sub-loop and keeps its own clock.
+ */
+describe('the chest module is paced', () => {
+  it('does not click the opener card on the frame the panel arrives', async () => {
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: chestPrompt });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858']);
+
+    // The panel is the answer to 打开, but its first frame is a transition: the card click is one
+    // operation and waits for the panel to hold for a second frame.
+    perceiver.observation = openerPanel;
+    clock.advance(4_600);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858']);
+
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 955,858', 'tap 963,784']);
+  });
+
+  it('waits the pace between two card clicks, not only for the panel to hold', async () => {
+    const timing: QteTimer = async () => ({ ok: false, reason: 'resolved' });
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: openerPanel, timing });
+    await started(world, host);
+
+    await world.tick();                 // the seeded session: the first card click
+    expect(actuator.calls).toEqual(['tap 963,784']);
+
+    // The bar takes the screen 100 ms later, and the panel comes back 200 ms after the click: two
+    // frames would allow a click on the panel's second frame, but one operation per pace has not
+    // passed yet. This is the half the panel-appearance test alone does not pin.
+    perceiver.observation = qteBar;
+    clock.advance(100);
+    await world.tick();
+    perceiver.observation = openerPanel;
+    clock.advance(200);
+    await world.tick();                 // the panel's first frame: not stable yet
+    expect(actuator.calls).toEqual(['tap 963,784']);
+    clock.advance(100);
+    await world.tick();                 // stable, but only 400 ms since the first click
+    expect(actuator.calls).toEqual(['tap 963,784']);
+    clock.advance(300);
+    await world.tick();                 // 700 ms since the first click: the second card click is sent
+    expect(actuator.calls).toEqual(['tap 963,784', 'tap 963,784']);
+  });
+
+  it('does not claim the loot on the frame the card click is answered', async () => {
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: openerPanel });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784']);
+
+    // The loot card replaces the panel 100 ms later: claiming it is a new operation and the pace has
+    // not passed. Without the pacer the loop tapped the card centre on that very frame.
+    perceiver.observation = { screen: 'loot', atMs: 200, confidence: 1 };
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784']);
+
+    clock.advance(800);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 963,784', 'tap 960,510']);
+  });
+
+  it("paces the loot banner's continue arrow like any other tap", async () => {
+    const loot: Observation = { screen: 'loot', atMs: 120, confidence: 0.6 };
+    const { world, host, actuator, clock } = makeWorld({
+      observation: loot,
+      cfg: { lootTapMax: 1, lootTapIntervalMs: 1 },
+    });
+    await started(world, host);
+
+    await world.tick();                 // the card's one tap (lootTapMax = 1)
+    expect(actuator.calls).toEqual(['tap 960,510']);
+
+    // The banner is up and the tap interval has passed, but the pace has not: the arrow waits.
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,510']);
+
+    clock.advance(800);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,510', 'tap 1203,1040']);
+  });
+
+  it('keeps a configured loot interval longer than the pace', async () => {
+    const loot: Observation = { screen: 'loot', atMs: 120, confidence: 0.6 };
+    const { world, host, actuator, clock } = makeWorld({ observation: loot, cfg: { lootTapIntervalMs: 2_000 } });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,510']);
+    clock.advance(800);                 // past the pace, inside the configured 2 s interval
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,510']);
+    clock.advance(1_300);               // 2.1 s since the last tap: the interval has passed too
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,510', 'tap 960,510']);
   });
 });
 

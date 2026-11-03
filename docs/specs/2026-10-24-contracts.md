@@ -468,7 +468,7 @@ object (§0 rule 3).
 | `qteMinWindowMs` | integer | `150` | chest | refuse a pass tighter than this |
 | `qteAttemptsFallback` | integer | `2` | chest | used when the counter is unreadable |
 | `qteSubLoopMs` | integer | `4000` | chest | how long the QTE sub-loop may hold the tick before it gives up |
-| `lootTapIntervalMs` | integer | `400` | chest | between loot taps |
+| `lootTapIntervalMs` | integer | `400` | chest | between loot taps; the pacing primitive's 700 ms is the floor (effective interval = max(700 ms, this)) |
 | `lootTapMax` | integer | `10` | chest | taps before giving up on loot |
 
 ### 8.5 Battle and escalation

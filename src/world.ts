@@ -2156,6 +2156,13 @@ export class WvdWorld implements World {
           return;
         }
         this.#openerRefusal = null;
+        // The character selection is one direct operation (operator rule 2026-11-03): the panel's
+        // first frame is a transition, and a click sent before the screen has held is the failure the
+        // character page's close had. The pacer wants two frames of the panel and one operation per
+        // pace; the click waits for both.
+        const pressedAt = this.#now();
+        if (!this.#pacer.ready(pressedAt)) return;
+        this.#pacer.act(pressedAt);
         this.#host?.log.info(
           `wvd: opening the chest with ${choice.member.name} (陷阱解除 ${choice.member.disarm}, `
             + `陷阱发现 ${choice.member.detect}) at the ${slot.id} card, ${centre.x},${centre.y}`,
@@ -2164,10 +2171,15 @@ export class WvdWorld implements World {
         return;
       }
       case 'loot': {
-        // The loot card is a modal: one tap at the measured card centre collects it. The tap is
-        // throttled by `lootTapIntervalMs`; after `lootTapMax` taps the card is left to the stall
-        // clock and the escalation, rather than becoming a 10 Hz tap loop.
+        // The loot card is a modal: one tap at the measured card centre collects it. The claim is a
+        // direct operation like any other and the pacer owns the moment (operator rule 2026-11-03):
+        // the card tap and the banner's continue arrow wait for a frame that has stopped moving and
+        // for the pace. `lootTapIntervalMs` then sets the retry cadence above that floor — the
+        // effective interval is max(the pacer's 700 ms, the configured value). After `lootTapMax`
+        // taps the card is left to the stall clock and the escalation, rather than becoming a 10 Hz
+        // tap loop.
         const tappedAt = this.#now();
+        if (!this.#pacer.ready(tappedAt)) return;
         if (this.#lootTapAtMs !== null
           && tappedAt - this.#lootTapAtMs < Math.max(1, this.#cfg.lootTapIntervalMs)) return;
         if (this.#lootTaps >= Math.max(1, this.#cfg.lootTapMax)) {
@@ -2179,6 +2191,7 @@ export class WvdWorld implements World {
           }
           this.#lootDismissed = true;
           this.#lootTapAtMs = tappedAt;
+          this.#pacer.act(tappedAt);
           const dismissed = await this.#commands.dismissLoot();
           if (!dismissed.ok) this.#host?.log.warn(`wvd: could not dismiss the loot banner (${dismissed.reason})`);
           else this.#host?.log.info('wvd: dismissed the loot result banner');
@@ -2186,6 +2199,7 @@ export class WvdWorld implements World {
         }
         this.#lootTapAtMs = tappedAt;
         this.#lootTaps += 1;
+        this.#pacer.act(tappedAt);
         const tapped = await this.#commands.tapLoot();
         if (!tapped.ok) this.#host?.log.warn(`wvd: could not collect the loot (${tapped.reason})`);
         else this.#host?.log.info('wvd: collected the loot card');
