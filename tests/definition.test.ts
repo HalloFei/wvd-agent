@@ -98,11 +98,11 @@ describe('WVD World definition', () => {
     expect(host.events).toEqual([]);
   });
 
-  it('declares all thirty-six contracts §8 keys with defaults the console can render', () => {
+  it('declares all thirty-nine contracts §8 keys with defaults the console can render', () => {
     const properties = WVD_CONFIG_GROUP.schema.properties;
     const keyOf = (path: string) => path.slice('worlds.wvd.'.length);
-    expect(Object.keys(properties)).toHaveLength(36);
-    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(36);
+    expect(Object.keys(properties)).toHaveLength(39);
+    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(39);
     for (const path of Object.keys(properties)) {
       expect(path.startsWith('worlds.wvd.')).toBe(true);
       expect(WVD_DEFAULTS).toHaveProperty(keyOf(path));
@@ -125,6 +125,9 @@ describe('WVD World definition', () => {
     expect(properties['worlds.wvd.qteDecelPxPerS2']).toMatchObject({ type: 'integer', minimum: 1 });
     expect(properties['worlds.wvd.qteMinWindowMs']).toMatchObject({ type: 'integer', minimum: 0 });
     expect(properties['worlds.wvd.rerollLeadRatio']).toMatchObject({ type: 'number', minimum: 0, maximum: 1 });
+    // The battle sequence's pace: its floor is the pacing primitive's 700 ms, and it is the config's
+    // minimum rather than a silent clamp — a value under it is refused where it is written.
+    expect(properties['worlds.wvd.battleStepMs']).toMatchObject({ type: 'integer', minimum: 700, maximum: 5000 });
     // the snapshot width is the one value the child refuses outside the wire bounds; the schema is
     // where a bad setting is caught, not a 5 s engine timeout that never names the field
     // 0 is a legitimate "ask on the first frame"; the default is one settle window.
@@ -138,6 +141,7 @@ describe('WVD World definition', () => {
       willpowerFloor: 60, maxRerolls: 5, rerollLeadRatio: 0.5, qteLatencyMs: 75, qteDecelPxPerS2: 3000, qteMinWindowMs: 150,
       qteAttemptsFallback: 2, qteSubLoopMs: 4000,
       autoBattleEnableAttempts: 3, fightTimeoutMs: 180000, escalateMaxPerHour: 20, escalateTimeoutMs: 90000, escalateSettleMs: 5000, stopHotkey: 'Ctrl+Alt+W',
+      battleStepMs: 1000, battleSettleMs: 1000, battleReadWindowMs: 3000,
     });
   });
 

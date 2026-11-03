@@ -482,6 +482,9 @@ object (§0 rule 3).
 | Key | Type | Default | Owner | Meaning |
 |---|---|---|---|---|
 | `autoBattleEnableAttempts` | integer | `3` | battle | tries to switch auto-battle on; the loop's fallback cap (§11) |
+| `battleStepMs` | integer 700–5000 | `1000` | battle | between two battle operations, measured from the previous tap's **return** (§11); the pacing primitive's 700 ms is the floor |
+| `battleSettleMs` | integer 0–10000 | `1000` | battle | after the battle's first frame before the first press |
+| `battleReadWindowMs` | integer 500–10000 | `3000` | battle | how long the ACTIVE card may take to become readable before the cast is given up |
 | `fightTimeoutMs` | integer | `180000` | battle | a fight longer than this is a stall |
 | `escalateMaxPerHour` | integer | `20` | escalation | model calls before the session stops |
 | `escalateTimeoutMs` | integer | `90000` | escalation | wait for Coo's answer |
