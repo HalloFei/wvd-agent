@@ -52,7 +52,9 @@ Invariants, each pinned by a test:
   (the existing fallback, kept).
 - **自動 already on**: the opener is skipped — an auto battle draws no command phase to cast into, so
   the read window would be wasted. Only 倍速 may remain.
-- **re-arm**: leaving the battle (`#track`) replaces the sequence; the next battle starts from settle.
+- **re-arm**: the sequence lives as long as the battle **mode** does — an unnamed frame inside a
+  battle (a skill's resolution, a fade) keeps it, so the opener cannot be cast twice; leaving the mode
+  drops it and the next battle starts from settle.
 
 The turn-card gate applies to the **slot** step (the opener's own precondition). The toggle steps are
 gated by their own state, so 倍速 can still be pressed in an operator-started auto battle, where no
@@ -70,9 +72,9 @@ unmeasured, and a stillness gate would need a capture first.
 
 `battleStepMs` replaces the hard-coded `OPENER_SETTLE_MS` between the slot and the confirm, and
 `battleReadWindowMs` replaces the `OPENER_READ_WINDOW_MS` constant. The pacing primitive's 700 ms
-floor (`OPERATION_PACE_MS`) stays a constant and is the config's minimum. The console group
-(`WVD_CONFIG_GROUP`) renders all three; a value below the floor is refused by the schema, not
-silently clamped.
+floor (`OPERATION_PACE_MS`) stays a constant: it is the schema's minimum, and the World also clamps a
+hand-written config at it, so a value under the floor cannot outpace the primitive. The console group
+(`WVD_CONFIG_GROUP`) renders all three and refuses the value at the point it is written.
 
 ## Goals / non-goals
 

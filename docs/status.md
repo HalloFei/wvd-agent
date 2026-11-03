@@ -651,6 +651,37 @@ Both presses are paced by `AUTO_PRESS_RETRY_MS` against `#togglePressAtMs` and c
 
 658 tests, tsc clean.
 
+## The battle's operations are a sequence (2026-11-04)
+
+The operator's rule: *a battle is turn-based, not real time, so one decision can be made slowly. Do
+the operations in order but not at the same time: wait for a stable frame, and pace them in units of
+1 s, at least 700 ms. The timings are configurable from the start.*
+
+The cause is measured in the code, not the live game: the pacing primitive keys its stability on the
+**screen**, and inside a battle that key is `combat` for the whole fight — so "two stable frames" is
+satisfied ~200 ms after the battle appears, while the party panel is still drawing (live 02:07: the
+first combat frame read no gold card). And the World stamped the pace with the frame an operation
+*started* on, so the opener's two taps and the 自動 press after them could be ~100 ms apart, inside
+the skill's resolution.
+
+`src/policy/battle-sequence.ts` now owns the battle's operations: settle → 倍速 → opener slot → opener
+confirm → 自動 → hold. One tap per tick, in that order, the next step no sooner than `battleStepMs`
+after the previous tap returned. Three keys are the field knobs (contracts §8.5): `battleStepMs`
+(1000, minimum 700 — the pacing primitive's floor), `battleSettleMs` (1000) and `battleReadWindowMs`
+(3000, which replaces the old `OPENER_READ_WINDOW_MS` constant). The sequence is created on the battle
+**mode**'s first frame and dropped when the mode leaves, so an unnamed frame inside a battle can no
+longer re-arm it (and a cast can no longer be sent twice).
+
+`tests/battle-sequence.test.ts` pins the order, the one-per-pace rule, the pace measured from the
+tap's return, the unreadable-panel wait, the not-listed fallthrough, the operator-started auto battle,
+the no-toggle-evidence wait, the refused-tap rule and the attempt cap. `tests/world.test.ts` pins the
+02:07 replay, the settle window, the fallback and the re-arm. The full suite is green (the change is a
+timing seam, so it was run before and after, AGENTS.md §5).
+
+**OWED:** the live battle — one session with the window untouched, the log's presses `battleStepMs`
+apart and the battle reaching 自動 without a stall. Not run: it spends the operator's machine.
+
+
 ## The battle read: the frame colour, and the first frame is too early (2026-11-03)
 
 The 02:07 live cycle reached its first battle with 爱丽丝 ACTIVE — and the opener did not cast. The

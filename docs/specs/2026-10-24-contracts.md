@@ -536,10 +536,17 @@ card order. The measurement, the guards and the rejected glyph alternative are
 `2026-11-02-battle-member-read-design.md`. A null answer — no battle HUD, no gold card, another
 screen size — is a miss, never an error, and never a tap on a slot.
 
-After the cast the loop presses 倍速 + 自動, and — because the first press can land while the skill is
-still resolving — it presses again while the battle is still on screen: paced 1.5 s apart, capped by
-`autoBattleEnableAttempts` (§8.5), re-armed when the battle leaves. That is the operator's fallback
-rule (2026-11-02): *if auto is not on, press; otherwise carry on.*
+The World sends the battle's operations as a **sequence** (`src/policy/battle-sequence.ts`, operator
+rule 2026-11-04): settle → 倍速 → the opener's slot → the opener's confirm → 自動 → hold. One tap per
+tick, in that order, each waiting `battleStepMs` (§8.5) from the previous tap's **return**, and no
+press at all before `battleSettleMs` has passed since the battle's first frame. Both toggles are read
+before they are pressed (§2 `speedOn`/`autoOn`), so a blind re-press cannot turn one back off; a
+press that did not take is retried while the frame still says it is off, capped by
+`autoBattleEnableAttempts` (§8.5) — the operator's fallback rule (2026-11-02): *if auto is not on,
+press; otherwise carry on.* The ACTIVE card is read before the cast and never at the skill panel (the
+panel dims it): a miss waits `battleReadWindowMs` and then gives the cast up, and a battle already on
+自動 is not cast into. The sequence lives as long as the battle **mode** does, so an unnamed frame
+inside a battle cannot re-arm it and cast the opener twice.
 
 ## 10. Farm tasks
 
