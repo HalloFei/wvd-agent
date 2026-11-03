@@ -93,11 +93,14 @@ export class BattleSequence {
   }
 
   /**
-   * True while the next decision needs the ACTIVE card's name. The caller reads the party panel then;
-   * with no opener configured there is nothing to read and the cast is decided without one.
+   * True while the next decision needs the ACTIVE card's name — after the settle window, so a
+   * transition frame is not read, and with a configured opener, so an empty list pays no read.
    */
-  needsMemberRead(): boolean {
-    return this.#enteredAtMs !== null && this.#options.openers.length > 0 && this.#opener === undefined;
+  needsMemberRead(nowMs: number): boolean {
+    return this.#enteredAtMs !== null
+      && nowMs - this.#enteredAtMs >= this.#options.settleMs
+      && this.#options.openers.length > 0
+      && this.#opener === undefined;
   }
 
   /** One decision for this tick. The caller sends at most one tap and reports its return. */

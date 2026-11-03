@@ -364,7 +364,9 @@ function makeWorld(options: {
   const perceiver = new ScriptedPerceiver(options.observation ?? dungeonMap);
   const actuator = options.actuator ?? new ScriptedActuator();
   const travelCalls: string[] = [];
-  const openerCalls: string[] = [];
+  /** The battle's cast, split into its two operations (contracts §11, the sequence). */
+  const slotCalls: string[] = [];
+  const confirmCalls: string[] = [];
   const snapshotCalls: Array<number | undefined> = [];
   const shot = options.screenshot === null ? null : options.screenshot;
   const session: WvdSession = {
@@ -415,8 +417,9 @@ function makeWorld(options: {
       tapPoint: (at) => actuator.tap(at),
       battleSpeed: () => pressBattleSpeed(actuator),
       battleAuto: () => pressBattleAuto(actuator),
-      // The opener's taps are pinned in tests/battle-opener.test.ts; the world tests need the call.
-      battleOpener: async (opener) => { openerCalls.push(opener.name); return { ok: true }; },
+      // The opener's taps are pinned in tests/battle-opener.test.ts; the world tests need the calls.
+      battleSlot: async (opener) => { slotCalls.push(opener.name); return { ok: true }; },
+      battleConfirm: async (opener) => { confirmCalls.push(opener.name); return { ok: true }; },
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
       travel: async (to) => {
@@ -434,7 +437,8 @@ function makeWorld(options: {
   });
   return {
     world, host, source, perceiver, actuator, cfg, snapshotCalls, clock, travelCalls,
-    openerCalls,
+    slotCalls,
+    confirmCalls,
     openSessionCalls: () => openSessionCalls,
   };
 }
@@ -944,118 +948,135 @@ describe('a walk stays in flight through the screens it produces', () => {
     ]);
   });
 
-  it('casts a listed member\'s opener once per battle, before auto', async () => {
-    // Operator rule 2026-11-02: the ACTIVE member is filtered against the configured list; on it, the
-    // skill is cast before auto; not on it, the default runs. Alice acts first, so the first phase is hers.
-    const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
-    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
-    const { world, host, actuator, perceiver, clock, openerCalls } = makeWorld({ observation: combatView, battle });
+  it('does not press on the battle\'s first frames: the settle window holds the sequence', async () => {
+    // Operator rule 2026-11-04: the battle is turn-based, so the loop waits for a frame that has
+    // stopped moving. The old branch pressed ~200 ms after the battle appeared, while the panel drew.
+    const { world, host, actuator, clock } = makeWorld({
+      observation: combatView, cfg: { battleSettleMs: 1_000, battleStepMs: 1_000 },
+    });
     await started(world, host);
 
-    await world.tick();
-    expect(openerCalls).toEqual(['爱丽丝']);
-    // The cast is this tick's one operation: 自動 waits for the next (operator rule 2026-11-03).
+    await world.tick();                              // the battle's first frame
     expect(actuator.calls).toEqual([]);
-    clock.advance(800);
+    clock.advance(999);
     await world.tick();
+    expect(actuator.calls).toEqual([]);
+    clock.advance(1);
+    await world.tick();                              // settled: the first operation
     expect(actuator.calls).toEqual(['tap 1231,708']);
+  });
 
-    // The battle leaves; once the fight's own wait settles, a new battle starts and re-arms the filter.
-    perceiver.observation = dungeonView;
-    for (let index = 0; index < 14; index += 1) { clock.advance(500); await world.tick(); }
-    perceiver.observation = combatView;
-    // The battle's first frame is a transition: the pacing primitive waits for a stable frame.
-    clock.advance(500);
-    await world.tick();
-    clock.advance(800);
-    await world.tick();
-    expect(openerCalls).toEqual(['爱丽丝', '爱丽丝']);
+  it('casts a listed member\'s opener as two paced operations, before auto', async () => {
+    // Operator rules: the ACTIVE member is filtered against the configured list (2026-11-02), and a
+    // battle is turn-based — the cast is the slot and the resolving press as two operations, one per
+    // pace, never two at the same time (2026-11-04).
+    const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const { world, host, actuator, slotCalls, confirmCalls, clock } = makeWorld({
+      observation: combatView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
+    await started(world, host);
+
+    await world.tick();                              // the slot
+    expect(slotCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual([]);
+    expect(actuator.calls).toEqual([]);
+
+    clock.advance(999);
+    await world.tick();                              // inside the pace: nothing
+    expect(confirmCalls).toEqual([]);
+
+    clock.advance(1);
+    await world.tick();                              // the resolving press
+    expect(confirmCalls).toEqual(['爱丽丝']);
+
+    clock.advance(1_000);
+    await world.tick();                              // 自動
+    expect(actuator.calls).toEqual(['tap 1231,708']);
   });
 
   it('does nothing but auto when the ACTIVE member is not on the opener list', async () => {
     const reader: BattleMemberReader = { readActiveMember: async () => '本杰明' };
-    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
-    const { world, host, actuator, openerCalls } = makeWorld({ observation: combatView, battle });
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const { world, host, actuator, slotCalls, confirmCalls } = makeWorld({
+      observation: combatView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
     await started(world, host);
 
     await world.tick();
-    expect(openerCalls).toEqual([]);
-    // The default action is the auto battle the loop already sent.
+    expect(slotCalls).toEqual([]);
+    expect(confirmCalls).toEqual([]);
     expect(actuator.calls).toEqual(['tap 1231,708']);
     expect(host.logRecords.some((line) => line.message.includes('not on the opener list'))).toBe(true);
   });
 
   it('treats an unreadable ACTIVE member as a miss, and waits for the panel before auto', async () => {
     // Live 2026-11-03 02:07: the first combat frame answers nothing — the party panel is drawn a beat
-    // after the battle screen — and the old code spent the one shot on it. Now the read is retried and
-    // auto is not pressed while it is owed: auto would take the command phase the cast needs.
+    // after the battle screen. The cast waits for a readable panel, and auto is never pressed while the
+    // read is owed: auto would take the command phase the cast needs.
     const reader: BattleMemberReader = { readActiveMember: async () => null };
-    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
-    const { world, host, actuator, openerCalls, clock } = makeWorld({ observation: combatView, battle });
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const { world, host, actuator, slotCalls, clock } = makeWorld({
+      observation: combatView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
     await started(world, host);
 
     await world.tick();
-    expect(openerCalls).toEqual([]);      // no cast
-    expect(actuator.calls).toEqual([]);   // and no auto press either
+    expect(slotCalls).toEqual([]);
+    expect(actuator.calls).toEqual([]);
     expect(host.logRecords.some((line) => line.message.includes('not readable yet'))).toBe(true);
 
-    // The window closes: the loop stops waiting and lets auto take the battle, with no cast.
+    // The read window closes: the cast is given up and auto takes the battle.
     clock.advance(3_100);
     await world.tick();
-    expect(openerCalls).toEqual([]);
+    expect(slotCalls).toEqual([]);
     expect(actuator.calls).toEqual(['tap 1231,708']);
   });
 
   it('casts the opener once the panel becomes readable', async () => {
-    // The 02:07 failure, fixed: null on the battle's first frame, 爱丽丝 on the next one.
+    // The 02:07 failure, fixed: null on the battle's first frame, 爱丽丝 on a later one.
     let answer: string | null = null;
     const reader: BattleMemberReader = { readActiveMember: async () => answer };
-    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
-    const { world, host, actuator, openerCalls, clock } = makeWorld({ observation: combatView, battle });
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const { world, host, slotCalls, clock } = makeWorld({
+      observation: combatView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
     await started(world, host);
 
     await world.tick();
-    expect(actuator.calls).toEqual([]);
+    expect(slotCalls).toEqual([]);
 
     answer = '爱丽丝';
+    clock.advance(500);
     await world.tick();
-    expect(openerCalls).toEqual(['爱丽丝']);
-    expect(actuator.calls).toEqual([]);                 // the cast is this tick's one operation
-    clock.advance(800);
-    await world.tick();
-    expect(actuator.calls).toEqual(['tap 1231,708']);   // then 自動, as its own operation
+    expect(slotCalls).toEqual(['爱丽丝']);
   });
 
   it('presses auto again while the battle is still waiting at a command phase', async () => {
     // Operator rule 2026-11-02: auto is the battle's fallback — pressed until it is on. A press
-    // swallowed while the opener's skill resolves must not leave the fight to the stall clock, so a
-    // later command phase presses again; the pace is the fight's own in-flight wait, not the tick.
-    const { world, host, actuator, clock } = makeWorld({ observation: combatView });
+    // swallowed while the opener's skill resolves must not leave the fight to the stall clock.
+    const { world, host, actuator, clock } = makeWorld({
+      observation: combatView, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
     await started(world, host);
 
     await world.tick();
     expect(actuator.calls).toEqual(['tap 1231,708']);
 
-    // Inside the pacing gap nothing is sent.
     clock.advance(1_000);
-    await world.tick();
-    expect(actuator.calls).toHaveLength(1);
-
-    // The frame still says auto is off: the fallback presses again.
-    clock.advance(3_000);
     await world.tick();
     expect(actuator.calls).toEqual(['tap 1231,708', 'tap 1231,708']);
   });
 
   it('stops pressing auto at the configured attempts, and says so once', async () => {
-    // `autoBattleEnableAttempts` (contracts §8.5) is the cap the config already declared: three
-    // tries by default, and a fourth is not a war of attrition on the button.
-    const { world, host, actuator, clock } = makeWorld({ observation: combatView, cfg: { autoBattleEnableAttempts: 3 } });
+    // `autoBattleEnableAttempts` (contracts §8.5) is the cap the config already declared: three tries
+    // by default, and a fourth is not a war of attrition on the button.
+    const { world, host, actuator, clock } = makeWorld({
+      observation: combatView, cfg: { battleSettleMs: 0, battleStepMs: 1_000, autoBattleEnableAttempts: 3 },
+    });
     await started(world, host);
-    // Press, wait for the fight's answer, press again: the third is the cap, and the fourth tick after
-    // that only says so.
     for (let index = 0; index < 7; index += 1) {
-      clock.advance(3_000);
+      clock.advance(1_000);
       await world.tick();
     }
     const presses = actuator.calls.filter((call) => call === 'tap 1231,708').length;
@@ -1063,20 +1084,22 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(host.logRecords.filter((record) => record.message.includes('自動 was pressed 3 times')).length).toBe(1);
   });
 
-  it('re-arms the auto fallback for the next battle', async () => {
-    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: combatView });
+  it('re-arms the battle sequence for the next battle', async () => {
+    const { world, host, actuator, perceiver, clock } = makeWorld({
+      observation: combatView, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
     await started(world, host);
     await world.tick();
     expect(actuator.calls.filter((call) => call === 'tap 1231,708').length).toBe(1);
 
-    // The battle leaves, then a new one starts: the count belongs to the battle.
+    // The battle leaves (two named frames of another mode), then a new one starts: fresh counts.
     perceiver.observation = dungeonView;
-    clock.advance(3_000);
+    clock.advance(1_000);
+    await world.tick();
+    clock.advance(1_000);
     await world.tick();
     perceiver.observation = combatView;
-    clock.advance(3_000);
-    await world.tick();            // the transition frame: the pacer waits for stability
-    clock.advance(800);
+    clock.advance(1_000);
     await world.tick();
     expect(actuator.calls.filter((call) => call === 'tap 1231,708').length).toBe(2);
   });
@@ -1085,43 +1108,54 @@ describe('a walk stays in flight through the screens it produces', () => {
     // Operator rule 2026-11-03, the battle order: speed → opener → auto → finish. Both are toggles,
     // so each press waits for the frame to say its toggle is off.
     const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
-    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
     const offBoth: Observation = { screen: 'combat', atMs: 100, confidence: 0.9, speedOn: false, autoOn: false };
     const speedOnView: Observation = { screen: 'combat', atMs: 100, confidence: 0.9, speedOn: true, autoOn: false };
-    const { world, host, actuator, perceiver, openerCalls, clock } = makeWorld({ observation: offBoth, battle });
+    const { world, host, actuator, perceiver, slotCalls, confirmCalls, clock } = makeWorld({
+      observation: offBoth, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
     await started(world, host);
 
     await world.tick();                       // 1. multi-speed
     expect(actuator.calls).toEqual(['tap 691,708']);
-    expect(openerCalls).toEqual([]);
+    expect(slotCalls).toEqual([]);
 
     perceiver.observation = speedOnView;      // the game shows 倍速 on
-    clock.advance(2_000);                     // past the toggle pacing
-    await world.tick();                       // 2. the opener — one operation this tick
-    expect(openerCalls).toEqual(['爱丽丝']);
-    expect(actuator.calls).toEqual(['tap 691,708']);
-    clock.advance(800);
-    await world.tick();                       // 3. 自動 — the next operation
+    clock.advance(1_000);
+    await world.tick();                       // 2. the opener's slot
+    expect(slotCalls).toEqual(['爱丽丝']);
+
+    clock.advance(1_000);
+    await world.tick();                       // the resolving press
+    expect(confirmCalls).toEqual(['爱丽丝']);
+
+    clock.advance(1_000);
+    await world.tick();                       // 3. 自動
     expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
   });
 
   it('casts the opener once even when the auto press is retried', async () => {
     const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
-    const battle = { openers: [{ name: '爱丽丝', slot: '右上' as const, target: 'party-front' as const }], reader };
-    const { world, host, openerCalls, clock } = makeWorld({ observation: combatView, battle });
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const { world, host, slotCalls, confirmCalls, clock } = makeWorld({
+      observation: combatView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
     await started(world, host);
     for (let index = 0; index < 8; index += 1) {
-      clock.advance(3_000);
+      clock.advance(1_000);
       await world.tick();
     }
-    expect(openerCalls).toEqual(['爱丽丝']);
+    expect(slotCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['爱丽丝']);
   });
 
   it('puts the heal before the next command in the cycle pipeline', async () => {
     // Operator rule 2026-11-02, priority 1: safe before battle and after it. The battle sets the heal;
     // the next 3-D view tick spends it and sends nothing else, so the party is healed before the loop
     // asks it to open the map for the next chest. Priorities 2-4 (claim, skip, rest) come after.
-    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: combatView });
+    const { world, host, actuator, perceiver, clock } = makeWorld({
+      observation: combatView, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
     await started(world, host);
     const healed = () => host.logRecords.filter((record) => record.message.includes('healed the party')).length;
 

@@ -214,7 +214,8 @@ function makeConsole(options: {
       tapPoint: (at) => actuator.tap(at),
       battleSpeed: () => pressBattleSpeed(actuator),
       battleAuto: () => pressBattleAuto(actuator),
-      battleOpener: async () => ({ ok: true }),
+      battleSlot: async () => ({ ok: true }),
+      battleConfirm: async () => ({ ok: true }),
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
       // This harness never orients: the World runs the built-in route with no task file.

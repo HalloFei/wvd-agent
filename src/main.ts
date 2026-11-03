@@ -23,7 +23,7 @@ import {
   type Point,
 } from './contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
-import { BATTLE_OPENERS, castBattleOpener } from './actions/battle.ts';
+import { BATTLE_OPENERS, tapOpenerConfirm, tapOpenerSlot } from './actions/battle.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from './actions/chest.ts';
 import { closeCharacterPage } from './actions/heal.ts';
 import { CharacterPagePerceiver } from './perception/character-page.ts';
@@ -235,30 +235,29 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       // The battle's two toggles, one press each: speed → opener → auto → finish (operator 2026-11-03).
       battleSpeed: () => pressBattleSpeed(actuator),
       battleAuto: () => pressBattleAuto(actuator),
-      // The cast itself: the member's slot, then the press that resolves it (contracts §11).
-      battleOpener: (opener) => castBattleOpener(
-        actuator,
-        opener,
-        async (ms) => {
-          // Measurement hook (`WVD_CAPTURE_CAST=1`): the settle between the slot tap and the resolving
-          // press is the only moment the panel the cast acts on is on screen, so that is when a frame is
-          // kept — the operator's 确认 button has never been recorded, and no point is guessed on the
-          // cast path. A failed capture never breaks the cast.
-          if (process.env.WVD_CAPTURE_CAST === '1' && live !== null) {
-            const snapshot = await takeSnapshot(live.snapshot, 1920);
-            if (snapshot !== null) {
-              const path = `.tmp/cast-panel-${Date.now()}.jpg`;
-              try {
-                await writeFile(path, Buffer.from(snapshot.bytes));
-                world?.note(`wvd: cast panel captured to ${path}`);
-              } catch {
-                // a measurement, not a command
-              }
+      // The cast's two taps (contracts §11). The World's battle sequence sends them as two paced
+      // operations, so the settle between them is the sequence's, not a sleep here.
+      battleSlot: async (opener) => {
+        const tapped = await tapOpenerSlot(actuator, opener);
+        // Measurement hook (`WVD_CAPTURE_CAST=1`): the panel the cast acts on is on screen between the
+        // slot tap and the resolving press, so that is when a frame is kept — the operator's 确认 button
+        // has never been recorded, and no point is guessed on the cast path. A failed capture never
+        // breaks the cast.
+        if (tapped.ok && process.env.WVD_CAPTURE_CAST === '1' && live !== null) {
+          const snapshot = await takeSnapshot(live.snapshot, 1920);
+          if (snapshot !== null) {
+            const path = `.tmp/cast-panel-${Date.now()}.jpg`;
+            try {
+              await writeFile(path, Buffer.from(snapshot.bytes));
+              world?.note(`wvd: cast panel captured to ${path}`);
+            } catch {
+              // a measurement, not a command
             }
           }
-          await new Promise<void>((resolve) => setTimeout(resolve, ms));
-        },
-      ),
+        }
+        return tapped;
+      },
+      battleConfirm: (opener) => tapOpenerConfirm(actuator, opener),
       // The attempt-vs-reroll policy's action: leave the QTE (free, chest §4) and re-click a card.
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
