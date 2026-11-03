@@ -15,6 +15,9 @@ tap's return. The shared `Pacer` (`src/policy/pacing.ts`) is untouched.
 
 **Spec:** [`docs/specs/2026-11-04-battle-sequencing-design.md`](../specs/2026-11-04-battle-sequencing-design.md)
 
+> **Executed 2026-11-04** on branch `feat/battle-sequencing` (commits 9604513..5845c98), inline by
+> the Lead. Full suite green (694/694), `tsc` clean. The live acceptance is still owed.
+
 ## Global Constraints
 
 - `src/contracts.ts` mirrors `docs/specs/2026-10-24-contracts.md` declaration for declaration; the
