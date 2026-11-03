@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ActionResult, Actuator, BattleOpener, Point } from '../src/contracts.ts';
 import {
   BATTLE_OPENERS, BATTLE_SLOTS, ENEMY_TARGET_AT, OPENER_SETTLE_MS, PARTY_FRONT_AT, castBattleOpener, memberKey,
-  openerFor,
+  openerFor, tapOpenerConfirm, tapOpenerSlot,
 } from '../src/actions/battle.ts';
 
 /**
@@ -92,6 +92,24 @@ describe('the battle opener cast', () => {
 
     expect(result).toMatchObject({ ok: false, reason: 'rejected' });
     expect(actuator.taps).toHaveLength(1);
+  });
+
+  it('splits the cast into its two taps, each its own operation', async () => {
+    // The World's battle sequence paces the slot and the resolving press as two operations, one per
+    // step (operator rule 2026-11-04: never two operations at the same time). The combined
+    // `castBattleOpener` stays for scripts and measurements.
+    const slot = fakeActuator();
+    await tapOpenerSlot(slot, alice);
+    expect(slot.taps).toEqual([BATTLE_SLOTS['左下']]);
+
+    const confirm = fakeActuator();
+    const point: Point = { x: 960, y: 1_032 };
+    await tapOpenerConfirm(confirm, { ...alice, confirm: point });
+    expect(confirm.taps).toEqual([point]);
+
+    const side = fakeActuator();
+    await tapOpenerConfirm(side, alice);
+    expect(side.taps).toEqual([ENEMY_TARGET_AT]);
   });
 
   it('keeps the measured 2x2 quick-slot grid and the cast settle', () => {

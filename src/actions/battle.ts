@@ -80,19 +80,36 @@ export const OPENER_SETTLE_MS = 700;
 const targetAt = (target: BattleTarget): Point => (target === 'enemy' ? ENEMY_TARGET_AT : PARTY_FRONT_AT);
 
 /**
- * Cast the opener: the slot, a settle, then the press that resolves it — the skill's own **确认**
- * button when the operator configured its point, the target side otherwise. The operator's correction
- * (2026-11-03): *the skill cast is actually pressing 确认, not a tap on the enemy*. Two taps and one
- * pause; a refused press ends the chain and is returned unchanged, never retried — the caller logs it
- * and lets auto battle run.
+ * The cast's first tap: the member's configured quick slot, and nothing else. The World's battle
+ * sequence sends this as one operation and waits out its own pace before the resolving press
+ * (operator rule 2026-11-04: never two operations at the same time).
+ */
+export async function tapOpenerSlot(actuator: Actuator, opener: BattleOpener): Promise<ActionResult> {
+  return actuator.tap(BATTLE_SLOTS[opener.slot]);
+}
+
+/**
+ * The cast's second tap: the skill's own **确认** when the operator configured its point, the target
+ * side otherwise. The operator's correction (2026-11-03): *the skill cast is actually pressing 确认,
+ * not a tap on the enemy*.
+ */
+export async function tapOpenerConfirm(actuator: Actuator, opener: BattleOpener): Promise<ActionResult> {
+  return actuator.tap(opener.confirm ?? targetAt(opener.target));
+}
+
+/**
+ * Cast the opener in one call: the slot, a settle, then the press that resolves it. Kept for the
+ * scripts and measurements that own no tick loop; the World's battle sequence sends the two taps as
+ * two paced operations instead (they are the same two taps). A refused slot press ends the chain and
+ * is returned unchanged, never retried.
  */
 export async function castBattleOpener(
   actuator: Actuator,
   opener: BattleOpener,
   sleep: (ms: number) => Promise<void>,
 ): Promise<ActionResult> {
-  const slot = await actuator.tap(BATTLE_SLOTS[opener.slot]);
+  const slot = await tapOpenerSlot(actuator, opener);
   if (!slot.ok) return slot;
   await sleep(OPENER_SETTLE_MS);
-  return actuator.tap(opener.confirm ?? targetAt(opener.target));
+  return tapOpenerConfirm(actuator, opener);
 }
