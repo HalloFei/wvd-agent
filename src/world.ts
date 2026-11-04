@@ -560,6 +560,10 @@ export class WvdWorld implements World {
   #battleAutoWarned = false;
   #battleNotListedWarned = false;
   #battleAutoStuckWarned = false;
+  /** The cast went out (a slot tap landed) — the opener was not given up. */
+  #battleCastSent = false;
+  /** The opener was given up for this battle: no confirmed turn card. Said once. */
+  #battleOpenerGaveUp = false;
   /** The ACTIVE-member read and how many consecutive frames it has answered the same; per battle. */
   #battleRead: { readonly value: string | null; readonly frames: number } | null = null;
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
@@ -1373,6 +1377,8 @@ export class WvdWorld implements World {
     this.#battleAutoWarned = false;
     this.#battleNotListedWarned = false;
     this.#battleAutoStuckWarned = false;
+    this.#battleCastSent = false;
+    this.#battleOpenerGaveUp = false;
     this.#battleRead = null;
   }
 
@@ -2274,6 +2280,13 @@ export class WvdWorld implements World {
           );
         }
         const step = sequence.next({ ...phase, activeMember: reading }, now);
+        // The cast was owed, the turn card was attempted, and now the battle is past it without a
+        // cast: the opener is given up. One line, because a test run watches for it (2026-11-05).
+        if ((step.kind === 'auto' || step.kind === 'done') && this.#battleReadWarned
+          && !this.#battleNotListedWarned && !this.#battleCastSent && !this.#battleOpenerGaveUp) {
+          this.#battleOpenerGaveUp = true;
+          this.#host?.log.warn('wvd: the opener was given up: the ACTIVE card was never confirmed');
+        }
         // One operation, and its return is the pace's zero: the next one waits `battleStepMs` from here,
         // never from the frame this one started on.
         const send = async (label: string, pressed: Promise<ActionResult>): Promise<ActionResult> => {
@@ -2323,6 +2336,7 @@ export class WvdWorld implements World {
           }
           case 'slot': {
             const cast = await send(`${step.opener.name}'s opener slot`, this.#commands.battleSlot(step.opener));
+            if (cast.ok) this.#battleCastSent = true;
             if (cast.ok) {
               this.#host?.log.info(
                 `wvd: cast ${step.opener.name}'s ${step.opener.slot} opener at ${step.opener.target}`,

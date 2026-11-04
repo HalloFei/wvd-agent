@@ -1178,6 +1178,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     await world.tick();
     expect(slotCalls).toEqual([]);
     expect(actuator.calls).toEqual(['tap 1231,708']);
+    expect(host.logRecords.filter((line) => line.message.includes('opener was given up')).length).toBe(1);
   });
 
   it('casts the opener once the panel becomes readable', async () => {

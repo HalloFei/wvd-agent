@@ -20,11 +20,18 @@ const WALL_MS = Number(process.env.WVD_WALL_MS ?? 45 * 60_000);
  * leaving the game on that frame: the operator's "pause when stall" for a diagnosis run.
  */
 const PAUSE_ON_STALL = process.env.WVD_PAUSE_ON_STALL === '1';
+/**
+ * Stop the run when a battle's opener is given up — the operator's "stop on battle if the opener
+ * spell does not trigger" (2026-11-05). The World says it in one line; the run pauses on it.
+ */
+const STOP_ON_OPENER_MISS = process.env.WVD_STOP_ON_OPENER_MISS === '1';
+/** How many enter → farm → leave cycles this run does; 2 continues into a fresh cycle. */
+const CYCLES = Math.max(1, Number(process.env.WVD_CYCLES ?? 1));
 const cfg = {
   ...WVD_DEFAULTS,
   enabled: true,
   taskFile: TASK,
-  cycles: 1,
+  cycles: CYCLES,
   sessionMaxMinutes: 40,
   stallStopSeconds: 120,
 };
@@ -32,6 +39,10 @@ const world = createWvdWorld({ cfg, timezone: 'Asia/Shanghai' });
 const stamp = (): string => new Date().toISOString().slice(11, 19);
 const log = (level: string) => (line: string, data?: unknown): void => {
   console.log(stamp() + ' ' + level + ' ' + line + (data === undefined ? '' : ' ' + JSON.stringify(data)));
+  if (STOP_ON_OPENER_MISS && line.includes('the opener was given up')) {
+    pausedOnStall = true;
+    console.log(stamp() + ' PAUSE-ON-OPENER-MISS; the loop is stopping at this battle');
+  }
 };
 const host = {
   log: { info: log('info'), warn: log('warn'), error: log('error'), debug: (): void => {} },
