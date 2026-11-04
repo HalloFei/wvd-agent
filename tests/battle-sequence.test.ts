@@ -105,7 +105,7 @@ describe('the battle operation sequence', () => {
   it('does not read the panel when no opener is configured', () => {
     const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, readWindowMs: 3_000, toggleAttempts: 3, openers: [] });
     s.enter(0);
-    expect(s.needsMemberRead(0)).toBe(false);
+    expect(s.needsMemberRead({ speedOn: null, autoOn: null, activeMember: null }, 0)).toBe(false);
     expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 0)).toEqual({ kind: 'auto' });
   });
 });

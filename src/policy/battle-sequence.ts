@@ -93,14 +93,18 @@ export class BattleSequence {
   }
 
   /**
-   * True while the next decision needs the ACTIVE card's name — after the settle window, so a
-   * transition frame is not read, and with a configured opener, so an empty list pays no read.
+   * True when the next decision needs the ACTIVE card's name. It is false on every frame the decision
+   * would not use a read: before the settle window, with no configured opener, once the opener is
+   * decided, while 倍速 is still owed (it is pressed before the cast), in a battle that already plays
+   * itself (no command phase is drawn), and inside the step pace (the next call would only wait).
+   * Without this the World reads — and logs — once per tick instead of once per decision.
    */
-  needsMemberRead(nowMs: number): boolean {
-    return this.#enteredAtMs !== null
-      && nowMs - this.#enteredAtMs >= this.#options.settleMs
-      && this.#options.openers.length > 0
-      && this.#opener === undefined;
+  needsMemberRead(phase: BattlePhase, nowMs: number): boolean {
+    if (this.#enteredAtMs === null) return false;
+    if (nowMs - this.#enteredAtMs < this.#options.settleMs) return false;
+    if (this.#options.openers.length === 0 || this.#opener !== undefined) return false;
+    if (phase.speedOn !== true || phase.autoOn === true) return false;
+    return this.#lastTapAtMs === null || nowMs - this.#lastTapAtMs >= this.#options.stepMs;
   }
 
   /** One decision for this tick. The caller sends at most one tap and reports its return. */

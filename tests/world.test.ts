@@ -1010,6 +1010,92 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(host.logRecords.some((line) => line.message.includes('not on the opener list'))).toBe(true);
   });
 
+  it('reads the turn card, and says "not on the list", once — not once per tick', async () => {
+    // The read is the step's own evidence, so it happens when the sequence is at the cast, not on
+    // every frame of the pace. A log said once per tick is the console flood this pins away.
+    let reads = 0;
+    const reader: BattleMemberReader = { readActiveMember: async () => { reads += 1; return '本杰明'; } };
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const offBoth: Observation = { screen: 'combat', atMs: 100, confidence: 0.9, speedOn: false, autoOn: false };
+    const speedOnView: Observation = { screen: 'combat', atMs: 100, confidence: 0.9, speedOn: true, autoOn: false };
+    const { world, host, actuator, perceiver, clock } = makeWorld({
+      observation: offBoth, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
+    await started(world, host);
+
+    await world.tick();                       // 倍速 is off: its press comes first, nothing is read
+    expect(reads).toBe(0);
+    expect(actuator.calls).toEqual(['tap 691,708']);
+
+    perceiver.observation = speedOnView;
+    clock.advance(1_000);
+    await world.tick();                       // 倍速 on: the read happens once, and the member is not listed
+    expect(reads).toBe(1);
+    const noted = () => host.logRecords.filter((record) => record.message.includes('not on the opener list')).length;
+    expect(noted()).toBe(1);
+
+    for (let index = 0; index < 5; index += 1) {
+      clock.advance(100);
+      await world.tick();
+    }
+    expect(reads).toBe(1);
+    expect(noted()).toBe(1);
+  });
+
+  it('an operator-started auto battle gets 倍速 only, and is never read or cast', async () => {
+    // Operator rule 2026-11-03: the loop presses 倍速 in a battle that already plays itself. There is
+    // no command phase to read or to cast into, so the turn card is not read at all.
+    let reads = 0;
+    const reader: BattleMemberReader = { readActiveMember: async () => { reads += 1; return '爱丽丝'; } };
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const autoView: Observation = { screen: 'combat', atMs: 100, confidence: 0.9, speedOn: false, autoOn: true };
+    const { world, host, actuator, perceiver, slotCalls, confirmCalls, clock } = makeWorld({
+      observation: autoView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 691,708']);
+    expect(reads).toBe(0);
+    expect(slotCalls).toEqual([]);
+    expect(confirmCalls).toEqual([]);
+
+    // 倍速 takes; the battle is decided and nothing else is pressed.
+    perceiver.observation = { ...autoView, speedOn: true };
+    clock.advance(1_000);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 691,708']);
+  });
+
+  it('the next battle starts from its own settle window', async () => {
+    // Review Focus 4: the sequence is not merely re-created, its settle window is respected too.
+    const { world, host, actuator, perceiver, clock } = makeWorld({
+      observation: combatView, cfg: { battleSettleMs: 1_000, battleStepMs: 1_000 },
+    });
+    await started(world, host);
+    const presses = () => actuator.calls.filter((call) => call === 'tap 1231,708').length;
+
+    await world.tick();                        // battle A's first frame
+    expect(presses()).toBe(0);
+    clock.advance(1_000);
+    await world.tick();                        // battle A's settle passed
+    expect(presses()).toBe(1);
+
+    // The battle leaves (two named frames of another mode), then a new one starts.
+    perceiver.observation = dungeonView;
+    clock.advance(1_000);
+    await world.tick();
+    clock.advance(1_000);
+    await world.tick();
+    perceiver.observation = combatView;
+    clock.advance(1_000);
+    await world.tick();                        // battle B's first frame: its own settle
+    expect(presses()).toBe(1);
+    clock.advance(1_000);
+    await world.tick();                        // B's settle passed: a fresh first operation
+    expect(presses()).toBe(2);
+  });
+
   it('treats an unreadable ACTIVE member as a miss, and waits for the panel before auto', async () => {
     // Live 2026-11-03 02:07: the first combat frame answers nothing — the party panel is drawn a beat
     // after the battle screen. The cast waits for a readable panel, and auto is never pressed while the

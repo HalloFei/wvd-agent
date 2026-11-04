@@ -540,10 +540,11 @@ export class WvdWorld implements World {
    * frame, dropped when the mode leaves. One tap per tick, paced by `battleStepMs`.
    */
   #battleSequence: BattleSequence | null = null;
-  /** The battle's three one-line notes: each is said once per battle, not once per tick. */
+  /** The battle's four one-line notes: each is said once per battle, not once per tick. */
   #battleReadWarned = false;
   #battleSpeedWarned = false;
   #battleAutoWarned = false;
+  #battleNotListedWarned = false;
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
   #pageCloseTries = 0;
   #pageCloseWarned = false;
@@ -1352,6 +1353,7 @@ export class WvdWorld implements World {
     this.#battleReadWarned = false;
     this.#battleSpeedWarned = false;
     this.#battleAutoWarned = false;
+    this.#battleNotListedWarned = false;
   }
 
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
@@ -2219,8 +2221,9 @@ export class WvdWorld implements World {
         const now = context?.now ?? this.#now();
         // The turn card is read only while the opener is undecided: it says whether there is a cast at
         // all, and the skill panel dims it, so the read belongs to the command phase.
+        const phase = { speedOn: seen.speedOn ?? null, autoOn: seen.autoOn ?? null, activeMember: null as string | null };
         let reading: string | null = null;
-        if (sequence.needsMemberRead(now) && this.#battle !== undefined && context !== undefined) {
+        if (sequence.needsMemberRead(phase, now) && this.#battle !== undefined && context !== undefined) {
           try {
             reading = await this.#battle.reader.readActiveMember(context.frame);
           } catch (error) {
@@ -2229,15 +2232,14 @@ export class WvdWorld implements World {
             this.#host?.log.warn(`wvd: the active member could not be read (${message(error)})`);
           }
         }
-        if (reading !== null && this.#battle !== undefined && openerFor(reading, this.#battle.openers) === null) {
+        if (reading !== null && !this.#battleNotListedWarned
+          && this.#battle !== undefined && openerFor(reading, this.#battle.openers) === null) {
+          this.#battleNotListedWarned = true;
           this.#host?.log.info(
             `wvd: the active member is ${reading}; it is not on the opener list, so the default action runs`,
           );
         }
-        const step = sequence.next(
-          { speedOn: seen.speedOn ?? null, autoOn: seen.autoOn ?? null, activeMember: reading },
-          now,
-        );
+        const step = sequence.next({ ...phase, activeMember: reading }, now);
         // One operation, and its return is the pace's zero: the next one waits `battleStepMs` from here,
         // never from the frame this one started on.
         const send = async (label: string, pressed: Promise<ActionResult>): Promise<ActionResult> => {
