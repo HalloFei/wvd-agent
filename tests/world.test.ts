@@ -1042,9 +1042,10 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(noted()).toBe(1);
   });
 
-  it('an operator-started auto battle gets 倍速 only, and is never read or cast', async () => {
-    // Operator rule 2026-11-03: the loop presses 倍速 in a battle that already plays itself. There is
-    // no command phase to read or to cast into, so the turn card is not read at all.
+  it('a battle entered with 自動 on is disengaged for the cast, then handed back to auto', async () => {
+    // Operator rule 2026-11-04: 自動 off if it is on, use the opener skill once, then 自動 on. An auto
+    // battle draws no command phase, so the card cannot be read and the cast cannot be sent until it
+    // is off; the last step turns the battle back over to auto.
     let reads = 0;
     const reader: BattleMemberReader = { readActiveMember: async () => { reads += 1; return '爱丽丝'; } };
     const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
@@ -1054,17 +1055,30 @@ describe('a walk stays in flight through the screens it produces', () => {
     });
     await started(world, host);
 
-    await world.tick();
+    await world.tick();                       // 倍速 first
     expect(actuator.calls).toEqual(['tap 691,708']);
     expect(reads).toBe(0);
-    expect(slotCalls).toEqual([]);
-    expect(confirmCalls).toEqual([]);
 
-    // 倍速 takes; the battle is decided and nothing else is pressed.
     perceiver.observation = { ...autoView, speedOn: true };
     clock.advance(1_000);
-    await world.tick();
-    expect(actuator.calls).toEqual(['tap 691,708']);
+    await world.tick();                       // 自動 off (the same toggle point)
+    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708']);
+    expect(reads).toBe(0);
+    expect(host.logRecords.some((line) => line.message.includes('turned 自動 off'))).toBe(true);
+
+    perceiver.observation = { ...autoView, speedOn: true, autoOn: false };
+    clock.advance(1_000);
+    await world.tick();                       // the command phase is the loop's: read and slot
+    expect(reads).toBe(1);
+    expect(slotCalls).toEqual(['爱丽丝']);
+
+    clock.advance(1_000);
+    await world.tick();                       // the resolving press
+    expect(confirmCalls).toEqual(['爱丽丝']);
+
+    clock.advance(1_000);
+    await world.tick();                       // 自動 back on
+    expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708', 'tap 1231,708']);
   });
 
   it('the next battle starts from its own settle window', async () => {

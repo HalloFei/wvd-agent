@@ -664,17 +664,27 @@ first combat frame read no gold card). And the World stamped the pace with the f
 *started* on, so the opener's two taps and the 自動 press after them could be ~100 ms apart, inside
 the skill's resolution.
 
-`src/policy/battle-sequence.ts` now owns the battle's operations: settle → 倍速 → opener slot → opener
-confirm → 自動 → hold. One tap per tick, in that order, the next step no sooner than `battleStepMs`
-after the previous tap returned. Three keys are the field knobs (contracts §8.5): `battleStepMs`
+`src/policy/battle-sequence.ts` now owns the battle's operations: settle → 倍速 → 自動 off (when
+the cast is owed) → opener slot → opener confirm → 自動 → hold. One tap per tick, in that order, the
+next step no sooner than `battleStepMs` after the previous tap returned. Three keys are the field knobs (contracts §8.5): `battleStepMs`
 (1000, minimum 700 — the pacing primitive's floor), `battleSettleMs` (1000) and `battleReadWindowMs`
 (3000, which replaces the old `OPENER_READ_WINDOW_MS` constant). The sequence is created on the battle
 **mode**'s first frame and dropped when the mode leaves, so an unnamed frame inside a battle can no
 longer re-arm it (and a cast can no longer be sent twice).
 
+**自動 is disengaged for the cast (operator rule, later on 2026-11-04).** *When starting a new farm
+task, at the first cycle when entering a battle, turn off auto battle if on, then use the opener skill
+once, then turn on auto battle.* A battle entered with 自動 on draws no command phase, so the cast
+used to be skipped; now the sequence turns 自動 off, casts the opener once, and turns 自動 back on.
+The rule runs for **every** battle entered with 自動 on, not only the first cycle: that is the only
+state in which the cast is suppressed, and in a farm it appears at the start (the carried-over 自動);
+the step is a no-op when the toggle is already off. A battle with no configured opener is left alone,
+and if 自動 will not come off within `autoBattleEnableAttempts` tries the cast is given up and the
+battle plays itself.
+
 `tests/battle-sequence.test.ts` pins the order, the one-per-pace rule, the pace measured from the
-tap's return, the unreadable-panel wait, the not-listed fallthrough, the operator-started auto battle,
-the no-toggle-evidence wait, the refused-tap rule and the attempt cap. `tests/world.test.ts` pins the
+tap's return, the unreadable-panel wait, the not-listed fallthrough, the disengage sequence, the
+no-toggle-evidence wait, the refused-tap rule and the attempt cap. `tests/world.test.ts` pins the
 02:07 replay, the settle window, the fallback and the re-arm. The full suite is green (the change is a
 timing seam, so it was run before and after, AGENTS.md §5).
 

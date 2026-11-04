@@ -14,13 +14,16 @@
  * World stamped the pace with the frame an operation *started* on, so the opener's two taps and the
  * 自動 press after them could be ~100 ms apart, inside the skill's resolution.
  *
- * The six steps — settle → 倍速 → opener slot → opener confirm → 自動 → hold — are each one tap,
- * one at a time, each with its own evidence from the frame:
+ * The steps — settle → 倍速 → 自動 off (when the cast is owed) → opener slot → opener confirm →
+ * 自動 → hold — are each one tap, one at a time, each with its own evidence from the frame:
  *
  * - `settle`: nothing is pressed for `settleMs` after the battle's first named frame.
  * - 倍速 and 自動 are **toggles**: each is pressed only when the frame says it is off (contracts §2
  *   `speedOn`/`autoOn`), so a blind re-press cannot turn one back off. A press that did not take
  *   is retried on a later turn of the sequence, capped by `toggleAttempts`.
+ * - **自動 off before the cast** (operator rule 2026-11-04): a battle entered with 自動 on draws no
+ *   command phase, so the sequence turns 自動 off, casts the opener once by hand, and turns 自動 back
+ *   on — enter → off → cast → on. A battle with no configured opener is left alone.
  * - the opener's slot is sent only when the ACTIVE card is **readable** (contracts §11): a null read
  *   is a wait, bounded by `readWindowMs`, and then the cast is given up — never a blind slot tap.
  * - the pace is measured from the tap's **return** (`completed`/`refused`), not from the frame the
@@ -43,12 +46,13 @@ export interface BattlePhase {
 }
 
 /** Why a turn ended without an operation: each is the caller's cue for a log line, or silence. */
-export type BattleWait = 'settle' | 'paced' | 'unreadable' | 'no-evidence' | 'speed-capped' | 'auto-capped';
+export type BattleWait =
+  | 'settle' | 'paced' | 'unreadable' | 'no-evidence' | 'speed-capped' | 'auto-capped' | 'auto-stuck';
 
 /** One decision: a single operation to send, a reason to wait, or the battle's decision is done. */
 export type BattleStep =
   | { readonly kind: 'wait'; readonly why: BattleWait }
-  | { readonly kind: 'speed' | 'auto' | 'done' }
+  | { readonly kind: 'speed' | 'auto-off' | 'auto' | 'done' }
   | { readonly kind: 'slot' | 'confirm'; readonly opener: BattleOpener };
 
 export interface BattleSequenceOptions {
@@ -64,7 +68,7 @@ export interface BattleSequenceOptions {
   readonly openers: readonly BattleOpener[];
 }
 
-type Operation = 'speed' | 'slot' | 'confirm' | 'auto';
+type Operation = 'speed' | 'auto-off' | 'slot' | 'confirm' | 'auto';
 
 export class BattleSequence {
   readonly #options: BattleSequenceOptions;
@@ -78,7 +82,10 @@ export class BattleSequence {
   #slotSent = false;
   #confirmSent = false;
   #speedTries = 0;
+  /** 自動 presses spent turning it ON; the fallback cap's count. */
   #autoTries = 0;
+  /** 自動 presses spent turning it OFF to reach the command phase; the cast's own cap. */
+  #autoOffTries = 0;
   /** The operation the last `next` returned, so `completed` can count it. */
   #sent: Operation | null = null;
 
@@ -112,9 +119,8 @@ export class BattleSequence {
     this.#sent = null;
     if (this.#enteredAtMs === null) return { kind: 'wait', why: 'settle' };
     if (nowMs - this.#enteredAtMs < this.#options.settleMs) return { kind: 'wait', why: 'settle' };
-    // A battle already playing itself draws no command phase, so nothing can be cast into it; and an
-    // empty opener list has nothing to cast either way. Deciding here keeps the read window unpaid.
-    if (phase.autoOn === true && this.#opener === undefined) this.#opener = null;
+    // An empty opener list has nothing to cast: the cast is decided without a read and 自動 is never
+    // touched for it.
     if (this.#opener === undefined && this.#options.openers.length === 0) this.#opener = null;
 
     const paced = this.#lastTapAtMs === null || nowMs - this.#lastTapAtMs >= this.#options.stepMs;
@@ -128,7 +134,22 @@ export class BattleSequence {
       return { kind: 'speed' };
     }
 
-    // 2. The opener: the turn card decides whether there is a cast, and an unreadable panel is a wait,
+    // 2. The cast needs the command phase, and a battle that plays itself draws none: turn 自動 off,
+    // then read and cast, then let the last step turn it back on (operator rule 2026-11-04).
+    const castOwed = this.#opener === undefined
+      ? this.#options.openers.length > 0
+      : (this.#opener !== null && !this.#slotSent);
+    if (phase.autoOn === true && castOwed) {
+      if (this.#autoOffTries >= this.#options.toggleAttempts) {
+        // The toggle will not come off: give the cast up and let the battle play itself.
+        this.#opener = null;
+        return { kind: 'wait', why: 'auto-stuck' };
+      }
+      this.#sent = 'auto-off';
+      return { kind: 'auto-off' };
+    }
+
+    // 3. The opener: the turn card decides whether there is a cast, and an unreadable panel is a wait,
     // never a slot tap. The window's expiry is the miss the cast cannot recover from.
     if (this.#opener === undefined) {
       if (phase.activeMember !== null) {
@@ -141,7 +162,7 @@ export class BattleSequence {
       }
     }
 
-    // 3. The cast: the slot, then the press that resolves the skill — two operations, not one.
+    // 4. The cast: the slot, then the press that resolves the skill — two operations, not one.
     if (this.#opener !== null) {
       if (!this.#slotSent) {
         this.#sent = 'slot';
@@ -153,7 +174,7 @@ export class BattleSequence {
       }
     }
 
-    // 4. 自動: the battle plays itself from here.
+    // 5. 自動: the battle plays itself from here (the last step found it off, or turned it off above).
     if (phase.autoOn === null) return { kind: 'wait', why: 'no-evidence' };
     if (!phase.autoOn) {
       if (this.#autoTries >= this.#options.toggleAttempts) return { kind: 'wait', why: 'auto-capped' };
@@ -161,7 +182,7 @@ export class BattleSequence {
       return { kind: 'auto' };
     }
 
-    // 5. Both toggles on and the opener decided: nothing to press; the mode holds until it ends.
+    // 6. Both toggles on and the opener decided: nothing to press; the mode holds until it ends.
     return { kind: 'done' };
   }
 
@@ -170,6 +191,7 @@ export class BattleSequence {
     this.#lastTapAtMs = nowMs;
     switch (this.#sent) {
       case 'speed': this.#speedTries += 1; break;
+      case 'auto-off': this.#autoOffTries += 1; break;
       case 'auto': this.#autoTries += 1; break;
       case 'slot': this.#slotSent = true; break;
       case 'confirm': this.#confirmSent = true; break;

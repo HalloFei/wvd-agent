@@ -66,12 +66,41 @@ describe('the battle operation sequence', () => {
     expect(s.next({ speedOn: true, autoOn: false, activeMember: '本杰明' }, 1_000)).toEqual({ kind: 'auto' });
   });
 
-  it('a battle already on auto gets 倍速 only, and is never cast into', () => {
+  it('turns 自動 off to cast the opener, then back on', () => {
+    // Operator rule 2026-11-04: a battle entered with 自動 on is disengaged — 自動 off, the opener cast
+    // once by hand, 自動 back on. An auto battle draws no command phase, so it cannot be cast into.
     const s = make();
     s.enter(0);
     expect(s.next({ speedOn: false, autoOn: true, activeMember: null }, 1_000)).toEqual({ kind: 'speed' });
     s.completed(1_000);
-    expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 2_000)).toEqual({ kind: 'done' });
+    expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 2_000)).toEqual({ kind: 'auto-off' });
+    s.completed(2_000);
+    // The command phase is the loop's now: the card is read and the cast runs, still one tap per pace.
+    expect(s.next({ speedOn: true, autoOn: false, activeMember: '爱丽丝' }, 3_000)).toEqual({ kind: 'slot', opener: alice });
+    s.completed(3_000);
+    expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 4_000)).toEqual({ kind: 'confirm', opener: alice });
+    s.completed(4_000);
+    expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 5_000)).toEqual({ kind: 'auto' });
+    s.completed(5_000);
+    expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 6_000)).toEqual({ kind: 'done' });
+  });
+
+  it('leaves an auto battle alone when no opener is configured', () => {
+    // There is nothing to cast, so there is nothing to disengage: 自動 is never touched.
+    const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, readWindowMs: 3_000, toggleAttempts: 3, openers: [] });
+    s.enter(0);
+    expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 0)).toEqual({ kind: 'done' });
+  });
+
+  it('gives the cast up when 自動 will not turn off', () => {
+    const s = make();
+    s.enter(0);
+    for (let n = 0; n < 3; n += 1) {
+      expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 1_000 + n * 1_000)).toEqual({ kind: 'auto-off' });
+      s.completed(1_000 + n * 1_000);
+    }
+    expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 4_000)).toEqual({ kind: 'wait', why: 'auto-stuck' });
+    expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 5_000)).toEqual({ kind: 'done' });
   });
 
   it('an unreadable toggle is a wait, not a blind press', () => {

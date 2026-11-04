@@ -32,10 +32,11 @@ tap, each with its own clock.
 |---|---|---|
 | 0 | settle | the battle's first named `combat` frame + `battleSettleMs` |
 | 1 | 倍速 | the frame says it is **off** (contracts §2 `speedOn`) |
-| 2 | opener slot | the ACTIVE card is readable and the member is on the opener list (contracts §11) |
-| 3 | opener confirm | the slot tap was sent; the panel is up |
-| 4 | 自動 | the frame says it is **off** (`autoOn`) |
-| 5 | hold | both on and the opener decided; the mode owns the battle until it ends |
+| 2 | 自動 off | the cast is still owed **and** the frame says 自動 is **on**: the battle plays itself, so it draws no command phase — 自動 is turned off to reach one |
+| 3 | opener slot | the ACTIVE card is readable and the member is on the opener list (contracts §11) |
+| 4 | opener confirm | the slot tap was sent; the panel is up |
+| 5 | 自動 | the frame says it is **off** (`autoOn`) — the step that hands the battle back to auto |
+| 6 | hold | both on and the opener decided; the mode owns the battle until it ends |
 
 Invariants, each pinned by a test:
 
@@ -50,8 +51,15 @@ Invariants, each pinned by a test:
 - **无 rush on a toggle**: a toggle step is sent only when the frame says its toggle is off; a press
   that does not take is retried on a later step's turn, capped by `autoBattleEnableAttempts`
   (the existing fallback, kept).
-- **自動 already on**: the opener is skipped — an auto battle draws no command phase to cast into, so
-  the read window would be wasted. Only 倍速 may remain.
+- **自動 already on, and the cast still owed**: the sequence turns 自動 **off**, casts the opener once,
+  then turns 自動 back **on** — enter → off → cast → on (operator rule, later on 2026-11-04: *when
+  starting a new farm task, at the first cycle when entering a battle, turn off auto battle if on, use
+  the opener skill once, then turn on auto battle*). The rule is implemented for **every** battle
+  entered with 自動 on, because that is the only state in which the cast is suppressed: in a farm the
+  dirty state appears at the start (the carried-over 自動), and the guard makes the step a no-op when
+  the toggle is already off. A battle with **no configured opener** is left alone — there is nothing to
+  cast, so 自動 is never touched. If 自動 will not come off within `autoBattleEnableAttempts` tries,
+  the cast is given up and the battle continues on auto.
 - **re-arm**: the sequence lives as long as the battle **mode** does — an unnamed frame inside a
   battle (a skill's resolution, a fade) keeps it, so the opener cannot be cast twice; leaving the mode
   drops it and the next battle starts from settle.

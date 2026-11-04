@@ -537,16 +537,22 @@ card order. The measurement, the guards and the rejected glyph alternative are
 screen size — is a miss, never an error, and never a tap on a slot.
 
 The World sends the battle's operations as a **sequence** (`src/policy/battle-sequence.ts`, operator
-rule 2026-11-04): settle → 倍速 → the opener's slot → the opener's confirm → 自動 → hold. One tap per
-tick, in that order, each waiting `battleStepMs` (§8.5) from the previous tap's **return**, and no
-press at all before `battleSettleMs` has passed since the battle's first frame. Both toggles are read
-before they are pressed (§2 `speedOn`/`autoOn`), so a blind re-press cannot turn one back off; a
-press that did not take is retried while the frame still says it is off, capped by
-`autoBattleEnableAttempts` (§8.5) — the operator's fallback rule (2026-11-02): *if auto is not on,
-press; otherwise carry on.* The ACTIVE card is read before the cast and never at the skill panel (the
-panel dims it): a miss waits `battleReadWindowMs` and then gives the cast up, and a battle already on
-自動 is not cast into. The sequence lives as long as the battle **mode** does, so an unnamed frame
-inside a battle cannot re-arm it and cast the opener twice.
+rule 2026-11-04): settle → 倍速 → **自動 off (when the cast is owed and 自動 is on)** → the opener's
+slot → the opener's confirm → 自動 → hold. One tap per tick, in that order, each waiting
+`battleStepMs` (§8.5) from the previous tap's **return**, and no press at all before
+`battleSettleMs` has passed since the battle's first frame. Both toggles are read before they are
+pressed (§2 `speedOn`/`autoOn`), so a blind re-press cannot turn one back off; a press that did not
+take is retried while the frame still says it is off, capped by `autoBattleEnableAttempts` (§8.5) —
+the operator's fallback rule (2026-11-02): *if auto is not on, press; otherwise carry on.* The ACTIVE
+card is read before the cast and never at the skill panel (the panel dims it): a miss waits
+`battleReadWindowMs` and then gives the cast up.
+
+A battle entered with 自動 **on** and the cast still owed is therefore **disengaged**: 自動 off, the
+opener cast once by hand, 自動 back on (operator rule, later on 2026-11-04) — an auto battle draws no
+command phase to cast into. A battle with **no configured opener** is left alone: there is nothing to
+cast, so 自動 is never touched. If 自動 will not come off within `autoBattleEnableAttempts` tries, the
+cast is given up and the battle plays itself. The sequence lives as long as the battle **mode** does,
+so an unnamed frame inside a battle cannot re-arm it and cast the opener twice.
 
 ## 10. Farm tasks
 

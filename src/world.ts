@@ -540,11 +540,12 @@ export class WvdWorld implements World {
    * frame, dropped when the mode leaves. One tap per tick, paced by `battleStepMs`.
    */
   #battleSequence: BattleSequence | null = null;
-  /** The battle's four one-line notes: each is said once per battle, not once per tick. */
+  /** The battle's five one-line notes: each is said once per battle, not once per tick. */
   #battleReadWarned = false;
   #battleSpeedWarned = false;
   #battleAutoWarned = false;
   #battleNotListedWarned = false;
+  #battleAutoStuckWarned = false;
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
   #pageCloseTries = 0;
   #pageCloseWarned = false;
@@ -1354,6 +1355,7 @@ export class WvdWorld implements World {
     this.#battleSpeedWarned = false;
     this.#battleAutoWarned = false;
     this.#battleNotListedWarned = false;
+    this.#battleAutoStuckWarned = false;
   }
 
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
@@ -2269,6 +2271,17 @@ export class WvdWorld implements World {
                 `wvd: 自動 was pressed ${Math.max(1, this.#cfg.autoBattleEnableAttempts)} times and the battle does not show it on; leaving it to the stall clock`,
               );
             }
+            if (step.why === 'auto-stuck' && !this.#battleAutoStuckWarned) {
+              this.#battleAutoStuckWarned = true;
+              this.#host?.log.warn('wvd: 自動 would not turn off, so the opener is given up and the battle plays itself');
+            }
+            return;
+          }
+          case 'auto-off': {
+            // The battle was playing itself: 自動 off first, so the command phase (and the cast) is the
+            // loop's, then the last step turns it back on (operator rule 2026-11-04).
+            const pressed = await send('自動', this.#commands.battleAuto());
+            if (pressed.ok) this.#host?.log.info('wvd: turned 自動 off to cast the opener');
             return;
           }
           case 'speed': {
