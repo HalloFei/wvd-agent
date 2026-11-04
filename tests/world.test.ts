@@ -1081,6 +1081,42 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(actuator.calls).toEqual(['tap 691,708', 'tap 1231,708', 'tap 1231,708']);
   });
 
+  it('casts the opener only in the first battle of the first cycle, and leaves the rest to 自動', async () => {
+    // Operator rule 2026-11-04, refined: the disengage + cast belongs to the first battle of the first
+    // cycle. Every later battle only needs 自動 on — no cast, and no turn-card read.
+    let reads = 0;
+    const reader: BattleMemberReader = { readActiveMember: async () => { reads += 1; return '爱丽丝'; } };
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const { world, host, actuator, perceiver, slotCalls, confirmCalls, clock } = makeWorld({
+      observation: combatView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
+    await started(world, host);
+
+    // The first battle: the cast, then 自動.
+    await world.tick();
+    expect(slotCalls).toEqual(['爱丽丝']);
+    clock.advance(1_000);
+    await world.tick();                        // the resolving press
+    expect(confirmCalls).toEqual(['爱丽丝']);
+    clock.advance(1_000);
+    await world.tick();                        // 自動 on
+    expect(actuator.calls).toEqual(['tap 1231,708']);
+
+    // The battle leaves, then a second one starts with 自動 off: only 自動 is pressed.
+    perceiver.observation = dungeonView;
+    clock.advance(1_000);
+    await world.tick();
+    clock.advance(1_000);
+    await world.tick();
+    perceiver.observation = combatView;
+    clock.advance(1_000);
+    await world.tick();
+    expect(reads).toBe(1);                     // the read belonged to the first battle
+    expect(slotCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(actuator.calls.filter((call) => call === 'tap 1231,708').length).toBe(2);
+  });
+
   it('the next battle starts from its own settle window', async () => {
     // Review Focus 4: the sequence is not merely re-created, its settle window is respected too.
     const { world, host, actuator, perceiver, clock } = makeWorld({

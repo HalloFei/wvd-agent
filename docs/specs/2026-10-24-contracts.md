@@ -547,11 +547,13 @@ the operator's fallback rule (2026-11-02): *if auto is not on, press; otherwise 
 card is read before the cast and never at the skill panel (the panel dims it): a miss waits
 `battleReadWindowMs` and then gives the cast up.
 
-A battle entered with 自動 **on** and the cast still owed is therefore **disengaged**: 自動 off, the
-opener cast once by hand, 自動 back on (operator rule, later on 2026-11-04) — an auto battle draws no
-command phase to cast into. A battle with **no configured opener** is left alone: there is nothing to
-cast, so 自動 is never touched. If 自動 will not come off within `autoBattleEnableAttempts` tries, the
-cast is given up and the battle plays itself. The sequence lives as long as the battle **mode** does,
+The opener belongs to the **first battle of the first cycle** of a farm task (operator rule, later on
+2026-11-04): that battle, entered with 自動 **on**, is **disengaged** — 自動 off, the opener cast once
+by hand, 自動 back on — because an auto battle draws no command phase to cast into. Every later battle
+is handed an empty opener list, so the loop only keeps 自動 **on** (it presses it when the frame says
+it is off) and never casts. A battle with **no configured opener** is left alone the same way: nothing
+to cast, so 自動 is never touched. If 自動 will not come off within `autoBattleEnableAttempts` tries,
+the cast is given up and the battle plays itself. The sequence lives as long as the battle **mode** does,
 so an unnamed frame inside a battle cannot re-arm it and cast the opener twice.
 
 ## 10. Farm tasks

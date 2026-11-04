@@ -536,6 +536,12 @@ export class WvdWorld implements World {
   /** Completed exit scripts this session; the loop re-enters until `cfg.cycles` is reached. */
   #cyclesDone = 0;
   /**
+   * Battles entered this session. The opener belongs to the **first** one (operator rule 2026-11-04,
+   * refined 2026-11-04): the first battle of the first cycle is disengaged and cast; every later
+   * battle is left to 自動 — the loop only makes sure it is on.
+   */
+  #battlesEntered = 0;
+  /**
    * The battle's operation sequence (policy/battle-sequence.ts): created on the battle mode's first
    * frame, dropped when the mode leaves. One tap per tick, paced by `battleStepMs`.
    */
@@ -968,6 +974,7 @@ export class WvdWorld implements World {
       this.#lastFailed = false;
       this.#engineProblem = null;
       this.#cyclesDone = 0;
+      this.#battlesEntered = 0;
       this.#orienting = false;
       this.#orientAbort = null;
       this.#orientTravelFailures = 0;
@@ -1370,12 +1377,17 @@ export class WvdWorld implements World {
     // there would let the opener be cast a second time.
     if (this.#mode.mode === 'battle') {
       if (this.#battleSequence === null) {
+        // The opener is the **first battle of the first cycle**'s (operator rule 2026-11-04, refined):
+        // that one is disengaged — 自動 off, the opener cast once, 自動 on. Every later battle is left
+        // to 自動, which the sequence presses on when it is off; no cast, no turn-card read.
+        const firstBattle = this.#cyclesDone === 0 && this.#battlesEntered === 0;
+        this.#battlesEntered += 1;
         this.#battleSequence = new BattleSequence({
           settleMs: Math.max(0, this.#cfg.battleSettleMs),
           stepMs: Math.max(OPERATION_PACE_MS, this.#cfg.battleStepMs),
           readWindowMs: Math.max(1, this.#cfg.battleReadWindowMs),
           toggleAttempts: Math.max(1, this.#cfg.autoBattleEnableAttempts),
-          openers: this.#cfg.dryRun ? [] : (this.#battle?.openers ?? []),
+          openers: firstBattle && !this.#cfg.dryRun ? (this.#battle?.openers ?? []) : [],
         });
         this.#battleSequence.enter(this.#now());
         this.#rearmBattleNotes();

@@ -54,12 +54,13 @@ Invariants, each pinned by a test:
 - **自動 already on, and the cast still owed**: the sequence turns 自動 **off**, casts the opener once,
   then turns 自動 back **on** — enter → off → cast → on (operator rule, later on 2026-11-04: *when
   starting a new farm task, at the first cycle when entering a battle, turn off auto battle if on, use
-  the opener skill once, then turn on auto battle*). The rule is implemented for **every** battle
-  entered with 自動 on, because that is the only state in which the cast is suppressed: in a farm the
-  dirty state appears at the start (the carried-over 自動), and the guard makes the step a no-op when
-  the toggle is already off. A battle with **no configured opener** is left alone — there is nothing to
-  cast, so 自動 is never touched. If 自動 will not come off within `autoBattleEnableAttempts` tries,
-  the cast is given up and the battle continues on auto.
+  the opener skill once, then turn on auto battle*). The rule belongs to the **first battle of the
+  first cycle of a farm task**: the World hands the sequence an opener list only for that battle
+  (`#cyclesDone === 0 && #battlesEntered === 0`). Every later battle gets an **empty** list, so the
+  sequence only keeps 自動 **on** — it presses it when the frame says it is off — and never casts or
+  reads a turn card. A battle with no configured opener is left alone the same way: nothing to cast, so
+  自動 is never touched. If 自動 will not come off within `autoBattleEnableAttempts` tries, the cast is
+  given up and the battle continues on auto.
 - **re-arm**: the sequence lives as long as the battle **mode** does — an unnamed frame inside a
   battle (a skill's resolution, a fade) keeps it, so the opener cannot be cast twice; leaving the mode
   drops it and the next battle starts from settle.

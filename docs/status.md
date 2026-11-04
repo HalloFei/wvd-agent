@@ -672,15 +672,16 @@ next step no sooner than `battleStepMs` after the previous tap returned. Three k
 **mode**'s first frame and dropped when the mode leaves, so an unnamed frame inside a battle can no
 longer re-arm it (and a cast can no longer be sent twice).
 
-**自動 is disengaged for the cast (operator rule, later on 2026-11-04).** *When starting a new farm
-task, at the first cycle when entering a battle, turn off auto battle if on, then use the opener skill
-once, then turn on auto battle.* A battle entered with 自動 on draws no command phase, so the cast
-used to be skipped; now the sequence turns 自動 off, casts the opener once, and turns 自動 back on.
-The rule runs for **every** battle entered with 自動 on, not only the first cycle: that is the only
-state in which the cast is suppressed, and in a farm it appears at the start (the carried-over 自動);
-the step is a no-op when the toggle is already off. A battle with no configured opener is left alone,
-and if 自動 will not come off within `autoBattleEnableAttempts` tries the cast is given up and the
-battle plays itself.
+**自動 is disengaged for the cast, in the first battle only (operator rule, later on 2026-11-04).**
+*When starting a new farm task, at the first cycle when entering a battle, turn off auto battle if on,
+then use the opener skill once, then turn on auto battle* — and, refined the same evening, *only the
+first battle in the first cycle; in the following battles and cycles, only keep auto battle on.* So
+the World hands the sequence its opener list for exactly that battle (`#cyclesDone === 0 &&
+#battlesEntered === 0`, once per session); that battle, entered with 自動 on, is disengaged — 自動
+off, the opener cast once, 自動 back on — because an auto battle draws no command phase. Every later
+battle gets an empty list: the sequence only keeps 自動 on (presses it when the frame says it is off),
+never casts and never reads a turn card. If 自動 will not come off within `autoBattleEnableAttempts`
+tries the cast is given up and the battle plays itself.
 
 `tests/battle-sequence.test.ts` pins the order, the one-per-pace rule, the pace measured from the
 tap's return, the unreadable-panel wait, the not-listed fallthrough, the disengage sequence, the
