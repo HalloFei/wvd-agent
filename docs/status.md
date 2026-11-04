@@ -709,6 +709,30 @@ x 971–1135 at y 975–1035; **确定 = (1053,1005)**. Pressing it resolved the
 second tap is that button. `tests/battle-opener.test.ts` keeps the enemy-side form for an opener with
 no confirm point.
 
+## Stages are ticks, and a death is Coo's decision (2026-11-05)
+
+The 2026-11-05 runs exposed two things the loop could not do. First, a task **stage** blocked the
+World: `task.runScript('exit')` ran all 15 exit steps in one tick (48.7 s), so a battle that started
+mid-exit was never dispatched — the script's `expect` timed out and the session ended
+(`exit script stopped at step 1 (expect-timeout: screen stayed combat)`). Second, the death scene was
+named but nothing acted on it.
+
+Now `src/tasks/steps.ts`'s `advanceSteps` runs **one operation per tick** with a `StepCursor`
+(next step, wait clock, expect deadline). The World hands it the frame it just observed:
+`runScript(name, observation)`. A screen the loop owns — `combat`, any `chest-*`, `drop-item-claim`,
+`main-character-dead` (`WORLD_SCREENS`) — yields `{ ok:false, reason:'interrupted' }` with the cursor
+untouched; the next tick dispatches the plug-in by screen (the battle sequence, the chest pipeline),
+and the stage resumes once its own screen is back. `enter` and `climb` still run blocking (they are
+called outside the dispatch). A completed stage is `complete: true`; a per-tick partial is
+`complete: false`; neither ends the session.
+
+The death is escalated, not automated: `main-character-dead` → one `wvd.stuck` question to Coo with
+the frame (the fallback is a **wait** — a death cutscene is not a screen to press into), and Coo
+decides whether to close the game and the PC. `#deathEscalated` makes it one question per death.
+
+`tests/task-run.test.ts` pins one-operation-per-tick, the yield-and-resume, and the wait clock;
+`tests/world.test.ts` pins the interrupted stage's survival and the death question.
+
 ## The main character's death is a named screen (2026-11-05)
 
 The 2026-11-04 run stalled at 16:06:57 on a frame the loop could not name — the camera fallen onto the

@@ -406,10 +406,26 @@ export type TravelOutcome =
 
 export type ScriptFailure =
   | ActionFailure | 'expect-timeout' | 'floor-mismatch' | 'script-timeout' | 'cancelled'
-  | 'capture-unavailable' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found';
+  | 'capture-unavailable' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found'
+  /**
+   * Not a failure: the game showed a screen the **loop** owns (a battle, a chest, the death scene),
+   * so a per-tick stage yielded. The stage keeps its cursor and resumes when the loop hands the tick
+   * back to it (operator rule 2026-11-05).
+   */
+  | 'interrupted';
 
 export type ScriptResult =
-  | { readonly ok: true; readonly steps: number; readonly ms: number }
+  | {
+    readonly ok: true;
+    readonly steps: number;
+    readonly ms: number;
+    /**
+     * False when a per-tick stage has more steps to run: the result is partial progress, not the end
+     * of the script. Absent means complete (a blocking script, and every caller written before the
+     * pump).
+     */
+    readonly complete?: boolean;
+  }
   | { readonly ok: false; readonly step: number; readonly reason: ScriptFailure; readonly detail?: string };
 
 /** Everything a script may touch. No step sees a session, a config or a task file. */
@@ -470,7 +486,13 @@ export interface BattleMemberReader {
 /** What the loop needs from a task, and nothing else. */
 export interface SessionTask {
   enter(): Promise<ScriptResult>;
-  runScript(name: ScriptId): Promise<ScriptResult>;
+  /**
+   * One tick of a script. With the loop's current `observation` the stage runs **one step per tick**
+   * and yields — a battle or a chest the game throws in between is the loop's to dispatch, and the
+   * stage resumes from its cursor. Without it the script blocks as before (the entry, which runs
+   * before the loop).
+   */
+  runScript(name: ScriptId, observation?: Observation | null): Promise<ScriptResult>;
   /** Stop at the next step boundary; a press already in flight completes. */
   abort(): void;
   /** The orientation a goal task declares. Absent for a scripted task: its entry drives itself. */

@@ -6,7 +6,7 @@ import type {
 } from '../src/contracts.ts';
 import { createTaskPolicy } from '../src/tasks/policy.ts';
 import { createTaskRunner } from '../src/tasks/runner.ts';
-import { floorKeyDistance, isExpectedFloor, runSteps, TASK_KEYS } from '../src/tasks/steps.ts';
+import { advanceSteps, floorKeyDistance, isExpectedFloor, runSteps, TASK_KEYS, type StepCursor } from '../src/tasks/steps.ts';
 import { routePolicy } from '../src/policy/route.ts';
 
 const frame = (atMs = 0): Frame => ({
@@ -419,5 +419,49 @@ describe('isExpectedFloor', () => {
     expect(isExpectedFloor(glow, clean)).toBe(true);
     expect(isExpectedFloor(clean, other)).toBe(false);
     expect(isExpectedFloor(clean, 'not-hex')).toBe(false);
+  });
+});
+describe('advanceSteps (a stage is one step per tick)', () => {
+  const cursorFor = (steps: TaskScript['steps']): StepCursor => ({
+    script: script(steps), index: 0, untilMs: null, startedAtMs: Date.now(),
+  });
+
+  it('runs one operation per call, and the next operation after the frame answers', async () => {
+    const { env, recorder } = makeEnv();
+    const cursor = cursorFor([{ op: 'tap', at: [1, 2] }, { op: 'tap', at: [3, 4] }]);
+    expect(await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeon'))).toEqual({ kind: 'waiting' });
+    expect(recorder.calls).toEqual(['tap 1,2']);
+    expect(await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeon'))).toEqual({ kind: 'waiting' });
+    expect(recorder.calls).toEqual(['tap 1,2', 'tap 3,4']);
+    expect(await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeon'))).toEqual({ kind: 'done', steps: 2 });
+  });
+
+  it('yields on a screen the loop owns and resumes from the same step', async () => {
+    // Operator rule 2026-11-05: a battle (or the chest it leaves behind, or the death scene) is the
+    // loop's to dispatch. The stage presses nothing into it and keeps its cursor.
+    const { env, recorder } = makeEnv();
+    const cursor = cursorFor([
+      { op: 'tap', at: [1, 2] },
+      { op: 'expect', screen: 'dungeonmap' },
+      { op: 'tap', at: [5, 6] },
+    ]);
+    await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeonmap'));
+    expect(await advanceSteps(cursor, env, 'k'.repeat(32), screen('combat')))
+      .toEqual({ kind: 'interrupted', screen: 'combat' });
+    expect(recorder.calls).toEqual(['tap 1,2']);
+    await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeonmap'));   // the expect passes, the tap goes
+    expect(recorder.calls).toEqual(['tap 1,2', 'tap 5,6']);
+    expect(await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeonmap'))).toEqual({ kind: 'done', steps: 3 });
+  });
+
+  it('holds a wait on its own clock, so the loop keeps its tick', async () => {
+    const { env, recorder } = makeEnv();
+    const cursor = cursorFor([{ op: 'wait', ms: 30 }, { op: 'tap', at: [7, 8] }]);
+    expect(await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeon'))).toEqual({ kind: 'waiting' });
+    expect(await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeon'))).toEqual({ kind: 'waiting' });
+    expect(recorder.calls).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeon'));
+    expect(recorder.calls).toEqual(['tap 7,8']);
   });
 });

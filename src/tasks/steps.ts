@@ -16,6 +16,8 @@ import {
   type TaskKeyName,
   type TaskScript,
   type Frame,
+  type Observation,
+  type ScreenId,
   type TaskStep,
 } from '../contracts.ts';
 
@@ -239,4 +241,147 @@ async function pollFloor(step: TaskStep, index: number, env: ScriptEnv, floorKey
     if (Date.now() >= deadline) return stopped(index, 'floor-mismatch', seen);
     await sleepUnlessAborted(env, OBSERVE_INTERVAL_MS);
   }
+}
+
+/**
+ * The screens the **loop** owns, not a stage: a battle, the chest it leaves behind, the death scene.
+ * A per-tick stage never presses into one (operator rule 2026-11-05): it yields and keeps its cursor,
+ * and the loop dispatches the plug-in the screen belongs to.
+ */
+export const WORLD_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
+  'combat', 'chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'drop-item-claim',
+  'main-character-dead',
+]);
+
+/** Where a per-tick stage is: the next step, and the clock its wait / expect is on. */
+export interface StepCursor {
+  readonly script: TaskScript;
+  /** The next step to run. */
+  index: number;
+  /** `wait`: the earliest time it may finish; `expect`: the deadline it polls within. */
+  untilMs: number | null;
+  /** The stage's start, for `script.timeoutMs`. */
+  startedAtMs: number;
+}
+
+/** One tick of a stage: done, waiting for the game, interrupted by a loop-owned screen, or failed. */
+export type StepAdvance =
+  | { readonly kind: 'done'; readonly steps: number }
+  | { readonly kind: 'waiting' }
+  | { readonly kind: 'interrupted'; readonly screen: ScreenId }
+  | { readonly kind: 'failed'; readonly stop: Stop };
+
+/**
+ * Run at most one **operation** of a stage per call (operator rule 2026-11-05). The loop hands in the
+ * frame it just observed, so nothing polls the game here: a `wait` keeps a clock, an `expect` is
+ * re-checked on the next frame, and an actuator step returns as soon as it is sent — the next tick
+ * answers it. A loop-owned screen yields with the cursor untouched, so a battle in the middle of the
+ * exit is dispatched by the loop and the stage resumes afterwards.
+ */
+export async function advanceSteps(
+  cursor: StepCursor,
+  env: ScriptEnv,
+  floorKey: string,
+  observation: Observation | null,
+): Promise<StepAdvance> {
+  const { script } = cursor;
+  const screen = observation?.screen ?? null;
+  for (let guard = 0; guard < 32; guard += 1) {
+    if (env.abort.aborted) return { kind: 'failed', stop: stopped(cursor.index, 'cancelled') };
+    if (Date.now() - cursor.startedAtMs > script.timeoutMs) {
+      return { kind: 'failed', stop: stopped(cursor.index, 'script-timeout') };
+    }
+    if (cursor.index >= script.steps.length) return { kind: 'done', steps: script.steps.length };
+    const step = script.steps[cursor.index]!;
+    if (screen !== null && WORLD_SCREENS.has(screen)) return { kind: 'interrupted', screen };
+    switch (step.op) {
+      case 'tap': {
+        const at = step.at!;
+        const result = step.count === 2
+          ? await env.actuator.doubleTap({ x: at[0], y: at[1] })
+          : await env.actuator.tap({ x: at[0], y: at[1] });
+        if (!result.ok) return { kind: 'failed', stop: stopped(cursor.index, result.reason, result.detail) };
+        cursor.index += 1;
+        return { kind: 'waiting' };
+      }
+      case 'key': {
+        const scan = TASK_KEYS[step.key!];
+        const hold = Math.min(MAX_PRESS_HOLD_MS, Math.max(1, step.holdMs ?? DEFAULT_HOLD_MS));
+        const result = await env.actuator.holdKey(scan, hold);
+        if (!result.ok) return { kind: 'failed', stop: stopped(cursor.index, result.reason, result.detail) };
+        cursor.index += 1;
+        return { kind: 'waiting' };
+      }
+      case 'wait': {
+        cursor.untilMs ??= Date.now() + (step.ms ?? 0);
+        if (Date.now() < cursor.untilMs) return { kind: 'waiting' };
+        cursor.untilMs = null;
+        cursor.index += 1;
+        continue;
+      }
+      case 'expect': {
+        if (screen === null) return { kind: 'waiting' };
+        if (screen === step.screen) {
+          cursor.untilMs = null;
+          cursor.index += 1;
+          continue;
+        }
+        cursor.untilMs ??= Date.now() + (step.timeoutMs ?? DEFAULT_EXPECT_TIMEOUT_MS);
+        if (Date.now() >= cursor.untilMs) {
+          return { kind: 'failed', stop: stopped(cursor.index, 'expect-timeout', `screen stayed ${screen}`) };
+        }
+        return { kind: 'waiting' };
+      }
+      case 'expectFloor': {
+        const expected = step.titleKey ?? floorKey;
+        if (observation !== null && observation.screen === 'dungeonmap'
+          && isExpectedFloor(expected, observation.map.titleKey)) {
+          cursor.untilMs = null;
+          cursor.index += 1;
+          continue;
+        }
+        cursor.untilMs ??= Date.now() + (step.timeoutMs ?? DEFAULT_EXPECT_TIMEOUT_MS);
+        if (Date.now() >= cursor.untilMs) {
+          const seen = observation === null
+            ? 'no observation'
+            : observation.screen === 'dungeonmap'
+              ? `floor ${observation.map.titleKey}`
+              : `screen ${observation.screen}`;
+          return { kind: 'failed', stop: stopped(cursor.index, 'floor-mismatch', seen) };
+        }
+        return { kind: 'waiting' };
+      }
+      case 'harken': {
+        if (observation === null || observation.screen !== 'harken-menu') {
+          cursor.untilMs ??= Date.now() + (step.timeoutMs ?? DEFAULT_EXPECT_TIMEOUT_MS);
+          if (Date.now() >= cursor.untilMs) {
+            return { kind: 'failed', stop: stopped(cursor.index, 'expect-timeout', `screen stayed ${screen ?? 'unknown'}`) };
+          }
+          return { kind: 'waiting' };
+        }
+        const wanted = step.destination === undefined
+          ? undefined
+          : observation.rows.find((row) => row.label === step.destination);
+        const row = wanted ?? observation.rows.find((row) => row.label === '归还');
+        if (row === undefined) {
+          return { kind: 'failed', stop: stopped(cursor.index, 'unknown-location', 'the harken menu offers no row to take') };
+        }
+        const tapped = await env.actuator.tap(row.at);
+        if (!tapped.ok) return { kind: 'failed', stop: stopped(cursor.index, tapped.reason, tapped.detail) };
+        env.log(`harken: tapped ${row.label ?? '归还'} (${row.at.x},${row.at.y})`);
+        cursor.untilMs = null;
+        cursor.index += 1;
+        return { kind: 'waiting' };
+      }
+      case 'travel': {
+        const result = await env.travel(step.to!);
+        if (!result.ok) return { kind: 'failed', stop: stopped(cursor.index, result.reason, result.detail) };
+        cursor.index += 1;
+        return { kind: 'waiting' };
+      }
+      default:
+        return { kind: 'failed', stop: stopped(cursor.index, 'expect-timeout', 'unknown-op') };
+    }
+  }
+  return { kind: 'waiting' };
 }

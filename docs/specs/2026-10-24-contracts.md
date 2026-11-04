@@ -658,10 +658,18 @@ export type TravelOutcome =
 
 export type ScriptFailure =
   | ActionFailure | 'expect-timeout' | 'floor-mismatch' | 'script-timeout' | 'cancelled'
-  | 'capture-unavailable' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found';
+  | 'capture-unavailable' | 'unknown-location' | 'world-map-control-not-found' | 'location-not-found'
+  /** Not a failure: a loop-owned screen (battle, chest, death) interrupted a per-tick stage. */
+  | 'interrupted';
 
 export type ScriptResult =
-  | { readonly ok: true; readonly steps: number; readonly ms: number }
+  | {
+    readonly ok: true;
+    readonly steps: number;
+    readonly ms: number;
+    /** False when a per-tick stage has more steps; absent means the script is complete. */
+    readonly complete?: boolean;
+  }
   | { readonly ok: false; readonly step: number; readonly reason: ScriptFailure; readonly detail?: string };
 
 /** Everything a script may touch. No step sees a session, a config or a task file. */
@@ -679,7 +687,12 @@ export interface ScriptEnv {
 /** What the loop needs from a task, and nothing else. */
 export interface SessionTask {
   enter(): Promise<ScriptResult>;
-  runScript(name: ScriptId): Promise<ScriptResult>;
+  /**
+   * One tick of a script (operator rule 2026-11-05): with the loop's `observation` the stage runs at
+   * most one operation, and a screen the loop owns (battle, chest, death) yields `interrupted` with
+   * the stage's cursor kept. Without an observation the script blocks (the entry, the climb).
+   */
+  runScript(name: ScriptId, observation?: Observation | null): Promise<ScriptResult>;
   abort(): void;
   /** The orientation a goal task declares. Absent for a scripted task: its entry drives itself. */
   readonly orient?: TaskOrient | undefined;

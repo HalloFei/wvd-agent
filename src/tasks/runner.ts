@@ -11,13 +11,14 @@ import {
   type Perceiver,
   type ScriptEnv,
   type ScriptId,
+  type Observation,
   type ScriptResult,
   type SessionTask,
   type TaskDefinition,
   type TaskScript,
 } from '../contracts.ts';
 import { travelTo } from '../actions/worldmap.ts';
-import { CAPTURE_ATTEMPTS, CAPTURE_RETRY_MS, runSteps, TASK_KEYS } from './steps.ts';
+import { advanceSteps, CAPTURE_ATTEMPTS, CAPTURE_RETRY_MS, runSteps, TASK_KEYS, type StepCursor } from './steps.ts';
 
 export interface TaskRunnerDeps {
   readonly task: TaskDefinition;
@@ -123,6 +124,47 @@ export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
     return { script: deps.task.goal?.climb?.script, floor: deps.task.goal?.climb?.from ?? deps.task.floor.titleKey };
   };
 
+  /**
+   * The stage in progress: its name, the floor its `expectFloor` falls back to, and its cursor. A
+   * per-tick stage keeps this across ticks; a completed or failed stage clears it, so a later script
+   * starts from its first step.
+   */
+  let active: { readonly name: ScriptId; readonly floor: string; readonly cursor: StepCursor } | null = null;
+
+  /**
+   * One tick of a stage (operator rule 2026-11-05). The loop hands in the frame it just observed:
+   * the stage runs at most one operation and yields, so the loop can dispatch a battle, the chest it
+   * leaves behind, or the death scene between steps — and the stage resumes from its cursor.
+   */
+  const pumpScript = async (name: ScriptId, observation: Observation | null): Promise<ScriptResult> => {
+    const { script, floor } = scriptFor(name);
+    if (script === undefined) return { ok: true, steps: 0, ms: 0 };
+    if (active === null || active.name !== name) {
+      if (name === 'exit' && !await closeMapIfOpen()) {
+        return { ok: false, step: 0, reason: 'expect-timeout', detail: 'the map did not close' };
+      }
+      active = { name, floor, cursor: { script, index: 0, untilMs: null, startedAtMs: Date.now() } };
+    }
+    const stage = active;
+    const advance = await advanceSteps(stage.cursor, env(), stage.floor, observation);
+    switch (advance.kind) {
+      case 'done': {
+        active = null;
+        const ms = Date.now() - stage.cursor.startedAtMs;
+        deps.log(`wvd: ${name} script finished (${advance.steps} steps, ${ms} ms)`);
+        return { ok: true, steps: advance.steps, ms, complete: true };
+      }
+      case 'waiting':
+        return { ok: true, steps: stage.cursor.index, ms: Date.now() - stage.cursor.startedAtMs, complete: false };
+      case 'interrupted':
+        return { ok: false, step: stage.cursor.index, reason: 'interrupted', detail: advance.screen };
+      case 'failed':
+        active = null;
+        deps.log(`wvd: ${name} script stopped at step ${advance.stop.step} (${advance.stop.reason}${advance.stop.detail ? `: ${advance.stop.detail}` : ''})`);
+        return advance.stop;
+    }
+  };
+
   const runScript = async (name: ScriptId, script: TaskScript | undefined, floor: string): Promise<ScriptResult> => {
     if (script === undefined) return { ok: true, steps: 0, ms: 0 };
     const startedAt = Date.now();
@@ -141,9 +183,14 @@ export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
       const { script, floor } = scriptFor('enter');
       return runScript('enter', script, floor);
     },
-    runScript: (name: ScriptId) => {
-      const { script, floor } = scriptFor(name);
-      return runScript(name, script, floor);
+    runScript: (name: ScriptId, observation?: Observation | null) => {
+      // No frame means no tick to hand the stage to: the climb and the entry run blocking, as before
+      // (the World calls them outside its own dispatch). A frame means the exit stage's per-tick pump.
+      if (observation === undefined) {
+        const { script, floor } = scriptFor(name);
+        return runScript(name, script, floor);
+      }
+      return pumpScript(name, observation);
     },
     abort: () => controller.abort(),
     ...(deps.task.goal === undefined

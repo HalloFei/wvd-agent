@@ -255,6 +255,10 @@ const ARRIVAL_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
 ]);
 
 function fallbackIntent(screen: ScreenId | null): Intent {
+  // On the main character's death there is nothing to press: the question is Coo's (operator rule
+  // 2026-11-05), and the game's own transition is the screen's business. A key here could skip a
+  // revive prompt or land on a menu nobody named.
+  if (screen === 'main-character-dead') return { kind: 'wait', ms: 1_000 };
   return screen === 'dungeonmap' ? { kind: 'exit' } : { kind: 'open-map' };
 }
 
@@ -566,6 +570,8 @@ export class WvdWorld implements World {
   #battleOpenerGaveUp = false;
   /** The ACTIVE-member read and how many consecutive frames it has answered the same; per battle. */
   #battleRead: { readonly value: string | null; readonly frames: number } | null = null;
+  /** The death scene has been sent to Coo for this death (one question, not one per tick). */
+  #deathEscalated = false;
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
   #pageCloseTries = 0;
   #pageCloseWarned = false;
@@ -1133,6 +1139,18 @@ export class WvdWorld implements World {
       return;
     }
 
+    // The main character's death is Coo's decision, not the route's (operator rule 2026-11-05): the
+    // World raises the frame to Coo once per death, and Coo decides whether to close the game and the
+    // PC. Nothing is pressed here — there is no recovery module.
+    if (observation.screen === 'main-character-dead') {
+      if (!this.#deathEscalated) {
+        this.#deathEscalated = true;
+        this.#host?.log.warn('wvd: the main character died; asking Coo what to do');
+        await this.#escalate(session, frame, observation, now);
+      }
+      return;
+    }
+
     // The bar is a modal, sub-second window, and this tick's one command is the timing sub-loop. It
     // runs before the walk-aware in-flight book-keeping on purpose: the press is the time-critical
     // act, and a walk is not answered by a bar. The one record the bar *does* answer — an outstanding
@@ -1384,6 +1402,7 @@ export class WvdWorld implements World {
 
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
   #track(observation: Observation): void {
+    if (observation.screen !== 'main-character-dead') this.#deathEscalated = false;
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen !== 'character-page') {
       this.#pageCloseTries = 0;
@@ -2367,8 +2386,18 @@ export class WvdWorld implements World {
           this.#host?.log.warn(`wvd: no task is running; the ${intent.name} script has nothing to do`);
           return;
         }
-        const result = await task.runScript(intent.name);
+        // A stage is one step per tick (operator rule 2026-11-05): the loop hands it the frame it just
+        // observed and keeps its own tick, so a battle, the chest after it, or the death scene is
+        // dispatched by the loop and the stage resumes from its cursor.
+        const result = context === undefined
+          ? await task.runScript(intent.name)                 // no frame: the script runs blocking
+          : await task.runScript(intent.name, context.observation);
         if (!this.#running) return;
+        if (!result.ok && result.reason === 'interrupted') {
+          // A screen the loop owns appeared mid-stage. The cursor is kept; the next tick dispatches
+          // by screen, and the stage resumes once the screen is the stage's again.
+          return;
+        }
         if (!result.ok) {
           await this.#endSession(
             result.reason === 'cancelled'
@@ -2378,10 +2407,8 @@ export class WvdWorld implements World {
           );
           return;
         }
-        // A task script is a whole procedure inside one tick: the screens and presses it makes are
-        // progress the loop cannot see until it returns, so the stall clock restarts here. Without
-        // this, the 48.7 s exit script read as "nothing changed" and escalated the loop the moment
-        // the next cycle began (live 2026-11-05 16:47:52).
+        if (result.complete === false) return;      // partial progress: the stage has more steps
+        // The stage's own screens and presses are progress the loop could not see while it ran.
         this.#lastProgressAtMs = this.#now();
         if (intent.name !== 'exit') return;
         this.#cyclesDone += 1;

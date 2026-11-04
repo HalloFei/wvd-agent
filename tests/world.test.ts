@@ -1709,6 +1709,25 @@ describe('the escalation exchange', () => {
     expect(world.escalationsThisHour()).toBe(1);
   });
 
+  it('raises the main character\'s death to Coo once, and presses nothing', async () => {
+    // Operator rule 2026-11-05: the death is Coo's decision (close the game and the PC?). There is no
+    // recovery module, and the escalation's fallback is a wait: a death cutscene is not a screen to
+    // press into.
+    const dead: Observation = { screen: 'main-character-dead', atMs: 100, confidence: 0.9 };
+    const { world, host, actuator } = makeWorld({ observation: dead, cfg: { escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();
+    const stuck = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck');
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0]!.event.text).toContain('Question:');
+    expect(actuator.calls).toEqual([]);
+    expect(world.isRunning()).toBe(true);
+
+    await world.tick();                        // the same death: one question, not one per tick
+    expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(1);
+  });
+
   it('checks image support wrapped, so a throwing endpoint still gets the question', async () => {
     const host = new FakeHost();
     host.acceptsThrows = true;
@@ -2802,6 +2821,42 @@ describe('the orientation', () => {
     await world.tick();
     expect(world.isRunning()).toBe(true);
     expect(host.pushed.filter((entry) => entry.event.type === 'wvd.stuck')).toEqual([]);
+  });
+
+  it('keeps the stage cursor when the game interrupts it, and finishes the stage after', async () => {
+    // Operator rule 2026-11-05: a stage is one step per tick, so a battle (or the chest after it)
+    // is the loop's to dispatch; the stage yields and resumes. An interruption is not a failure.
+    const definition = goalDefinition();
+    const screens: (string | null)[] = [];
+    let interrupted = true;
+    const task: SessionTask = {
+      enter: async () => ({ ok: true, steps: 0, ms: 0 }),
+      runScript: async (name, observation) => {
+        screens.push(observation?.screen ?? null);
+        if (interrupted) return { ok: false, step: 0, reason: 'interrupted', detail: 'combat' };
+        return { ok: true, steps: 15, ms: 1, complete: true };
+      },
+      abort: () => {},
+      orient: { goal: definition.goal!, floor: definition.floor.titleKey },
+    };
+    const { world, host, clock } = makeWorld({
+      observation: mapWith(FARM),
+      task,
+      policy: createTaskPolicy(() => definition, routePolicy),
+      cfg: { cycles: 1 },
+    });
+    await started(world, host);
+
+    await world.tick();
+    expect(screens).toEqual(['dungeonmap']);
+    expect(world.isRunning()).toBe(true);
+
+    interrupted = false;
+    clock.advance(100);
+    await world.tick();
+    expect(screens).toEqual(['dungeonmap', 'dungeonmap']);
+    // The stage completed on the second call, and with one cycle the session is done.
+    expect(world.isRunning()).toBe(false);
   });
 
   it('re-orients after the exit script instead of running a scripted entry', async () => {
