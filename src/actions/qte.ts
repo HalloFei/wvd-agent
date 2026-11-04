@@ -170,7 +170,69 @@ export interface QteTiming {
    * `qteDecelPxPerS2` (#18) makes from `(v, tapX, restX)` must not read a moving sample as a rest.
    */
   readonly restSettled: boolean;
+  /** When the press was sent, on the caller's clock (ms). */
+  readonly pressAtMs: number;
+  /** When the actuator answered, on the caller's clock (ms) — the round trip's end. */
+  readonly ackAtMs: number;
+  /** From the planning reading's clock to the send: the delay the loop actually waited (ms). */
+  readonly delayActualMs: number;
+  /** The child's own receipt→SendInput, when the actuator reported one. */
+  readonly inputMs: number | null;
+  /**
+   * The bar's post-press carry time, seconds, measured from the park (operator rule 2026-11-05):
+   * `tau = (restX − tapX)/v − delayActual − L`. `L` is the press's round trip, an upper bound of
+   * the input leg (it includes the reply transit and excludes the game's frame). Null when the rest
+   * did not settle — a moving marker has no park to measure.
+   */
+  readonly tauS: number | null;
 }
+
+/** One recorded QTE event: the chest path records its own bar when the operator asks for it. */
+export type QteRecordEvent =
+  | {
+    readonly kind: 'reading';
+    readonly atMs: number;
+    readonly markerX: number;
+    readonly zones: readonly QteZone[];
+    readonly enabled: boolean;
+  }
+  | {
+    readonly kind: 'plan';
+    readonly atMs: number;
+    readonly v: number;
+    readonly target: number;
+    readonly delayMs: number;
+    readonly brakeEnabled: boolean;
+  }
+  | {
+    readonly kind: 'press';
+    readonly sentAtMs: number;
+    readonly ackAtMs: number;
+    readonly ok: boolean;
+    readonly inputMs: number | null;
+    readonly delayActualMs: number;
+    readonly target: number;
+    readonly v: number;
+  }
+  | {
+    readonly kind: 'rest';
+    readonly restX: number | null;
+    readonly settled: boolean;
+    readonly tauS: number | null;
+  }
+  | {
+    readonly kind: 'outcome';
+    readonly ok: boolean;
+    readonly reason?: string;
+    readonly v?: number;
+    readonly target?: number;
+    readonly restX?: number | null;
+    readonly restSettled?: boolean;
+    readonly tauS?: number | null;
+  };
+
+/** Where a recorded QTE event goes. The file sink lives in `qte-record.ts`, wired by main.ts. */
+export type QteRecordSink = (event: QteRecordEvent) => void;
 
 export type QteOutcome = QteTiming | { readonly ok: false; readonly reason: QteRefusal };
 
@@ -199,6 +261,12 @@ export interface QteTimingOptions {
    * the QTE and change the speed; `give-up` ends the budget without pressing.
    */
   readonly choosePass?: ((pass: QtePass) => QtePassChoice) | undefined;
+  /**
+   * Records the bar as it is timed (operator rule 2026-11-05): every accepted reading, the plan, the
+   * press with its send/ack timing and the child's `inputMs`, and the rest with the carry time.
+   * Absent means no recording; the analysis needs it, the loop does not.
+   */
+  readonly record?: QteRecordSink | undefined;
 }
 
 /**
@@ -221,7 +289,9 @@ export type QteTimer = (options: QteTimingOptions) => Promise<QteOutcome>;
  * budget plus the rest read's settle window.
  */
 export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
-  const { sampler, press, now, wait, latencyMs, decelPxPerS2, brakeEnabled = false, budgetMs, choosePass } = options;
+  const {
+    sampler, press, now, wait, latencyMs, decelPxPerS2, brakeEnabled = false, budgetMs, choosePass, record,
+  } = options;
 
   // A mis-typed number must not become a press, and an unbounded loop is the one failure this
   // module could not report as a value: refuse both before the first sample.
@@ -262,6 +332,7 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
 
     // From here the reading is accepted: the parser's static-run cross-check wants the last
     // *accepted* marker, never a refused one (research §5).
+    record?.({ kind: 'reading', atMs: reading.atMs, markerX: reading.markerX, zones: reading.zones, enabled: reading.enabled });
     previousMarkerX = reading.markerX;
     lastThree.push({ atMs: reading.atMs, markerX: reading.markerX });
     if (lastThree.length > 3) lastThree.shift();
@@ -282,7 +353,12 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
       brakeEnabled,
     });
     planAttempted = true;
-    if (plan !== null) planFound = true;
+    if (plan !== null) {
+      planFound = true;
+      record?.({
+        kind: 'plan', atMs: reading.atMs, v, target: plan.target, delayMs: plan.atMs, brakeEnabled,
+      });
+    }
     // The attempt-vs-reroll decision (operator rule 2026-10-31). It is asked on the plan, before any
     // press: the policy judges the bar's own pass (zone width over speed), not how much lead is
     // left. A `reroll` returns now, before any wait, so the caller can cancel the QTE and change the
@@ -332,10 +408,30 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
     // be overrun: `remainingMs` was the horizon.
     if (delayMs > 0) await wait(delayMs);
 
+    // The press's own timing, on the caller's clock (operator rule 2026-11-05): the delay actually
+    // waited, the round trip (send → the child's reply, the input leg's upper bound) and the child's
+    // own receipt→SendInput, which splits the round trip. Two clock reads and no new request.
+    const sentAtMs = now();
     const pressed = await press();
+    const ackAtMs = now();
+    const ack = pressed as ActionResult & { readonly inputMs?: unknown };
+    const inputMs = typeof ack.inputMs === 'number' && Number.isFinite(ack.inputMs) ? ack.inputMs : null;
+    const delayActualMs = sentAtMs - reading.atMs;
+    record?.({
+      kind: 'press', sentAtMs, ackAtMs, ok: pressed.ok, inputMs, delayActualMs, target, v,
+    });
     if (!pressed.ok) return { ok: false, reason: 'press-refused' };
 
     const rest = await readRest(sampler, previousMarkerX, now, wait, restDeadlineLimitMs);
+    // The carry time, from the park: only a settled marker measured a registration point. Everything
+    // in the algebra was measured — the reading's clock, the send, the ack and the park.
+    const tauS = rest.restSettled && rest.restX !== null && v !== 0
+      ? (rest.restX - reading.markerX) / v - delayActualMs / 1_000 - (ackAtMs - sentAtMs) / 1_000
+      : null;
+    record?.({ kind: 'rest', restX: rest.restX, settled: rest.restSettled, tauS });
+    record?.({
+      kind: 'outcome', ok: true, v, target, restX: rest.restX, restSettled: rest.restSettled, tauS,
+    });
     return {
       ok: true,
       v,
@@ -344,6 +440,11 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
       tapX: reading.markerX,
       restX: rest.restX,
       restSettled: rest.restSettled,
+      pressAtMs: sentAtMs,
+      ackAtMs,
+      delayActualMs,
+      inputMs,
+      tauS,
     };
   }
 }

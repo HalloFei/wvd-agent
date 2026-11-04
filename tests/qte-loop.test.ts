@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
-import { bandSampler, timeQte, type QteSampler } from '../src/actions/qte.ts';
+import { bandSampler, timeQte, type QteRecordEvent, type QteSampler } from '../src/actions/qte.ts';
+import type { ActionResult } from '../src/contracts.ts';
 import type { Frame, FrameSource, PixelRect, QteZone, RgbaImage } from '../src/contracts.ts';
 import { cropBgra } from '../src/engine/crop.mjs';
 import { qteWindow } from '../src/perception/chest.ts';
@@ -322,6 +323,105 @@ describe('timeQte', () => {
     expect(out.atMs).toBe(0);
     expect(presses).toEqual([76]);
     expect(out.restX).toBe(820);
+  });
+
+  it('measures the press\'s own timing: the actual delay, the round trip and the child\'s leg', async () => {
+    // Operator rule 2026-11-05: L is measured, not assumed. Two clock reads around the press give
+    // the round trip; the child's own inputMs splits it; the reading's clock gives the real delay.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 700 },
+        { atMs: 33, markerX: 720 },
+        { atMs: 66, markerX: 740 },
+        { atMs: 600, markerX: 900 },   // the rest read: the park
+      ],
+      clock,
+    );
+    const press = async (): Promise<ActionResult & { readonly inputMs: number }> => {
+      await clock.wait(40);                     // the IPC + SendInput + reply round trip
+      return { ok: true, inputMs: 76 };
+    };
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.delayActualMs).toBeCloseTo(52.2, 0);      // the reading's clock to the send
+    expect(out.pressAtMs - out.delayActualMs).toBeCloseTo(66, 1);
+    expect(out.ackAtMs - out.pressAtMs).toBeCloseTo(40, 5);
+    expect(out.inputMs).toBe(76);
+    // The park against the measured timeline: (900 - 740)/606 - 52.2 ms - 40 ms = 0.1718 s.
+    expect(out.tauS).toBeCloseTo(0.1718, 3);
+  });
+
+  it('records every reading, the plan, the press and the measured carry', async () => {
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 700 },
+        { atMs: 33, markerX: 720 },
+        { atMs: 66, markerX: 740 },
+        { atMs: 600, markerX: 900 },
+      ],
+      clock,
+    );
+    const events: QteRecordEvent[] = [];
+    const press = async (): Promise<ActionResult & { readonly inputMs: number }> => {
+      await clock.wait(40);
+      return { ok: true, inputMs: 76 };
+    };
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, record: (event) => events.push(event),
+    });
+
+    expect(out.ok).toBe(true);
+    const kinds = events.map((event) => event.kind);
+    expect(kinds.slice(0, 3)).toEqual(['reading', 'reading', 'reading']);
+    expect(kinds).toContain('plan');
+    expect(kinds).toContain('press');
+    expect(kinds).toContain('rest');
+    expect(kinds).toContain('outcome');
+    const plan = events.find((event) => event.kind === 'plan');
+    if (plan?.kind !== 'plan') throw new Error('the plan was not recorded');
+    expect(plan.target).toBe(808);
+    expect(plan.v).toBeCloseTo(606, 0);
+    const pressEvent = events.find((event) => event.kind === 'press');
+    if (pressEvent?.kind !== 'press') throw new Error('the press was not recorded');
+    expect(pressEvent.ok).toBe(true);
+    expect(pressEvent.inputMs).toBe(76);
+    const restEvent = events.find((event) => event.kind === 'rest');
+    if (restEvent?.kind !== 'rest') throw new Error('the rest was not recorded');
+    expect(restEvent.restX).toBe(900);
+    expect(restEvent.tauS).toBeCloseTo(0.1718, 3);
+  });
+
+  it('reads no carry time from a bar that never settled', async () => {
+    // A moving marker has no park: the algebra is refused rather than fitted to a flying sample.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 700 },
+        { atMs: 33, markerX: 720 },
+        { atMs: 66, markerX: 740 },
+        null,                                     // the rest read finds the bar gone
+      ],
+      clock,
+    );
+    const press = async (): Promise<ActionResult> => ({ ok: true });
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.restSettled).toBe(false);
+    expect(out.tauS).toBeNull();
   });
 
   it('keeps the 51 ms a stale frame still leaves, and sleeps exactly that', async () => {

@@ -733,6 +733,33 @@ decides whether to close the game and the PC. `#deathEscalated` makes it one que
 `tests/task-run.test.ts` pins one-operation-per-tick, the yield-and-resume, and the wait clock;
 `tests/world.test.ts` pins the interrupted stage's survival and the death question.
 
+## The chest QTE measures its own timing (2026-11-05)
+
+The chest path now measures the three terms the band model needs, on the run that produces them — no
+new capture and no new request (operator rule 2026-11-05):
+
+- `delayActualMs = pressAtMs − reading.atMs` — the delay actually waited, on the frame's own clock;
+- `L ≈ ackAtMs − pressAtMs` — the press's round trip (IPC + the child's `inputMs` + the reply): an
+  upper bound of the input leg, at most one game frame short of the registration;
+- `tau = (restX − tapX)/v − delayActual − L` — the bar's carry, from a **settled** park only.
+
+Two clock reads around the existing press are the whole cost; the child's `inputMs` splits the round
+trip and the park is the rest read the loop already took. The QTE log line carries all three, and
+`WVD_RECORD_QTE=1` writes them as JSONL (`.tmp/record/qte-<stamp>/qte.jsonl`: reading, plan, press,
+rest, outcome) through `src/actions/qte-record.ts` — the sink is wired in `main.ts`, so the chest path
+itself owns no file I/O.
+
+What the five measured presses say: the carry is real on both days — 42.1 px at 953 px/s and 31.4 px
+at 458 px/s on the 2026-10-31 recordings, 129.5 / 144 / 137.5 px at 439.5 / 550.8 / 449.5 px/s on
+2026-11-05 — so the current no-brake plan is systematically short. Its coefficient is not a constant
+(tau 0.044–0.306 s, 7×), so it must be measured per bar, which this change makes possible.
+
+`tests/qte-loop.test.ts` pins the timing fields, the carry algebra and the refusal on an unsettled bar;
+`tests/qte-record.test.ts` pins the sink.
+
+**OWED:** the 95 % band gate (`stop ± Δ`, press only when the band overlaps the zone by ≥ 95 %),
+which waits on recorded bars — the model is accepted, the data is now collected.
+
 ## The main character's death is a named screen (2026-11-05)
 
 The 2026-11-04 run stalled at 16:06:57 on a frame the loop could not name — the camera fallen onto the

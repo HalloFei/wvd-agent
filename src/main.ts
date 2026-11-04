@@ -31,6 +31,7 @@ import { MainCharacterDeathPerceiver } from './perception/death.ts';
 import { HarkenMenuPerceiver } from './perception/harken.ts';
 import { healParty } from './actions/heal.ts';
 import { timeQte } from './actions/qte.ts';
+import { createQteFileRecorder } from './actions/qte-record.ts';
 import { travelTo } from './actions/worldmap.ts';
 import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
@@ -208,13 +209,19 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     return taskRunner === undefined ? { ok: true, session } : { ok: true, session, task: taskRunner };
   };
 
+  // The QTE recorder (operator rule 2026-11-05): on when the operator asks, one JSONL per deployment
+  // under .tmp/record/. It records the bar the chest path times — readings, plan, press timing and
+  // the carry time from the park — and changes nothing about the timing itself.
+  const qteRecord = process.env.WVD_RECORD_QTE === '1'
+    ? createQteFileRecorder(`.tmp/record/qte-${new Date().toISOString().replace(/[:.]/g, '-')}`)
+    : undefined;
   world = new WvdWorld({
     cfg,
     timezone,
     policy: createTaskPolicy(() => task, routePolicy),
     classify,
     // The QTE sub-loop is a dependency like the policy: `timeQte` is the production timing.
-    timing: timeQte,
+    timing: qteRecord === undefined ? timeQte : (options) => timeQte({ ...options, record: qteRecord }),
     commands: {
       // `pressHoldMs` is read per command, like every other key this World owns (§0.3).
       openMap: () => openMap(actuator, pressHoldMs()),

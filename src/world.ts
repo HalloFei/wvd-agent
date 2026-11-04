@@ -2119,10 +2119,16 @@ export class WvdWorld implements World {
       else this.#host?.log.warn(line);
       return;
     }
+    // The measured timing rides the same line (operator rule 2026-11-05): the actual delay, the
+    // press's round trip and the child's own leg, and the carry time the park yields — the three
+    // terms the band model needs, none of them inferred.
+    const roundTripMs = outcome.ackAtMs - outcome.pressAtMs;
     this.#host?.log.info(
       `wvd: chest QTE pressed: v=${outcome.v} delayMs=${outcome.atMs} target=${outcome.target} `
         + `tapX=${outcome.tapX} restX=${outcome.restX === null ? 'unread' : outcome.restX} `
-        + `settled=${outcome.restSettled}`,
+        + `settled=${outcome.restSettled} delayActualMs=${Math.round(outcome.delayActualMs)} `
+        + `roundTripMs=${Math.round(roundTripMs)} inputMs=${outcome.inputMs === null ? 'none' : Math.round(outcome.inputMs)} `
+        + `tau=${outcome.tauS === null ? 'unmeasured' : outcome.tauS.toFixed(4)}s`,
     );
   }
 
