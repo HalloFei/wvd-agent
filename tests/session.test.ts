@@ -16,7 +16,7 @@ function state(observation: Observation, willpower: number[] = [80], chestsRemai
 function screen(
   kind:
     | 'town' | 'worldmap' | 'dungeon' | 'dungeon-select' | 'drop-item-claim' | 'loading' | 'unknown'
-    | 'character-page' | 'main-character-dead',
+    | 'character-page' | 'main-character-dead' | 'revive-qte',
   confidence = CONFIDENT,
 ): Observation {
   return { screen: kind, atMs: AT, confidence };
@@ -59,6 +59,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   'dungeon-select': screen('dungeon-select'),
   'character-page': screen('character-page'),
   'main-character-dead': screen('main-character-dead'),
+  'revive-qte': screen('revive-qte'),
   'harken-menu': { screen: 'harken-menu', atMs: AT, confidence: CONFIDENT, rows: [] },
 };
 

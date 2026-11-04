@@ -250,7 +250,7 @@ async function pollFloor(step: TaskStep, index: number, env: ScriptEnv, floorKey
  */
 export const WORLD_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
   'combat', 'chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'drop-item-claim',
-  'main-character-dead',
+  'main-character-dead', 'revive-qte',
 ]);
 
 /** Where a per-tick stage is: the next step, and the clock its wait / expect is on. */

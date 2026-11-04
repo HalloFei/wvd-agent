@@ -35,6 +35,9 @@ export const INITIAL_MODE: ModeMemory = { mode: 'unknown', streak: 0 };
 export function modeOf(observation: Observation): GameMode | null {
   switch (observation.screen) {
     case 'combat':
+      // A party member's revive QTE is a battle moment (2026-11-05): the battle keeps owning the
+      // screen, so the loop neither leaves the mode nor re-arms the sequence through it.
+    case 'revive-qte':
       return 'battle';
     case 'chest-prompt':
     case 'chest-open':

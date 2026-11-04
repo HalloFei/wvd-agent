@@ -313,6 +313,8 @@ const QTE_CARRY_SPREAD_PX = 20;
  * `battleOpenerTimeoutMs`, not a fixed window.
  */
 const BATTLE_STABLE_READS = 2;
+/** Frames the revive QTE must stay up: one is a modal still drawing, two is a member down. */
+const PARTY_DOWN_FRAMES = 2;
 
 /** How many X 关闭 taps a character page may take before the loop leaves it to the stall clock. */
 const PAGE_CLOSE_TRIES = 3;
@@ -582,6 +584,10 @@ export class WvdWorld implements World {
   #battleRead: { readonly value: string | null; readonly frames: number } | null = null;
   /** The death scene has been sent to Coo for this death (one question, not one per tick). */
   #deathEscalated = false;
+  /** Consecutive frames of the revive QTE: the modal has to stay up, not flicker. */
+  #reviveFrames = 0;
+  /** The revive QTE has been sent to Coo for this death (one question, not one per tick). */
+  #reviveAsked = false;
   /**
    * The chest QTE's measured terms for the **bar on screen**: the carry time from a settled press's
    * park, and the input leg from the press's round trip. Cleared when a new chest starts; the config
@@ -1160,10 +1166,35 @@ export class WvdWorld implements World {
     // World raises the frame to Coo once per death, and Coo decides whether to close the game and the
     // PC. Nothing is pressed here — there is no recovery module.
     if (observation.screen === 'main-character-dead') {
+      // The operator's unattended run wants the session to *end* here, with the frame attached
+      // (`stopOnDeath`), instead of waiting for an answer nobody will give (2026-11-05).
+      if (this.#cfg.stopOnDeath) {
+        await this.#stopWithEvidence(session, frame, 'the main character died');
+        return;
+      }
       if (!this.#deathEscalated) {
         this.#deathEscalated = true;
         this.#host?.log.warn('wvd: the main character died; asking Coo what to do');
         await this.#escalate(session, frame, observation, now);
+      }
+      return;
+    }
+
+    // A party member's death is the game's revive QTE (operator, 2026-11-05: "a party member died
+    // during battle — like revive screen"). The frame is named now, so the loop never presses into
+    // it. With `stopOnDeath` the session ends with the frame attached; without it, the question is
+    // raised once per death like the main character's scene. Two consecutive frames, because one is
+    // a modal still drawing.
+    if (observation.screen === 'revive-qte') {
+      this.#reviveFrames += 1;
+      if (this.#reviveFrames >= PARTY_DOWN_FRAMES) {
+        if (this.#cfg.stopOnDeath) {
+          await this.#stopWithEvidence(session, frame, 'a party member is down: the revive QTE');
+        } else if (!this.#reviveAsked) {
+          this.#reviveAsked = true;
+          this.#host?.log.warn('wvd: a party member is down; asking Coo what to do');
+          await this.#escalate(session, frame, observation, now);
+        }
       }
       return;
     }
@@ -1425,6 +1456,10 @@ export class WvdWorld implements World {
       this.#qteLatencyMs = null;
     }
     if (observation.screen !== 'main-character-dead') this.#deathEscalated = false;
+    if (observation.screen !== 'revive-qte') {
+      this.#reviveFrames = 0;
+      this.#reviveAsked = false;
+    }
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen !== 'character-page') {
       this.#pageCloseTries = 0;

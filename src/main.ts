@@ -28,6 +28,7 @@ import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattle
 import { closeCharacterPage } from './actions/heal.ts';
 import { CharacterPagePerceiver } from './perception/character-page.ts';
 import { MainCharacterDeathPerceiver } from './perception/death.ts';
+import { ReviveQtePerceiver } from './perception/revive-qte.ts';
 import { HarkenMenuPerceiver } from './perception/harken.ts';
 import { healParty } from './actions/heal.ts';
 import { timeQte } from './actions/qte.ts';
@@ -142,6 +143,10 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     // The DLL-style list between the world map and the dungeon; named last because only its own
     // row recogniser speaks and a normal frame must not pay for it.
     { perceiver: new DungeonSelectPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    // Last, because the screens it could be confused with are named by recognisers above it: the
+    // party member's revive QTE is the battle's modal ring (2026-11-05), and a frame a chest, the
+    // list or the dungeon already named must win before this one is asked.
+    { perceiver: new ReviveQtePerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
   ]);
 
   const openSession = async (): Promise<SessionOpen> => {

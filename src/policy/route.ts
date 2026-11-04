@@ -89,6 +89,11 @@ export function nextIntent(state: RouteState): Intent {
       // here — the game's own revive changes the screen, and the loop waits for it. A session that
       // cannot come back is the stall clock's business, not a click's.
       return { kind: 'wait', ms: HANDOFF_MS };
+    case 'revive-qte':
+      // A party member is down (operator, 2026-11-05): the revive QTE names the moment, and the
+      // World owns the decision — stop the session (`stopOnDeath`) or ask Coo once. Nothing here
+      // presses into the ring; playing it is t-mvy6dvsw's open work.
+      return { kind: 'wait', ms: HANDOFF_MS };
     case 'chest-open':
       // The chest module owns the opener panel, and the panel is readable now (Task 12): the World
       // reads the members, chooses one and clicks that card. Not a blind click — the choice comes from

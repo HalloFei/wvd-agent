@@ -795,8 +795,31 @@ transitions are excluded by luma (< 20). The rule is a fraction, not a rectangle
 and 1920.
 
 The name is all there is (operator: *just name it*): the route **waits** on it and the game's own
-revive changes the screen — no revive module, no recovery policy. `tests/death.test.ts` pins the
+revive changes the screen — no revive module, no recovery policy. \`tests/death.test.ts\` pins the
 positive and the negatives.
+
+## A party member's death is the revive QTE, and a stop is a stop (2026-11-05)
+
+The second death the operator named (*a party member died during battle — like revive screen*) was
+still an unnamed frame inside the battle **mode**: \`testdata/battle-2026-11-02/revive-qte.jpg\` at
+\`unknown\` 0.80. It is \`revive-qte\` now (contracts §2), named by two facts of its own UI — the modal
+close X in the bottom-right window (0.065 at 1920, 0.080 at 1280; 0.000 on every other recorded
+screen) and the pale-violet revive ring in the centre band (3.4 % against at most 0.73 % elsewhere).
+The recogniser runs **last** in the chain, so a chest, a list or the dungeon that a bigger recogniser
+already named never reaches it; \`tests/revive-qte.test.ts\` pins the positive at both widths and ten
+negatives.
+
+The World's question was still a question, though: \`main-character-dead\` asked Coo and waited, and
+nobody answers an unattended run. \`worlds.wvd.stopOnDeath\` (default false) now ends the session on
+either death — the main character's scene or a member's revive QTE — with the frame pushed as
+evidence. \`scripts/world-run.ts\` sets it for farm runs, writes \`.tmp/runs/<stamp>/report.json\`
+(task, cycles, stop reason, final status, every pushed frame) and exits \`0\` only when the World
+reports \`task-complete\`, \`2\` on any stop condition, \`1\` when the session never started. Its own
+bounds are env-configured: \`WVD_CYCLES\`, \`WVD_WALL_MS\`, \`WVD_SESSION_MINUTES\`,
+\`WVD_STALL_SECONDS\`, \`WVD_ESCALATE_TIMEOUT_MS\`, \`WVD_REPORT_DIR\`. The stop conditions an unattended
+run must leave a record of — a death, a stall, a lost process — are exactly the three ways that exit
+code becomes 2.
+
 
 
 ## The battle read: the frame colour, and the first frame is too early (2026-11-03)

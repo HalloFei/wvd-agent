@@ -1766,6 +1766,41 @@ describe('the escalation exchange', () => {
     expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(1);
   });
 
+  it('stops the session on a death when stopOnDeath is set (the unattended run)', async () => {
+    // The operator's farm run (2026-11-05) wants the stop, not a question nobody answers: the death
+    // ends the session with the frame attached, and nothing is pressed.
+    const dead: Observation = { screen: 'main-character-dead', atMs: 100, confidence: 0.9 };
+    const { world, host, actuator } = makeWorld({ observation: dead, cfg: { stopOnDeath: true, escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(world.isRunning()).toBe(false);
+    expect(actuator.calls).toEqual([]);
+    const note = host.pushed.find((pushed) => pushed.event.type === 'wvd.note');
+    expect(note?.event.text).toContain('the main character died');
+    expect(note?.event.blobs).toHaveLength(1);
+    expect(host.pushed.some((pushed) => pushed.event.type === 'wvd.stopped')).toBe(true);
+    expect(host.pushed.some((pushed) => pushed.event.type === 'wvd.stuck')).toBe(false);
+  });
+
+  it('stops on a party member\'s revive QTE after two frames, and asks nobody', async () => {
+    // The revive QTE is a battle modal (2026-11-05): the first frame may be the modal still drawing,
+    // the second is a member down. With stopOnDeath the session ends there; no ring is pressed.
+    const revive: Observation = { screen: 'revive-qte', atMs: 100, confidence: 0.85 };
+    const { world, host, actuator } = makeWorld({ observation: revive, cfg: { stopOnDeath: true, escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();
+    expect(world.isRunning()).toBe(true);
+    await world.tick();
+    expect(world.isRunning()).toBe(false);
+    expect(actuator.calls).toEqual([]);
+    expect(host.pushed.some((pushed) => pushed.event.type === 'wvd.stuck')).toBe(false);
+    const note = host.pushed.find((pushed) => pushed.event.type === 'wvd.note');
+    expect(note?.event.text).toContain('a party member is down');
+  });
+
   it('checks image support wrapped, so a throwing endpoint still gets the question', async () => {
     const host = new FakeHost();
     host.acceptsThrows = true;

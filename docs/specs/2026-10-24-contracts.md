@@ -65,7 +65,8 @@ encoder changes one module and no parser.
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
-  | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'harken-menu' | 'unknown';
+  | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
+  | 'unknown';
 ```
 
 `drop-item-claim` is the chest's item-claim overlay: the contents card with the `获得了…` caption, and
@@ -88,6 +89,19 @@ snapshot): mean saturation **0.000**, saturated pixels **0.00 %**, against 0.058
 on every other recorded screen. The name exists so a death is a named screen, not the unnamed frame
 that used to stall the loop; there is **no recovery module** — the route waits, and the game's own
 revive changes the screen.
+
+`revive-qte` is a **party member's** death (operator, 2026-11-05: *a party member died during battle —
+like revive screen*). The game puts the revive QTE up: the 3-D battle view with the boss's HUD at the
+top, the command row and the party panel gone, a **pale-violet ring** swirling over the fallen member,
+and a modal **close X** in the bottom-right corner. Measured on the live frame
+(`testdata/battle-2026-11-02/revive-qte.jpg`, 1920×1080) and its 1280×720 box-filtered copy (the
+escalation snapshot's width): bright pixels in the bottom-right 7 % window **0.065 / 0.080** against
+**0.000** on every other recorded screen, and pale-violet pixels in the centre band **3.4 %** against at
+most 0.73 % elsewhere (the Dungeon Select list's 7.4 % is named by its own recogniser first and carries
+no close X). `perception/revive-qte.ts` carries the numbers and the thresholds between them. The name
+exists so the loop never presses into a member's death; the World either stops the session on it
+(`stopOnDeath`, an unattended run) or raises the question to Coo once per death. Playing the ring is
+still open (`t-mvy6dvsw`).
 
 `character-page` is the menu a party HUD card opens (2026-11-03): a member's page with its stat block
 and the bottom tab row (关闭 / 强度 / 技能 / 咒文 / 装备 / 背包). Its evidence is the X 关闭 tile at
@@ -453,6 +467,7 @@ object (§0 rule 3).
 | `tickMs` | integer 50–1000 | `100` | World | loop period |
 | `sessionMaxMinutes` | integer | `120` | World | hard stop for one session |
 | `stallStopSeconds` | integer | `120` | World | no progress this long ends the session |
+| `stopOnDeath` | boolean | `false` | World | a death (main character or party member) ends the session instead of asking Coo |
 
 ### 8.2 Capture and engine
 

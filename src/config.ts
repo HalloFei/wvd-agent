@@ -11,6 +11,12 @@ export interface WvdConfigSection extends WorldSection {
   sessionMaxMinutes: number;
   /** How many enter → farm → leave cycles one session runs (design §7.8). */
   cycles: number;
+  /**
+   * End the session on a death (the main character's scene, or a party member's revive QTE) instead
+   * of asking Coo. Off by default: the question is the operator's. An unattended farm run turns it
+   * on so the stop is a stop, not a wait for an answer nobody is there to give.
+   */
+  stopOnDeath: boolean;
   /** Task file for the location to farm; empty keeps the built-in route (contracts §10). */
   taskFile: string;
   stallStopSeconds: number;
@@ -64,6 +70,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   tickMs: 100,
   sessionMaxMinutes: 120,
   cycles: 1,
+  stopOnDeath: false,
   taskFile: '',
   stallStopSeconds: 120,
   gameWindowTitle: 'WizardryVariantsDaphne',
@@ -124,6 +131,10 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       'worlds.wvd.cycles': {
         type: 'integer', title: '循环次数',
         description: '一次会话跑几轮「进副本 → 刷取 → 回城」。', minimum: 1, maximum: 50,
+      },
+      'worlds.wvd.stopOnDeath': {
+        type: 'boolean', title: '死亡即停止',
+        description: '主角死亡或队员倒下（复活 QTE）时结束会话，而不是等待回答；用于无人值守的连续跑图。',
       },
       'worlds.wvd.taskFile': {
         type: 'string', title: '任务文件',

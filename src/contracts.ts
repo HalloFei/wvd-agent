@@ -43,7 +43,8 @@ export interface FrameSource {
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
-  | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'harken-menu' | 'unknown';
+  | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
+  | 'unknown';
 
 // §3 Perception
 
