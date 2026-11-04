@@ -14,7 +14,9 @@ function state(observation: Observation, willpower: number[] = [80], chestsRemai
 
 /** A screen with no payload of its own, at any confidence. */
 function screen(
-  kind: 'town' | 'worldmap' | 'dungeon' | 'dungeon-select' | 'drop-item-claim' | 'loading' | 'unknown' | 'character-page',
+  kind:
+    | 'town' | 'worldmap' | 'dungeon' | 'dungeon-select' | 'drop-item-claim' | 'loading' | 'unknown'
+    | 'character-page' | 'main-character-dead',
   confidence = CONFIDENT,
 ): Observation {
   return { screen: kind, atMs: AT, confidence };
@@ -56,6 +58,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   loading: screen('loading'),
   'dungeon-select': screen('dungeon-select'),
   'character-page': screen('character-page'),
+  'main-character-dead': screen('main-character-dead'),
   'harken-menu': { screen: 'harken-menu', atMs: AT, confidence: CONFIDENT, rows: [] },
 };
 

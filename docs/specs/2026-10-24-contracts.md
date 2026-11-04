@@ -65,7 +65,7 @@ encoder changes one module and no parser.
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
-  | 'dungeon-select' | 'character-page' | 'harken-menu' | 'unknown';
+  | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'harken-menu' | 'unknown';
 ```
 
 `drop-item-claim` is the chest's item-claim overlay: the contents card with the `获得了…` caption, and
@@ -80,6 +80,14 @@ export type ScreenId =
 reconstructed — so the reader reports the rows it can name and `null` for a label the library has never
 seen (`perception/harken.ts` + `harken-library.ts`). The climb taps the row the task names; when it is
 not offered, the `归还` row backs the party out and the stair icon is the way up.
+
+`main-character-dead` is the main character's death (operator, 2026-11-05): the game renders the
+frame in **greyscale** — the camera on the character's own gauntlets, no HUD. Measured on the live
+death frame (`testdata/screens/2026-11-05-main-character-death/death.jpeg`, a 1280×720 escalation
+snapshot): mean saturation **0.000**, saturated pixels **0.00 %**, against 0.058–0.148 and 5.8–33.4 %
+on every other recorded screen. The name exists so a death is a named screen, not the unnamed frame
+that used to stall the loop; there is **no recovery module** — the route waits, and the game's own
+revive changes the screen.
 
 `character-page` is the menu a party HUD card opens (2026-11-03): a member's page with its stat block
 and the bottom tab row (关闭 / 强度 / 技能 / 咒文 / 装备 / 背包). Its evidence is the X 关闭 tile at

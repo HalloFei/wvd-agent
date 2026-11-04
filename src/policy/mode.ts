@@ -50,7 +50,10 @@ export function modeOf(observation: Observation): GameMode | null {
       return 'travel';
     case 'town':
       return 'town';
+    // The main character's death is its own moment, not a frame that changes a pipeline's mode:
+    // named so it stops being an unnamed frame inside whatever mode the party died in.
     // Nothing was named: the mode is not this frame's to change.
+    case 'main-character-dead':
     case 'unknown':
     case 'loading':
       return null;

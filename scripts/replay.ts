@@ -970,6 +970,7 @@ function emptyScreens(): Record<ScreenId, number> {
     loading: 0,
     'dungeon-select': 0,
     'character-page': 0,
+    'main-character-dead': 0,
     'harken-menu': 0,
     unknown: 0,
   };

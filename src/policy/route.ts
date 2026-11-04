@@ -84,6 +84,11 @@ export function nextIntent(state: RouteState): Intent {
       // The party is standing at a chest and the game is asking. Accepting is the chest step's
       // first half; the 由谁打开? panel is its second.
       return { kind: 'open-chest' };
+    case 'main-character-dead':
+      // Named, and nothing more (operator, 2026-11-05): *just name it*. There is no recovery module
+      // here — the game's own revive changes the screen, and the loop waits for it. A session that
+      // cannot come back is the stall clock's business, not a click's.
+      return { kind: 'wait', ms: HANDOFF_MS };
     case 'chest-open':
       // The chest module owns the opener panel, and the panel is readable now (Task 12): the World
       // reads the members, chooses one and clicks that card. Not a blind click — the choice comes from

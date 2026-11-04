@@ -27,6 +27,7 @@ import { BATTLE_OPENERS, tapOpenerConfirm, tapOpenerSlot } from './actions/battl
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from './actions/chest.ts';
 import { closeCharacterPage } from './actions/heal.ts';
 import { CharacterPagePerceiver } from './perception/character-page.ts';
+import { MainCharacterDeathPerceiver } from './perception/death.ts';
 import { HarkenMenuPerceiver } from './perception/harken.ts';
 import { healParty } from './actions/heal.ts';
 import { timeQte } from './actions/qte.ts';
@@ -125,6 +126,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     // The opening is named after the prompt: both draw no HUD, and only the prompt's own recogniser
     // can tell the 打开 menu from the lid lifting.
     { perceiver: new ChestOpeningPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    // The main character's death is the game's greyscale scene (2026-11-05): named before anything
+    // that keys on the dungeon's own HUD, so a death is never an unnamed frame again.
+    { perceiver: new MainCharacterDeathPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The character page is a full-screen menu: its X 关闭 tile is the evidence, and it must be named
     // before the HUD can mistake the scene under it for the 3-D view (2026-11-03).
     { perceiver: new CharacterPagePerceiver(), floor: ACTING_CONFIDENCE_FLOOR },

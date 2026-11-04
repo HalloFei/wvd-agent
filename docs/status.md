@@ -695,6 +695,22 @@ timing seam, so it was run before and after, AGENTS.md §5).
 **OWED:** the live battle — one session with the window untouched, the log's presses `battleStepMs`
 apart and the battle reaching 自動 without a stall. Not run: it spends the operator's machine.
 
+## The main character's death is a named screen (2026-11-05)
+
+The 2026-11-04 run stalled at 16:06:57 on a frame the loop could not name — the camera fallen onto the
+character's own gauntlets, no HUD — and the operator identified it as the **main character's death**
+(traps, a chest's trap, or a battle). It is `main-character-dead` now (contracts §2), named by the
+game's own treatment: the scene is rendered in **greyscale**. Measured on the live frame
+(`testdata/screens/2026-11-05-main-character-death/death.jpeg`, a 1280×720 escalation snapshot): mean
+saturation **0.000**, saturated pixels **0.00 %**, against 0.058–0.148 and 5.8–33.4 % on every other
+recorded screen (battle command phase, revive QTE, dungeon map, chest prompt, character page). Black
+transitions are excluded by luma (< 20). The rule is a fraction, not a rectangle, so it holds at 1280
+and 1920.
+
+The name is all there is (operator: *just name it*): the route **waits** on it and the game's own
+revive changes the screen — no revive module, no recovery policy. `tests/death.test.ts` pins the
+positive and the negatives.
+
 
 ## The battle read: the frame colour, and the first frame is too early (2026-11-03)
 
