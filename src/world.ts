@@ -2378,6 +2378,11 @@ export class WvdWorld implements World {
           );
           return;
         }
+        // A task script is a whole procedure inside one tick: the screens and presses it makes are
+        // progress the loop cannot see until it returns, so the stall clock restarts here. Without
+        // this, the 48.7 s exit script read as "nothing changed" and escalated the loop the moment
+        // the next cycle began (live 2026-11-05 16:47:52).
+        this.#lastProgressAtMs = this.#now();
         if (intent.name !== 'exit') return;
         this.#cyclesDone += 1;
         if (this.#cyclesDone < Math.max(1, this.#cfg.cycles) && this.#task !== null) {

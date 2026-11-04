@@ -2767,6 +2767,43 @@ describe('the orientation', () => {
     expect(world.isRunning()).toBe(false);
   });
 
+  it('does not read a long exit script as a stall', async () => {
+    // Live 2026-11-05: the exit script took 48.7 s inside one tick, and the stall clock read that as
+    // "nothing changed" and escalated the loop the moment the next cycle began. The script's own
+    // screens and presses are progress, even though the loop cannot see them until it returns.
+    const definition = goalDefinition();
+    let clockRef: { advance(ms: number): void } | null = null;
+    const task: SessionTask = {
+      enter: async () => ({ ok: true, steps: 0, ms: 0 }),
+      runScript: async (name) => {
+        if (name === 'exit') clockRef?.advance(49_000);   // the script's own duration, real time
+        return { ok: true, steps: 15, ms: name === 'exit' ? 49_000 : 1 };
+      },
+      abort: () => {},
+      orient: { goal: definition.goal!, floor: definition.floor.titleKey },
+    };
+    const { world, host, perceiver, clock } = makeWorld({
+      observation: mapWith(FARM),
+      task,
+      policy: createTaskPolicy(() => definition, routePolicy),
+      // A stalled loop asks Coo; the timeout keeps the test from waiting on the question.
+      cfg: { cycles: 2, escalateTimeoutMs: 25 },
+    });
+    clockRef = clock;
+    await started(world, host);
+
+    await world.tick();                        // the exit script, 49 s of it inside this tick
+    expect(world.isRunning()).toBe(true);
+
+    perceiver.observation = townView;
+    clock.advance(800);
+    await world.tick();
+    clock.advance(800);
+    await world.tick();
+    expect(world.isRunning()).toBe(true);
+    expect(host.pushed.filter((entry) => entry.event.type === 'wvd.stuck')).toEqual([]);
+  });
+
   it('re-orients after the exit script instead of running a scripted entry', async () => {
     const definition = goalDefinition();
     const { task, calls } = goalTask(definition);
