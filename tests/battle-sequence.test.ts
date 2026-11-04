@@ -14,7 +14,7 @@ const aliceTurn: BattlePhase = { speedOn: false, autoOn: false, activeMember: '�
 const speedUp: BattlePhase = { speedOn: true, autoOn: false, activeMember: '爱丽丝' };
 
 function make(openers: readonly BattleOpener[] = [alice]): BattleSequence {
-  return new BattleSequence({ settleMs: 1_000, stepMs: 1_000, readWindowMs: 3_000, toggleAttempts: 3, openers });
+  return new BattleSequence({ settleMs: 1_000, stepMs: 1_000, openerTimeoutMs: 10_000, toggleAttempts: 3, openers });
 }
 
 describe('the battle operation sequence', () => {
@@ -52,12 +52,22 @@ describe('the battle operation sequence', () => {
     expect(s.next(speedUp, 2_700)).toEqual({ kind: 'slot', opener: alice });
   });
 
-  it('waits for a readable turn card, and gives the cast up when the window expires', () => {
+  it('keeps checking an unreadable state, and gives the cast up only at the timeout', () => {
+    // The caller confirms the state across consecutive frames; the sequence's bound on the whole wait
+    // is `openerTimeoutMs` (10 s by default), not a short window from the first miss.
     const s = make();
     s.enter(0);
     expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 1_000)).toEqual({ kind: 'wait', why: 'unreadable' });
-    expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 3_999)).toEqual({ kind: 'wait', why: 'unreadable' });
-    expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 4_000)).toEqual({ kind: 'auto' });
+    expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 5_000)).toEqual({ kind: 'wait', why: 'unreadable' });
+    expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 10_999)).toEqual({ kind: 'wait', why: 'unreadable' });
+    expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 11_000)).toEqual({ kind: 'auto' });
+  });
+
+  it('casts a confirmed state the caller hands it, with no extra settle', () => {
+    // The two-frame confirmation is the caller's (the World's); the sequence trusts what it is given.
+    const s = make();
+    s.enter(0);
+    expect(s.next({ speedOn: true, autoOn: false, activeMember: '爱丽丝' }, 1_000)).toEqual({ kind: 'slot', opener: alice });
   });
 
   it('does not cast a member that is not on the list', () => {
@@ -87,7 +97,7 @@ describe('the battle operation sequence', () => {
 
   it('leaves an auto battle alone when no opener is configured', () => {
     // There is nothing to cast, so there is nothing to disengage: 自動 is never touched.
-    const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, readWindowMs: 3_000, toggleAttempts: 3, openers: [] });
+    const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, openerTimeoutMs: 10_000, toggleAttempts: 3, openers: [] });
     s.enter(0);
     expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 0)).toEqual({ kind: 'done' });
   });
@@ -132,7 +142,7 @@ describe('the battle operation sequence', () => {
   });
 
   it('does not read the panel when no opener is configured', () => {
-    const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, readWindowMs: 3_000, toggleAttempts: 3, openers: [] });
+    const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, openerTimeoutMs: 10_000, toggleAttempts: 3, openers: [] });
     s.enter(0);
     expect(s.needsMemberRead({ speedOn: null, autoOn: null, activeMember: null }, 0)).toBe(false);
     expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 0)).toEqual({ kind: 'auto' });

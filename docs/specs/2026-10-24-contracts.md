@@ -484,7 +484,7 @@ object (§0 rule 3).
 | `autoBattleEnableAttempts` | integer | `3` | battle | tries to switch auto-battle on; the loop's fallback cap (§11) |
 | `battleStepMs` | integer 700–5000 | `1000` | battle | between two battle operations, measured from the previous tap's **return** (§11); the pacing primitive's 700 ms is the floor |
 | `battleSettleMs` | integer 0–10000 | `1000` | battle | after the battle's first frame before the first press |
-| `battleReadWindowMs` | integer 500–10000 | `3000` | battle | how long the ACTIVE card may take to become readable before the cast is given up |
+| `battleOpenerTimeoutMs` | integer 1000–60000 | `10000` | battle | how long the opener may wait for a **confirmed** turn card (the same ACTIVE member on two consecutive frames) before the cast is given up |
 | `fightTimeoutMs` | integer | `180000` | battle | a fight longer than this is a stall |
 | `escalateMaxPerHour` | integer | `20` | escalation | model calls before the session stops |
 | `escalateTimeoutMs` | integer | `90000` | escalation | wait for Coo's answer |
@@ -545,7 +545,9 @@ pressed (§2 `speedOn`/`autoOn`), so a blind re-press cannot turn one back off; 
 take is retried while the frame still says it is off, capped by `autoBattleEnableAttempts` (§8.5) —
 the operator's fallback rule (2026-11-02): *if auto is not on, press; otherwise carry on.* The ACTIVE
 card is read before the cast and never at the skill panel (the panel dims it): a miss waits
-`battleReadWindowMs` and then gives the cast up.
+`battleOpenerTimeoutMs` and then gives the cast up. A read is **confirmed** before it is trusted:
+   the same ACTIVE member on two consecutive frames (operator rule 2026-11-04: *until we get a stable
+   frame, then confirm the current state*), not a single frame.
 
 The opener belongs to the **first battle of the first cycle** of a farm task (operator rule, later on
 2026-11-04): that battle, entered with 自動 **on**, is **disengaged** — 自動 off, the opener cast once

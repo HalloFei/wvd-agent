@@ -977,7 +977,9 @@ describe('a walk stays in flight through the screens it produces', () => {
     });
     await started(world, host);
 
-    await world.tick();                              // the slot
+    await world.tick();                              // the first read: one frame, not confirmed
+    expect(slotCalls).toEqual([]);
+    await world.tick();                              // the same name again: the slot
     expect(slotCalls).toEqual(['爱丽丝']);
     expect(confirmCalls).toEqual([]);
     expect(actuator.calls).toEqual([]);
@@ -1003,7 +1005,9 @@ describe('a walk stays in flight through the screens it produces', () => {
     });
     await started(world, host);
 
-    await world.tick();
+    await world.tick();                        // the first read: one frame is not a decision
+    expect(actuator.calls).toEqual([]);
+    await world.tick();                        // the same name again: confirmed, the default runs
     expect(slotCalls).toEqual([]);
     expect(confirmCalls).toEqual([]);
     expect(actuator.calls).toEqual(['tap 1231,708']);
@@ -1029,8 +1033,10 @@ describe('a walk stays in flight through the screens it produces', () => {
 
     perceiver.observation = speedOnView;
     clock.advance(1_000);
-    await world.tick();                       // 倍速 on: the read happens once, and the member is not listed
+    await world.tick();                       // 倍速 on: the first readable frame of two
     expect(reads).toBe(1);
+    await world.tick();                       // the same answer again: confirmed, and not on the list
+    expect(reads).toBe(2);
     const noted = () => host.logRecords.filter((record) => record.message.includes('not on the opener list')).length;
     expect(noted()).toBe(1);
 
@@ -1038,7 +1044,7 @@ describe('a walk stays in flight through the screens it produces', () => {
       clock.advance(100);
       await world.tick();
     }
-    expect(reads).toBe(1);
+    expect(reads).toBe(2);
     expect(noted()).toBe(1);
   });
 
@@ -1068,8 +1074,11 @@ describe('a walk stays in flight through the screens it produces', () => {
 
     perceiver.observation = { ...autoView, speedOn: true, autoOn: false };
     clock.advance(1_000);
-    await world.tick();                       // the command phase is the loop's: read and slot
+    await world.tick();                       // the command phase is the loop's: the first read
     expect(reads).toBe(1);
+    expect(slotCalls).toEqual([]);
+    await world.tick();                       // the same name again: confirmed, the slot
+    expect(reads).toBe(2);
     expect(slotCalls).toEqual(['爱丽丝']);
 
     clock.advance(1_000);
@@ -1093,7 +1102,9 @@ describe('a walk stays in flight through the screens it produces', () => {
     await started(world, host);
 
     // The first battle: the cast, then 自動.
-    await world.tick();
+    await world.tick();                        // the first read
+    expect(slotCalls).toEqual([]);
+    await world.tick();                        // the same name again: the slot
     expect(slotCalls).toEqual(['爱丽丝']);
     clock.advance(1_000);
     await world.tick();                        // the resolving press
@@ -1111,7 +1122,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     perceiver.observation = combatView;
     clock.advance(1_000);
     await world.tick();
-    expect(reads).toBe(1);                     // the read belonged to the first battle
+    expect(reads).toBe(2);                     // both reads belonged to the first battle
     expect(slotCalls).toEqual(['爱丽丝']);
     expect(confirmCalls).toEqual(['爱丽丝']);
     expect(actuator.calls.filter((call) => call === 'tap 1231,708').length).toBe(2);
@@ -1162,8 +1173,8 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(actuator.calls).toEqual([]);
     expect(host.logRecords.some((line) => line.message.includes('not readable yet'))).toBe(true);
 
-    // The read window closes: the cast is given up and auto takes the battle.
-    clock.advance(3_100);
+    // The opener's timeout closes: the cast is given up and auto takes the battle.
+    clock.advance(10_100);
     await world.tick();
     expect(slotCalls).toEqual([]);
     expect(actuator.calls).toEqual(['tap 1231,708']);
@@ -1184,7 +1195,9 @@ describe('a walk stays in flight through the screens it produces', () => {
 
     answer = '爱丽丝';
     clock.advance(500);
-    await world.tick();
+    await world.tick();                       // one readable frame: not confirmed yet
+    expect(slotCalls).toEqual([]);
+    await world.tick();                       // the same name again: the cast
     expect(slotCalls).toEqual(['爱丽丝']);
   });
 
@@ -1258,7 +1271,9 @@ describe('a walk stays in flight through the screens it produces', () => {
 
     perceiver.observation = speedOnView;      // the game shows 倍速 on
     clock.advance(1_000);
-    await world.tick();                       // 2. the opener's slot
+    await world.tick();                       // 2. the first read
+    expect(slotCalls).toEqual([]);
+    await world.tick();                       // the same name again: the slot
     expect(slotCalls).toEqual(['爱丽丝']);
 
     clock.advance(1_000);

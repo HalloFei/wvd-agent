@@ -292,6 +292,14 @@ const ORIENT_CLIMB_TRIES = 2;
  */
 const WALK_RETRIES = 2;
 
+/**
+ * How many consecutive frames must answer the **same** ACTIVE member before the opener trusts it
+ * (operator rule 2026-11-04: *until we get a stable frame, then confirm the current state*). One
+ * readable frame can be a transition; two are the command phase. The wait it bounds is
+ * `battleOpenerTimeoutMs`, not a fixed window.
+ */
+const BATTLE_STABLE_READS = 2;
+
 /** How many X 关闭 taps a character page may take before the loop leaves it to the stall clock. */
 const PAGE_CLOSE_TRIES = 3;
 
@@ -552,6 +560,8 @@ export class WvdWorld implements World {
   #battleAutoWarned = false;
   #battleNotListedWarned = false;
   #battleAutoStuckWarned = false;
+  /** The ACTIVE-member read and how many consecutive frames it has answered the same; per battle. */
+  #battleRead: { readonly value: string | null; readonly frames: number } | null = null;
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
   #pageCloseTries = 0;
   #pageCloseWarned = false;
@@ -1363,6 +1373,7 @@ export class WvdWorld implements World {
     this.#battleAutoWarned = false;
     this.#battleNotListedWarned = false;
     this.#battleAutoStuckWarned = false;
+    this.#battleRead = null;
   }
 
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
@@ -1385,7 +1396,7 @@ export class WvdWorld implements World {
         this.#battleSequence = new BattleSequence({
           settleMs: Math.max(0, this.#cfg.battleSettleMs),
           stepMs: Math.max(OPERATION_PACE_MS, this.#cfg.battleStepMs),
-          readWindowMs: Math.max(1, this.#cfg.battleReadWindowMs),
+          openerTimeoutMs: Math.max(1, this.#cfg.battleOpenerTimeoutMs),
           toggleAttempts: Math.max(1, this.#cfg.autoBattleEnableAttempts),
           openers: firstBattle && !this.#cfg.dryRun ? (this.#battle?.openers ?? []) : [],
         });
@@ -2236,15 +2247,24 @@ export class WvdWorld implements World {
         // The turn card is read only while the opener is undecided: it says whether there is a cast at
         // all, and the skill panel dims it, so the read belongs to the command phase.
         const phase = { speedOn: seen.speedOn ?? null, autoOn: seen.autoOn ?? null, activeMember: null as string | null };
+        // "Until we get a stable frame, then confirm the current state" (operator rule 2026-11-04): the
+        // panel redraws as the battle opens, so one readable frame is not a decision. The read runs
+        // every frame while the cast is owed, and only the same answer on `BATTLE_STABLE_READS`
+        // consecutive frames is handed to the sequence — which bounds the whole wait by
+        // `battleOpenerTimeoutMs`.
         let reading: string | null = null;
         if (sequence.needsMemberRead(phase, now) && this.#battle !== undefined && context !== undefined) {
+          let read: string | null = null;
           try {
-            reading = await this.#battle.reader.readActiveMember(context.frame);
+            read = await this.#battle.reader.readActiveMember(context.frame);
           } catch (error) {
             // A reader that throws across its boundary is the loop's to absorb: a battle with an
             // unreadable panel is a miss, never a failed session.
             this.#host?.log.warn(`wvd: the active member could not be read (${message(error)})`);
           }
+          const frames = this.#battleRead !== null && this.#battleRead.value === read ? this.#battleRead.frames + 1 : 1;
+          this.#battleRead = { value: read, frames };
+          if (read !== null && frames >= BATTLE_STABLE_READS) reading = read;
         }
         if (reading !== null && !this.#battleNotListedWarned
           && this.#battle !== undefined && openerFor(reading, this.#battle.openers) === null) {

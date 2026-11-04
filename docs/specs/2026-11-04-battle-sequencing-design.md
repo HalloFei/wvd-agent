@@ -46,8 +46,11 @@ Invariants, each pinned by a test:
 - **paced**: after a tap returns, the next step waits `battleStepMs` on the same monotonic clock.
   The cast's internal 700 ms settle disappears: the slot and the confirm are separate steps paced like
   everything else.
-- **settled**: no press before `battleSettleMs` since the battle's first frame; the opener's read is
-  bounded by `battleReadWindowMs` and a null read is a **wait**, never a slot tap.
+- **settled**: no press before `battleSettleMs` since the battle's first frame. The opener's slot is
+  sent only when the ACTIVE member is **confirmed**: the caller hands the name over only after it has
+  been the same on consecutive frames (`BATTLE_STABLE_READS = 2`), and a null or unconfirmed read is
+  a **wait**, never a slot tap. The whole waiting is bounded by `battleOpenerTimeoutMs` — not by a
+  short window from the first miss.
 - **无 rush on a toggle**: a toggle step is sent only when the frame says its toggle is off; a press
   that does not take is retried on a later step's turn, capped by `autoBattleEnableAttempts`
   (the existing fallback, kept).
@@ -77,10 +80,12 @@ unmeasured, and a stillness gate would need a capture first.
 |---|---|---|---|---|
 | `battleStepMs` | integer | `1000` | 700–5000 | between two battle operations, measured from the last tap's **return** |
 | `battleSettleMs` | integer | `1000` | 0–10000 | after the battle's first frame before the first press |
-| `battleReadWindowMs` | integer | `3000` | 500–10000 | how long the ACTIVE card may take to become readable |
+| `battleOpenerTimeoutMs` | integer | `10000` | 1000–60000 | how long the opener may wait for a confirmed turn card before the cast is given up |
 
 `battleStepMs` replaces the hard-coded `OPENER_SETTLE_MS` between the slot and the confirm, and
-`battleReadWindowMs` replaces the `OPENER_READ_WINDOW_MS` constant. The pacing primitive's 700 ms
+`battleOpenerTimeoutMs` replaces the `OPENER_READ_WINDOW_MS` constant and the old fixed 3 s window:
+the loop keeps checking every frame until the state is confirmed, with this timeout as the backstop.
+The pacing primitive's 700 ms
 floor (`OPERATION_PACE_MS`) stays a constant: it is the schema's minimum, and the World also clamps a
 hand-written config at it, so a value under the floor cannot outpace the primitive. The console group
 (`WVD_CONFIG_GROUP`) renders all three and refuses the value at the point it is written.
@@ -98,14 +103,14 @@ conflates "may I act" with "what next"); the after-battle drop (`t-mvzjtxzb`).
 
 | File | Why |
 |---|---|
-| `src/policy/battle-sequence.ts` | new: the steps, the clocks, the settle and read windows |
+| `src/policy/battle-sequence.ts` | new: the steps, the clocks, the settle and the opener timeout |
 | `src/world.ts` | the fight branch delegates; the cast splits into two commands; `#track` re-arms; the `WvdCommands` seam grows two taps |
 | `src/actions/battle.ts` | `tapOpenerSlot` / `tapOpenerConfirm`; `castBattleOpener` stays for scripts |
 | `src/main.ts` | wires the two taps |
 | `src/config.ts` | the three keys: interface, defaults, console schema |
 | `docs/specs/2026-10-24-contracts.md` | §8.5 table; §11 prose ("paced 1.5 s apart") |
 | `docs/status.md` | the measured record |
-| `tests/battle-sequence.test.ts` | new: order, one-per-tick, pace from the return, settle, read window |
+| `tests/battle-sequence.test.ts` | new: order, one-per-tick, pace from the return, settle, opener timeout |
 | `tests/world.test.ts` | the 02:07 replay; the battle tests' clocks |
 | `tests/battle-opener.test.ts` | the split's two taps |
 

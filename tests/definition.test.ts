@@ -141,7 +141,7 @@ describe('WVD World definition', () => {
       willpowerFloor: 60, maxRerolls: 5, rerollLeadRatio: 0.5, qteLatencyMs: 75, qteDecelPxPerS2: 3000, qteMinWindowMs: 150,
       qteAttemptsFallback: 2, qteSubLoopMs: 4000,
       autoBattleEnableAttempts: 3, fightTimeoutMs: 180000, escalateMaxPerHour: 20, escalateTimeoutMs: 90000, escalateSettleMs: 5000, stopHotkey: 'Ctrl+Alt+W',
-      battleStepMs: 1000, battleSettleMs: 1000, battleReadWindowMs: 3000,
+      battleStepMs: 1000, battleSettleMs: 1000, battleOpenerTimeoutMs: 10000,
     });
   });
 

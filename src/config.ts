@@ -45,8 +45,11 @@ export interface WvdConfigSection extends WorldSection {
   battleStepMs: number;
   /** How long after the battle's first frame before the first press, milliseconds. */
   battleSettleMs: number;
-  /** How long the ACTIVE card may take to become readable before the cast is given up, milliseconds. */
-  battleReadWindowMs: number;
+  /**
+   * How long the opener may wait for a **confirmed** turn card (the same ACTIVE member on consecutive
+   * frames) before the cast is given up, milliseconds.
+   */
+  battleOpenerTimeoutMs: number;
   fightTimeoutMs: number;
   escalateMaxPerHour: number;
   escalateTimeoutMs: number;
@@ -89,7 +92,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   autoBattleEnableAttempts: 3,
   battleStepMs: 1000,
   battleSettleMs: 1000,
-  battleReadWindowMs: 3000,
+  battleOpenerTimeoutMs: 10000,
   fightTimeoutMs: 180000,
   escalateMaxPerHour: 20,
   escalateTimeoutMs: 90000,
@@ -215,9 +218,10 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
         type: 'integer', title: '战斗稳定等待', description: '战斗出现后先等这么久再按第一个键，毫秒。',
         minimum: 0, maximum: 10000,
       },
-      'worlds.wvd.battleReadWindowMs': {
-        type: 'integer', title: '战斗读卡等待', description: '等待行动卡可读的时长；超时即放弃这次技能，毫秒。',
-        minimum: 500, maximum: 10000,
+      'worlds.wvd.battleOpenerTimeoutMs': {
+        type: 'integer', title: '技能起手超时',
+        description: '连续两帧读到同一行动者才算确认；超过这个时长仍未确认就放弃这次技能，毫秒。',
+        minimum: 1000, maximum: 60000,
       },
       'worlds.wvd.fightTimeoutMs': {
         type: 'integer', title: '战斗超时', description: '超过这个时长视为停滞，毫秒。',

@@ -24,8 +24,9 @@
  * - **自動 off before the cast** (operator rule 2026-11-04): a battle entered with 自動 on draws no
  *   command phase, so the sequence turns 自動 off, casts the opener once by hand, and turns 自動 back
  *   on — enter → off → cast → on. A battle with no configured opener is left alone.
- * - the opener's slot is sent only when the ACTIVE card is **readable** (contracts §11): a null read
- *   is a wait, bounded by `readWindowMs`, and then the cast is given up — never a blind slot tap.
+ * - the opener's slot is sent only when the ACTIVE card is **readable and confirmed** (contracts
+ *   §11): the caller hands over the name only after it has held on consecutive frames, and a value
+ *   that never confirms is a wait bounded by `openerTimeoutMs` — never a blind slot tap.
  * - the pace is measured from the tap's **return** (`completed`/`refused`), not from the frame the
  *   operation started on.
  *
@@ -60,8 +61,13 @@ export interface BattleSequenceOptions {
   readonly settleMs: number;
   /** Between two operations, measured from the previous tap's return, ms (`battleStepMs`). */
   readonly stepMs: number;
-  /** How long the ACTIVE card may take to become readable before the cast is given up, ms. */
-  readonly readWindowMs: number;
+  /**
+   * How long the opener may wait for a **confirmed** turn card before the cast is given up, ms
+   * (`battleOpenerTimeoutMs`). The confirmation itself is the caller's: it reports the ACTIVE member
+   * only once the same answer has held on consecutive frames (operator rule 2026-11-04: *until we get
+   * a stable frame, then confirm the current state*).
+   */
+  readonly openerTimeoutMs: number;
   /** The configured attempts per toggle (`autoBattleEnableAttempts`, contracts §8.5). */
   readonly toggleAttempts: number;
   /** The operator's opener list (contracts §11); empty means no cast is ever owed. */
@@ -77,7 +83,7 @@ export class BattleSequence {
   #lastTapAtMs: number | null = null;
   /** The opener the turn card decided; undefined until a turn card is read, null for no cast. */
   #opener: BattleOpener | null | undefined = undefined;
-  /** When the read first came back unreadable; the read window's clock. */
+  /** When the cast first waited for a confirmed state; the opener timeout's clock. */
   #readSinceMs: number | null = null;
   #slotSent = false;
   #confirmSent = false;
@@ -100,18 +106,18 @@ export class BattleSequence {
   }
 
   /**
-   * True when the next decision needs the ACTIVE card's name. It is false on every frame the decision
-   * would not use a read: before the settle window, with no configured opener, once the opener is
-   * decided, while 倍速 is still owed (it is pressed before the cast), in a battle that already plays
-   * itself (no command phase is drawn), and inside the step pace (the next call would only wait).
-   * Without this the World reads — and logs — once per tick instead of once per decision.
+   * True when the next decision needs the ACTIVE card's name: after the settle window, with a
+   * configured opener, while the cast is undecided, once 倍速 is on and while the battle is not
+   * playing itself (an auto battle draws no command phase). It is **not** gated on the step pace: the
+   * caller reads every frame so it can confirm the state across consecutive frames, and it is the
+   * sequence's `openerTimeoutMs` that bounds the wait. Nothing is read before the settle, with no
+   * configured opener, or once the cast is decided.
    */
   needsMemberRead(phase: BattlePhase, nowMs: number): boolean {
     if (this.#enteredAtMs === null) return false;
     if (nowMs - this.#enteredAtMs < this.#options.settleMs) return false;
     if (this.#options.openers.length === 0 || this.#opener !== undefined) return false;
-    if (phase.speedOn !== true || phase.autoOn === true) return false;
-    return this.#lastTapAtMs === null || nowMs - this.#lastTapAtMs >= this.#options.stepMs;
+    return phase.speedOn === true && phase.autoOn !== true;
   }
 
   /** One decision for this tick. The caller sends at most one tap and reports its return. */
@@ -156,8 +162,10 @@ export class BattleSequence {
         this.#opener = openerFor(phase.activeMember, this.#options.openers);
         this.#readSinceMs = null;
       } else {
+        // No confirmed state yet. Keep checking — the panel is drawn a beat after the battle, and a
+        // frame of anything else in between is not a decision — until the opener's own timeout.
         this.#readSinceMs ??= nowMs;
-        if (nowMs - this.#readSinceMs < this.#options.readWindowMs) return { kind: 'wait', why: 'unreadable' };
+        if (nowMs - this.#readSinceMs < this.#options.openerTimeoutMs) return { kind: 'wait', why: 'unreadable' };
         this.#opener = null;
       }
     }

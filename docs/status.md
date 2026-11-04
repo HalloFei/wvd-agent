@@ -667,8 +667,11 @@ the skill's resolution.
 `src/policy/battle-sequence.ts` now owns the battle's operations: settle → 倍速 → 自動 off (when
 the cast is owed) → opener slot → opener confirm → 自動 → hold. One tap per tick, in that order, the
 next step no sooner than `battleStepMs` after the previous tap returned. Three keys are the field knobs (contracts §8.5): `battleStepMs`
-(1000, minimum 700 — the pacing primitive's floor), `battleSettleMs` (1000) and `battleReadWindowMs`
-(3000, which replaces the old `OPENER_READ_WINDOW_MS` constant). The sequence is created on the battle
+(1000, minimum 700 — the pacing primitive's floor), `battleSettleMs` (1000) and
+`battleOpenerTimeoutMs` (10000, which replaces the old `OPENER_READ_WINDOW_MS` constant and the fixed
+3 s window). The turn card is **confirmed** across frames, not read once: the same ACTIVE member on
+two consecutive frames is the state (`BATTLE_STABLE_READS = 2`), and the loop keeps checking every
+frame until the timeout rather than giving up after a short window. The sequence is created on the battle
 **mode**'s first frame and dropped when the mode leaves, so an unnamed frame inside a battle can no
 longer re-arm it (and a cast can no longer be sent twice).
 
