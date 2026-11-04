@@ -13,11 +13,13 @@
  * carries the sign of motion because the marker keeps sliding the way it was going — get the sign
  * wrong and a leftward plan aims 62 px past the zone on a 610 px/s chest.
  *
- * **The brake term is off by default** (`brakeEnabled`, the `worlds.wvd.qteBrakeEnabled` config).
- * The 2026-10-31 live presses parked ~4 px past the press, so the game froze the marker where the
- * input landed and there was no carry to add (chest spec §3); the one recording with a stop did
- * carry 68 px, so the model stays reachable behind the switch instead of being deleted. A plan
- * without the carry is the plain `v·L`.
+ * **The carry is measured now, per bar** (2026-11-05). The config model behind `brakeEnabled` is
+ * only the prior: the chest path measures each press's park against its own send/ack timeline and
+ * feeds the bar's carry time back (`carryPx`), so the plan subtracts what that bar actually did.
+ * The measured carries disagree by ~7× (0.042 s, 0.089 s, 0.26–0.31 s across three bars), which a
+ * fixed coefficient cannot describe. And with `minOverlap` the plan returns only when the predicted
+ * stop's band (the input leg's spread, the carry's spread, the speed error) lies inside a zone to
+ * that share — the operator's 95 % rule. A plan without either is the plain `v·L`.
  *
  * Two things the signature of contracts §7 cannot express, and where they live instead:
  *
@@ -142,6 +144,23 @@ export interface PlanTapInput {
    * `predictRest`.
    */
   readonly brakeEnabled?: boolean;
+  /**
+   * The measured post-press carry for **this bar**, px (applied along `v`'s sign). Absent means
+   * nobody has measured this bar yet: the switch's fixed model is the prior. A measured carry
+   * replaces the fixed model — it is what the park said, at this bar's speed (2026-11-05).
+   */
+  readonly carryPx?: number;
+  /** ± uncertainty of the input leg, ms; widens the stop band. */
+  readonly latencySpreadMs?: number;
+  /** ± uncertainty of the carry, px. */
+  readonly carrySpreadPx?: number;
+  /** ± uncertainty of the marker's speed, px/s. */
+  readonly velocitySpreadPxPerS?: number;
+  /**
+   * The share of the predicted stop's band that must lie inside a zone for the plan to be returned.
+   * 0 (default) is the old exact-point plan; 0.95 is the operator's rule (2026-11-05).
+   */
+  readonly minOverlap?: number;
 }
 
 /**
@@ -154,7 +173,10 @@ export interface PlanTapInput {
  * marker bounces forever and passes are free until an attempt is spent).
  */
 export function planTap(input: PlanTapInput): TapPlan | null {
-  const { markerX, v, zones, latencyMs, decelPxPerS2, horizonMs, brakeEnabled = false } = input;
+  const {
+    markerX, v, zones, latencyMs, decelPxPerS2, horizonMs, brakeEnabled = false,
+    carryPx, latencySpreadMs = 0, carrySpreadPx = 0, velocitySpreadPxPerS = 0, minOverlap = 0,
+  } = input;
 
   // A non-answer from perception must not become a NaN press. `decelPxPerS2 ≤ 0` would divide by 0.
   if (!Number.isFinite(markerX) || !Number.isFinite(v) || v === 0) return null;
@@ -165,10 +187,16 @@ export function planTap(input: PlanTapInput): TapPlan | null {
   // carry is not an inline constant deceleration, `decelPxPerS2` keeps its measured meaning (the
   // uniform-deceleration fit) and the model's reference acceleration is twice it, which is the same
   // carry at the recorded speed under `d = v · t` (see `brakeDistancePx`).
-  const lead = v * (latencyMs / 1_000)
-    + (brakeEnabled ? Math.sign(v) * brakeDistancePx(v, 2 * decelPxPerS2) : 0);
+  // The carry: the measured value for this bar when the caller has one, else the fixed model behind
+  // the switch (the prior for a bar nobody has measured yet).
+  const measuredCarry = carryPx !== undefined && Number.isFinite(carryPx);
+  const carry = measuredCarry
+    ? Math.sign(v) * Math.abs(carryPx)
+    : (brakeEnabled ? Math.sign(v) * brakeDistancePx(v, 2 * decelPxPerS2) : 0);
+  const lead = v * (latencyMs / 1_000) + carry;
   const reversal = v > 0 ? BOUNCE_RIGHT_X : BOUNCE_LEFT_X;
   const horizonS = horizonMs / 1_000;
+  const banded = Number.isFinite(minOverlap) && minOverlap > 0;
 
   let soonest: TapPlan | null = null;
   for (const zone of zones) {
@@ -181,8 +209,25 @@ export function planTap(input: PlanTapInput): TapPlan | null {
 
     const delayS = (target - markerX - lead) / v;
     if (!Number.isFinite(delayS) || delayS < 0 || delayS > horizonS) continue;
+
+    // The predicted stop's band (operator rule 2026-11-05): the input leg's spread over the time it
+    // moves, the carry's own spread, and the speed error over the whole lead time. The plan aims the
+    // centre, so the band is symmetric about it; a plan is only sent when the band is inside the
+    // zone to the required share.
+    let bandPx = 0;
+    let overlap = 1;
+    if (banded) {
+      const totalS = delayS + latencyMs / 1_000;
+      bandPx = Math.abs(v) * (Math.max(0, latencySpreadMs) / 1_000)
+        + Math.max(0, carrySpreadPx)
+        + Math.abs(totalS) * Math.max(0, velocitySpreadPxPerS);
+      const lo = Math.max(target - bandPx, zone.from);
+      const hi = Math.min(target + bandPx, zone.to);
+      overlap = bandPx === 0 ? 1 : Math.max(0, hi - lo) / (2 * bandPx);
+      if (overlap < minOverlap) continue;
+    }
     if (soonest === null || delayS * 1_000 < soonest.atMs) {
-      soonest = { atMs: delayS * 1_000, target };
+      soonest = { atMs: delayS * 1_000, target, bandPx, overlap };
     }
   }
 

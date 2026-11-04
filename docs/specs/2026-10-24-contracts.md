@@ -415,7 +415,14 @@ that produces a valid `Observation` requires no policy change.
  * It carries no `qteMinWindowMs` check either: a window shorter than the floor is refused by the
  * **caller**, who is the only one that knows the configured floor.
  */
-export interface TapPlan { readonly atMs: number; readonly target: number }
+export interface TapPlan {
+  readonly atMs: number;
+  readonly target: number;
+  /** The ± half-width of the predicted stop's band, when the caller supplied the uncertainties. */
+  readonly bandPx?: number;
+  /** The share of the band inside the zone, in [0, 1]; 1 when there is no band. */
+  readonly overlap?: number;
+}
 
 /**
  * stop_x = markerX + v*dt + v*L + sign(v)*v²/(2a)

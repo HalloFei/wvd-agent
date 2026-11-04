@@ -501,7 +501,18 @@ export interface SessionTask {
 
 // §7 QTE timing
 
-export interface TapPlan { readonly atMs: number; readonly target: number }
+export interface TapPlan {
+  readonly atMs: number;
+  readonly target: number;
+  /**
+   * The ± half-width of the predicted stop's band, when the caller supplied the model's
+   * uncertainties. The plan is only returned when the band lies inside the zone to the required
+   * share (`overlap`); a plan aimed without uncertainty carries 0.
+   */
+  readonly bandPx?: number;
+  /** The share of the band inside the zone, in [0, 1]; 1 when there is no band. */
+  readonly overlap?: number;
+}
 
 /**
  * stop_x = markerX + v*dt + v*L + sign(v)*v²/(2a)

@@ -297,6 +297,16 @@ const ORIENT_CLIMB_TRIES = 2;
 const WALK_RETRIES = 2;
 
 /**
+ * The stop band's ± terms (operator rule 2026-11-05): the input leg's spread across the measured round
+ * trips (64-76 ms live, so 15 ms covers it with margin), and the carry's spread — the park's own
+ * settle tolerance plus the bar-to-bar disagreement the day's measurements showed (a bar measured at
+ * 0.042 s and one at 0.089 s). Chosen bounds, not measured ones: the model exists to say 95 % only
+ * when it can, and a narrow bound would lie.
+ */
+const QTE_LATENCY_SPREAD_MS = 15;
+const QTE_CARRY_SPREAD_PX = 20;
+
+/**
  * How many consecutive frames must answer the **same** ACTIVE member before the opener trusts it
  * (operator rule 2026-11-04: *until we get a stable frame, then confirm the current state*). One
  * readable frame can be a transition; two are the command phase. The wait it bounds is
@@ -572,6 +582,13 @@ export class WvdWorld implements World {
   #battleRead: { readonly value: string | null; readonly frames: number } | null = null;
   /** The death scene has been sent to Coo for this death (one question, not one per tick). */
   #deathEscalated = false;
+  /**
+   * The chest QTE's measured terms for the **bar on screen**: the carry time from a settled press's
+   * park, and the input leg from the press's round trip. Cleared when a new chest starts; the config
+   * values are the prior until the bar has been measured (operator rule 2026-11-05).
+   */
+  #qteCarryTauS: number | null = null;
+  #qteLatencyMs: number | null = null;
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
   #pageCloseTries = 0;
   #pageCloseWarned = false;
@@ -1402,6 +1419,11 @@ export class WvdWorld implements World {
 
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
   #track(observation: Observation): void {
+    if (observation.screen === 'chest-prompt') {
+      // A chest's prompt starts a new bar: its measured carry and input leg do not carry over.
+      this.#qteCarryTauS = null;
+      this.#qteLatencyMs = null;
+    }
     if (observation.screen !== 'main-character-dead') this.#deathEscalated = false;
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen !== 'character-page') {
@@ -2043,10 +2065,16 @@ export class WvdWorld implements World {
           const timer = setTimeout(resolve, ms);
           timer.unref?.();
         }),
-        latencyMs: cfg.qteLatencyMs,
+        // The measured terms win over the config once this bar has produced them (operator rule
+        // 2026-11-05): the last press's round trip is the input leg, its park's carry time the brake.
+        // The config values are the prior for a bar's first press.
+        latencyMs: this.#qteLatencyMs ?? cfg.qteLatencyMs,
         brakeEnabled: cfg.qteBrakeEnabled,
         decelPxPerS2: cfg.qteDecelPxPerS2,
         budgetMs: cfg.qteSubLoopMs,
+        ...(this.#qteCarryTauS === null ? {} : { carryTauS: this.#qteCarryTauS }),
+        latencySpreadMs: QTE_LATENCY_SPREAD_MS,
+        carrySpreadPx: QTE_CARRY_SPREAD_PX,
         // The attempt-vs-reroll rule (operator, 2026-10-31): five rerolls per chest, the first two
         // rerolled passes recorded as the baseline, and only a later pass that beats both baselines
         // is taken. The callback also stashes the pass for the recording below; the policy is pure.
@@ -2101,6 +2129,14 @@ export class WvdWorld implements World {
           + `, window ${Math.round(pass?.windowMs ?? 0)} ms`,
       );
       return;
+    }
+    if (outcome.ok) {
+      // Feed the bar's measured terms back: the park's carry for the next plan, the press's round
+      // trip as the input leg. Only a settled park yields a carry; an unsettled one leaves the
+      // previous sample (or the prior) in place.
+      if (outcome.tauS !== null) this.#qteCarryTauS = outcome.tauS;
+      const roundTripMs = outcome.ackAtMs - outcome.pressAtMs;
+      if (Number.isFinite(roundTripMs) && roundTripMs > 0) this.#qteLatencyMs = roundTripMs;
     }
     if (!outcome.ok && outcome.reason === 'no-better-pass') {
       // The budget is gone and no reroll beat the first two: the operator accepted the failure.

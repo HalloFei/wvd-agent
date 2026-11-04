@@ -571,6 +571,33 @@ describe('planTap', () => {
     expect(planTap({ markerX: 700, v: -610, zones: [{ from: 500, to: 560 }], ...TAP })).toBeNull();
   });
 
+  it('aims earlier by the measured carry of this bar', () => {
+    // Operator rule 2026-11-05: the park says the bar carries 100 px after the press, so the plan
+    // subtracts it from the delay. Without the carry the right zone would take 434.84 ms.
+    const plan = planTap({ markerX: 800, v: 610, zones: ZONES, ...TAP, carryPx: 100 });
+    expect(plan).not.toBeNull();
+    expect(plan!.target).toBe(1111);
+    // (1111 - 800 - 45.75 - 100)/610 = 270.90 ms.
+    expect(plan!.atMs).toBeCloseTo(270.9, 1);
+  });
+
+  it('returns the stop band it judged, and presses only a plan inside the zone', () => {
+    // The band is |v|*0.015 + 20 + |delay + 0.075|*35 = 9.15 + 20 + 12.1 = 41.3 px on the wide zone.
+    const plan = planTap({
+      markerX: 800, v: 610, zones: ZONES, ...TAP, carryPx: 100,
+      latencySpreadMs: 15, carrySpreadPx: 20, velocitySpreadPxPerS: 35, minOverlap: 0.95,
+    });
+    expect(plan).not.toBeNull();
+    expect(plan!.bandPx).toBeCloseTo(41.3, 1);
+    expect(plan!.overlap).toBeCloseTo(1, 6);
+
+    // A 42 px zone cannot contain that band to 95 %: no plan, rather than a gamble.
+    expect(planTap({
+      markerX: 800, v: 610, zones: [{ from: 1_090, to: 1_132 }], ...TAP, carryPx: 100,
+      latencySpreadMs: 15, carrySpreadPx: 20, velocitySpreadPxPerS: 35, minOverlap: 0.95,
+    })).toBeNull();
+  });
+
   it('refuses a pass the marker has already gone past', () => {
     // At 1200 moving right both zone centres are behind the predicted stop.
     expect(planTap({ markerX: 1200, v: 610, zones: ZONES, ...TAP })).toBeNull();

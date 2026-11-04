@@ -424,6 +424,30 @@ describe('timeQte', () => {
     expect(out.tauS).toBeNull();
   });
 
+  it('plans with the measured carry, so the aim is earlier than the plain lead', async () => {
+    // The bar's own carry (0.2 s, measured on an earlier press) is 121 px at 606 px/s: the left
+    // zone's centre is behind that stop, so the plan takes the right zone 352 ms out, not 52 ms.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 700 },
+        { atMs: 33, markerX: 720 },
+        { atMs: 66, markerX: 740 },
+        { atMs: 600, markerX: 900 },
+      ],
+      clock,
+    );
+    const { press } = recordingPress(clock);
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, carryTauS: 0.2,
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.target).toBe(1111);
+    expect(out.atMs).toBeCloseTo(352.3, 0);
+  });
+
   it('keeps the 51 ms a stale frame still leaves, and sleeps exactly that', async () => {
     // The third frame arrives 400 ms late, so by the time it is planned `now()` is 466 ms while the
     // plan's instant is 66 + 451.5. Fifty-one ms of the lead is left: still ahead of us, so the plan

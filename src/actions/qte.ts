@@ -101,6 +101,9 @@ const REST_POLL_MS = 16;
  */
 const PREDICT_MARGIN_PX = 20;
 
+/** The 3-frame velocity estimate's worst-case error (research §8): 5.8 %. */
+const VELOCITY_ERROR_RATIO = 0.058;
+
 /** Two consecutive readings this close mean the marker has parked. */
 const REST_SETTLE_PX = 2;
 
@@ -267,6 +270,16 @@ export interface QteTimingOptions {
    * Absent means no recording; the analysis needs it, the loop does not.
    */
   readonly record?: QteRecordSink | undefined;
+  /**
+   * The carry time measured on an earlier press of **this bar**, seconds: its park against the press
+   * timeline. Absent on a bar's first press (the fixed model is the prior); the caller feeds it back
+   * from the previous outcome's `tauS`.
+   */
+  readonly carryTauS?: number | undefined;
+  /** ± uncertainty of the input leg, ms, for the stop band (operator rule 2026-11-05). */
+  readonly latencySpreadMs?: number | undefined;
+  /** ± uncertainty of the carry, px, for the stop band. */
+  readonly carrySpreadPx?: number | undefined;
 }
 
 /**
@@ -291,6 +304,7 @@ export type QteTimer = (options: QteTimingOptions) => Promise<QteOutcome>;
 export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
   const {
     sampler, press, now, wait, latencyMs, decelPxPerS2, brakeEnabled = false, budgetMs, choosePass, record,
+    carryTauS, latencySpreadMs = 0, carrySpreadPx = 0,
   } = options;
 
   // A mis-typed number must not become a press, and an unbounded loop is the one failure this
@@ -343,6 +357,9 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
     if (v === null) continue;
 
     const remainingMs = Math.max(0, budgetMs - (now() - startedAtMs));
+    // The measured carry for this bar (when an earlier press parked) replaces the fixed model, and
+    // the stop band is only pressed when it is inside a zone to the required share.
+    const carryPx = carryTauS !== undefined && Number.isFinite(carryTauS) ? v * carryTauS : undefined;
     const plan = planTap({
       markerX: reading.markerX,
       v,
@@ -351,6 +368,11 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
       decelPxPerS2,
       horizonMs: remainingMs,
       brakeEnabled,
+      ...(carryPx === undefined ? {} : { carryPx }),
+      latencySpreadMs,
+      carrySpreadPx,
+      velocitySpreadPxPerS: Math.abs(v) * VELOCITY_ERROR_RATIO,
+      minOverlap: 0.95,
     });
     planAttempted = true;
     if (plan !== null) {
@@ -392,10 +414,11 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
         decelPxPerS2,
         brakeEnabled,
       });
-      const landing = landingRest === null ? undefined : reading.zones.find((zone) =>
-        landingRest >= zone.from + PREDICT_MARGIN_PX
-        && landingRest <= zone.to - PREDICT_MARGIN_PX
-        && (v > 0 ? landingRest <= BOUNCE_RIGHT_X : landingRest >= BOUNCE_LEFT_X));
+      const landingAt = landingRest === null ? null : landingRest + Math.sign(v) * Math.abs(carryPx ?? 0);
+      const landing = landingAt === null ? undefined : reading.zones.find((zone) =>
+        landingAt >= zone.from + PREDICT_MARGIN_PX
+        && landingAt <= zone.to - PREDICT_MARGIN_PX
+        && (v > 0 ? landingAt <= BOUNCE_RIGHT_X : landingAt >= BOUNCE_LEFT_X));
       // No landing inside a zone: keep sampling. A bounce is free until an attempt is spent.
       if (landing === undefined) continue;
       target = (landing.from + landing.to) / 2;

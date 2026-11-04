@@ -844,6 +844,32 @@ describe('the chest QTE', () => {
     expect(warned[0]!.message).toContain('2560x1440');
   });
 
+  it('feeds the bar\'s measured carry and input leg into the next QTE call', async () => {
+    // Operator rule 2026-11-05: the park's carry time and the press's round trip become the next
+    // plan's terms for this bar; the config is only the prior before anything is measured.
+    const seen: QteTimingOptions[] = [];
+    const timing: QteTimer = async (options) => {
+      seen.push(options);
+      await options.press();
+      return {
+        ok: true, v: 606, atMs: 120, target: 808, tapX: 700, restX: 809, restSettled: true,
+        pressAtMs: 0, ackAtMs: 64, delayActualMs: 120, inputMs: 60, tauS: 0.2,
+      };
+    };
+    const { world, host, clock } = makeWorld({ observation: qteBar, timing });
+    await started(world, host);
+
+    await world.tick();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.carryTauS).toBeUndefined();
+
+    clock.advance(100);
+    await world.tick();
+    expect(seen).toHaveLength(2);
+    expect(seen[1]!.carryTauS).toBeCloseTo(0.2, 6);
+    expect(seen[1]!.latencyMs).toBeCloseTo(64, 6);
+  });
+
   it('sends no press in a dry run, even on the bar', async () => {
     const seen: QteTimingOptions[] = [];
     const timing: QteTimer = async (options) => {

@@ -733,6 +733,28 @@ decides whether to close the game and the PC. `#deathEscalated` makes it one que
 `tests/task-run.test.ts` pins one-operation-per-tick, the yield-and-resume, and the wait clock;
 `tests/world.test.ts` pins the interrupted stage's survival and the death question.
 
+## The QTE press uses the measured carry, with a 95 % band (2026-11-05)
+
+The chest path feeds its own measurements back into the plan (operator rule 2026-11-05). Each press
+yields an input leg (the round trip, split by the child's `inputMs`) and, on a settled park, the
+bar's carry time (`(restX − tapX)/v − delayActual − L`). The World keeps both for the bar on screen
+and passes them to the next `timeQte`/`planTap`; `qteLatencyMs` and the brake model become the prior
+for a bar nobody has measured yet. The plan now also returns a **stop band**: `Δ = |v|·ΔL + Δcarry +
+T·Δv` (Δv = 5.8 % of v, ΔL = 15 ms, Δcarry = 20 px — chosen bounds, documented), and a plan is only
+returned when that band lies inside a zone to **95 %** (`minOverlap`). A band that does not fit is
+no press, not a gamble.
+
+The measured evidence: carries 0.042 s at 457 px/s and 0.089 s at 558 px/s (both hits) on 2026-11-05,
+0.044/0.069 s on the 2026-10-31 recordings, and 0.26–0.31 s on the 12:14 stuck bar (224 presses, all
+misses) — a 7× spread that the fixed 0.1017 s model cannot cover. The input leg is stable at 62–76 ms.
+
+`tests/qte.test.ts` pins the carry aim and the band refusal; `tests/qte-loop.test.ts` pins the plan
+using a measured carry; `tests/world.test.ts` pins the feedback into the next call.
+
+**OWED:** the first press of a bar still uses the config prior (no carry measured yet) — the
+bootstrap; a bar whose prior band cannot fit the zone will not be pressed until it is measured, which
+is the open policy question.
+
 ## The chest QTE measures its own timing (2026-11-05)
 
 The chest path now measures the three terms the band model needs, on the run that produces them — no
