@@ -695,6 +695,20 @@ timing seam, so it was run before and after, AGENTS.md §5).
 **OWED:** the live battle — one session with the window untouched, the log's presses `battleStepMs`
 apart and the battle reaching 自動 without a stall. Not run: it spends the operator's machine.
 
+## The opener's 确认 is measured (2026-11-05)
+
+The 2026-11-05 run cast the opener for the first time with the sequence in place
+(`16:42:23 cast 爱丽丝's 左下 opener at enemy`), and then stalled on the **skill detail panel**: the
+slot tap opened 拉巴迪奥斯的秘术 (取消 / 确定, MP 128 ▸ 103), the panel stayed up, the battle's HUD was
+behind it and the loop read the frame as unknown. The enemy-side tap does not resolve this panel — the
+operator's 2026-11-03 correction was right and the `confirm` point had never been configured.
+
+Measured live on the stuck panel (`.tmp/panel-stuck.jpg`, 1920×1080): 取消 spans x 781–946 and 确定
+x 971–1135 at y 975–1035; **确定 = (1053,1005)**. Pressing it resolved the panel and spent the skill's
+25 MP (爱丽丝 128 → 103). `BATTLE_OPENERS` now carries `confirm: PANEL_CONFIRM_AT`, and the cast's
+second tap is that button. `tests/battle-opener.test.ts` keeps the enemy-side form for an opener with
+no confirm point.
+
 ## The main character's death is a named screen (2026-11-05)
 
 The 2026-11-04 run stalled at 16:06:57 on a frame the loop could not name — the camera fallen onto the

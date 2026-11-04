@@ -42,9 +42,19 @@ export const PARTY_FRONT_AT: Point = { x: 787, y: 939 };
  */
 export const ENEMY_TARGET_AT: Point = { x: 1_000, y: 540 };
 
+/**
+ * The skill detail panel's **确定** button, measured live 2026-11-05 on the 拉巴迪奥斯的秘术 panel
+ * (`.tmp/panel-stuck.jpg`, 1920×1080): the two buttons span x 781–946 (取消) and 971–1135 (确定) at
+ * y 975–1035; the point is the 确定 centre, and tapping it resolved the stuck panel and spent the
+ * skill's 25 MP. The operator's correction (2026-11-03): *the cast is pressing 确认, not a tap on the
+ * enemy* — the enemy side does nothing while this panel is up (live 2026-11-05: the panel stayed and
+ * the battle stalled).
+ */
+export const PANEL_CONFIRM_AT: Point = { x: 1_053, y: 1_005 };
+
 /** The operator's configuration: a list of members with their opener. */
 export const BATTLE_OPENERS: readonly BattleOpener[] = [
-  { name: '爱丽丝', slot: '左下', target: 'enemy' },
+  { name: '爱丽丝', slot: '左下', target: 'enemy', confirm: PANEL_CONFIRM_AT },
 ];
 
 /**

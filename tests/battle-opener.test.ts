@@ -26,9 +26,14 @@ function fakeActuator(...results: ActionResult[]): Actuator & { readonly taps: P
 const sleep = async (): Promise<void> => {};
 /**
  * The operator's entry (2026-11-03): Alice's bottom-left slot is 拉巴迪奥斯的秘术, a 攻击范围=全体
- * damage spell, so the target is an enemy and any enemy tap resolves the group.
+ * damage spell, so the target is an enemy. The resolving press is the panel's **确定**, measured live
+ * 2026-11-05 — the enemy side does not resolve this panel (the battle stalled on it).
  */
-const alice: BattleOpener = { name: '爱丽丝', slot: '左下', target: 'enemy' };
+const alice: BattleOpener = {
+  name: '爱丽丝', slot: '左下', target: 'enemy', confirm: { x: 1_053, y: 1_005 },
+};
+/** The same entry without a 确认 point: the enemy-side form, still in the contract. */
+const plain: BattleOpener = { name: '爱丽丝', slot: '左下', target: 'enemy' };
 
 describe('the battle opener filter', () => {
   it('is a list with 爱丽丝 and nobody else', () => {
@@ -63,7 +68,7 @@ describe('the battle opener filter', () => {
 describe('the battle opener cast', () => {
   it('taps the configured slot, waits for its panel, then taps the enemy side', async () => {
     const actuator = fakeActuator();
-    const result = await castBattleOpener(actuator, alice, sleep);
+    const result = await castBattleOpener(actuator, plain, sleep);
 
     expect(result).toEqual({ ok: true });
     expect(actuator.taps).toEqual([BATTLE_SLOTS['左下'], ENEMY_TARGET_AT]);
@@ -81,7 +86,7 @@ describe('the battle opener cast', () => {
 
   it('aims a party-targeted opener at the party side', async () => {
     const actuator = fakeActuator();
-    await castBattleOpener(actuator, { ...alice, slot: '右上', target: 'party-front' }, sleep);
+    await castBattleOpener(actuator, { ...plain, slot: '右上', target: 'party-front' }, sleep);
 
     expect(actuator.taps).toEqual([BATTLE_SLOTS['右上'], PARTY_FRONT_AT]);
   });
@@ -108,7 +113,7 @@ describe('the battle opener cast', () => {
     expect(confirm.taps).toEqual([point]);
 
     const side = fakeActuator();
-    await tapOpenerConfirm(side, alice);
+    await tapOpenerConfirm(side, plain);
     expect(side.taps).toEqual([ENEMY_TARGET_AT]);
   });
 

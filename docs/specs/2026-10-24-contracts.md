@@ -530,7 +530,8 @@ export interface BattleOpener {
   readonly name: string;          // as the ACTIVE card draws it
   readonly slot: BattleSlot;
   readonly target: BattleTarget;  // multi-target: the tap names the side
-  readonly confirm?: Point;       // the skill's own 确认 button; pressed instead of `target` when set
+  readonly confirm?: Point;       // the skill's own 确认 button; pressed instead of `target` when set.
+                                  // Measured 2026-11-05: (1053,1005) resolves 拉巴迪奥斯的秘术's panel.
 }
 
 export interface BattleMemberReader {
