@@ -9,7 +9,8 @@
  * a step is how a party walks into the wrong floor.
  */
 import type {
-  ScreenId, TaskClimb, TaskDefinition, TaskFileProblem, TaskGoal, TaskLoad, TaskScript, TaskStep,
+  Point, ScreenId, TaskClimb, TaskDefinition, TaskFileProblem, TaskGoal, TaskLoad, TaskRest, TaskScript,
+  TaskStep,
 } from '../contracts.ts';
 
 const SCREENS: ReadonlySet<string> = new Set<ScreenId>([
@@ -130,6 +131,36 @@ function parseStep(raw: unknown, index: number, knownLocations?: ReadonlySet<str
   };
 }
 
+/** A 1920×1080 client point: two integers inside the frame, the same rule a `tap` step's `at` uses. */
+function parsePoint(raw: unknown, where: string): Point | Problem {
+  if (!Array.isArray(raw) || raw.length !== 2) return problem('missing-field', where);
+  const [x, y] = raw;
+  if (!Number.isInteger(x) || !Number.isInteger(y)
+    || (x as number) < 0 || (x as number) > MAX_COORDINATE
+    || (y as number) < 0 || (y as number) > MAX_COORDINATE) {
+    return problem('bad-coordinate', where);
+  }
+  return { x: x as number, y: y as number };
+}
+
+/**
+ * The cycle's rest (operator rule 2026-11-06). `rest.at` is the town's inn control and
+ * `rest.timeoutMs` the bound on the whole visit; both are required, because a rest with a
+ * guessed bound is a cycle that can end unrested without saying so.
+ */
+function parseRest(raw: unknown): TaskRest | Problem {
+  if (!isObject(raw)) return problem('missing-field', 'rest');
+  for (const field of Object.keys(raw)) {
+    if (field !== 'at' && field !== 'timeoutMs') return problem('unknown-field', `rest: ${field}`);
+  }
+  const at = parsePoint(raw.at, 'rest.at');
+  if (!('x' in at)) return at;
+  if (!Number.isInteger(raw.timeoutMs) || (raw.timeoutMs as number) < 1) {
+    return problem('bad-timeout', 'rest: timeoutMs');
+  }
+  return { at, timeoutMs: raw.timeoutMs as number };
+}
+
 function parseScript(raw: unknown, name: string, knownLocations?: ReadonlySet<string>): TaskScript | Problem {
   if (!isObject(raw)) return problem('missing-field', name);
   for (const field of Object.keys(raw)) {
@@ -226,7 +257,7 @@ export function parseTask(text: string, knownLocations?: ReadonlySet<string>): T
   }
   if (!isObject(raw)) return problem('not-an-object');
   for (const field of Object.keys(raw)) {
-    if (!['id', 'label', 'floor', 'entry', 'exit', 'goal'].includes(field)) return problem('unknown-field', field);
+    if (!['id', 'label', 'floor', 'entry', 'exit', 'goal', 'rest'].includes(field)) return problem('unknown-field', field);
   }
   if (typeof raw.id !== 'string' || raw.id.length === 0) return problem('missing-field', 'id');
   if (typeof raw.label !== 'string' || raw.label.length === 0) return problem('missing-field', 'label');
@@ -245,6 +276,8 @@ export function parseTask(text: string, knownLocations?: ReadonlySet<string>): T
   if (exit !== undefined && !('steps' in exit)) return exit;
   const goal = raw.goal === undefined ? undefined : parseGoal(raw.goal, knownLocations);
   if (goal !== undefined && 'ok' in goal) return goal;
+  const rest = raw.rest === undefined ? undefined : parseRest(raw.rest);
+  if (rest !== undefined && 'ok' in rest) return rest;
 
   const task: TaskDefinition = {
     id: raw.id,
@@ -253,6 +286,7 @@ export function parseTask(text: string, knownLocations?: ReadonlySet<string>): T
     ...(entry === undefined ? {} : { entry: entry as TaskScript }),
     ...(exit === undefined ? {} : { exit }),
     ...(goal === undefined || 'ok' in goal ? {} : { goal }),
+    ...(rest === undefined || 'ok' in rest ? {} : { rest }),
   };
   return { ok: true, task };
 }

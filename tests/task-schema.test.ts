@@ -43,6 +43,10 @@ describe('parseTask', () => {
     expect(exit).toContainEqual({ op: 'tap', at: [960, 714], count: 1 });
     expect(exit.at(-2)).toEqual({ op: 'travel', to: 'vnh' });
     expect(exit.at(-1)).toEqual({ op: 'expect', screen: 'town', timeoutMs: 30000 });
+
+    // The cycle ends asleep at the inn (operator rule 2026-11-06): the rest town's 旅店 control,
+    // measured 2026-11-06, and the visit's bound (the whole visit measured 23 s).
+    expect(task.rest).toEqual({ at: { x: 916, y: 488 }, timeoutMs: 90000 });
   });
 
   it('accepts a task without an exit script', () => {
@@ -202,6 +206,35 @@ describe('parseTask', () => {
       { op: 'key', key: 'r' },
       { op: 'expectFloor', timeoutMs: 5000 },
     ]);
+  });
+
+  // --- the cycle's rest (operator rule 2026-11-06): a cycle ends asleep at the inn ---
+
+  it('parses the rest: the town\'s inn control and the visit\'s bound', () => {
+    // The control is measured (the rest town's 旅店 entry at 916,488) and the bound is the whole
+    // visit — three dialogs, the rest scene, the after-rest box and the way out: 23 s live.
+    const loaded = parseTask(text({ ...goalTask, rest: { at: [916, 488], timeoutMs: 90000 } }), TRAVEL_IDS);
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    expect(loaded.task.rest).toEqual({ at: { x: 916, y: 488 }, timeoutMs: 90000 });
+    // A task whose floor cycle has no inn simply has no rest block.
+    const bare = parseTask(text(goalTask), TRAVEL_IDS);
+    expect(bare.ok).toBe(true);
+    if (bare.ok) expect(bare.task.rest).toBeUndefined();
+  });
+
+  it('refuses a rest the World could not drive', () => {
+    // No guessed bounds and no silent extra fields: a rest with a missing part would end a cycle
+    // without resting and without saying so.
+    expect(parseTask(text({ ...goalTask, rest: {} }), TRAVEL_IDS)).toMatchObject({ ok: false, reason: 'missing-field' });
+    expect(parseTask(text({ ...goalTask, rest: { at: [916, 488] } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'bad-timeout' });
+    expect(parseTask(text({ ...goalTask, rest: { at: [916], timeoutMs: 1 } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'missing-field' });
+    expect(parseTask(text({ ...goalTask, rest: { at: [-1, 488], timeoutMs: 1 } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'bad-coordinate' });
+    expect(parseTask(text({ ...goalTask, rest: { at: [916, 488], timeoutMs: 1, label: '旅店' } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'unknown-field' });
   });
 
   it('refuses a malformed climb key and a bad step inside the climb script', () => {

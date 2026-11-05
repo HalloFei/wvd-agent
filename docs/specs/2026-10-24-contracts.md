@@ -672,6 +672,21 @@ export interface TaskClimb {
   readonly script: TaskScript;
 }
 
+/**
+ * The cycle's rest (operator rule 2026-11-06): a cycle ends where it began — asleep at the inn.
+ *
+ * `at` is the rest town's **inn control** on the town view (measured 2026-11-06 at 1920×1080: the
+ * 旅店 entry, one tap), and `timeoutMs` bounds the visit — three dialogs, the rest scene, the
+ * after-rest box and the way out measured 23 s. The World taps `at` after the exit script and counts
+ * the cycle once the party is back on the town's own screen; the dialogs are the inn plug-in's.
+ * A visit that has not taken the party by `timeoutMs` is given up on with a warning, so one missed
+ * tap cannot wedge an unattended run.
+ */
+export interface TaskRest {
+  readonly at: Point;
+  readonly timeoutMs: number;
+}
+
 export interface TaskDefinition {
   readonly id: string;
   readonly label: string;
@@ -681,6 +696,8 @@ export interface TaskDefinition {
   readonly exit?: TaskScript;
   /** The goal the World orients to, from any screen. Absent for a scripted task. */
   readonly goal?: TaskGoal;
+  /** The rest the cycle ends with. Absent for a task whose floor cycle has no inn. */
+  readonly rest?: TaskRest;
 }
 
 /** What the World needs to orient: where the farm is, and the floor it farms on. */

@@ -196,5 +196,8 @@ export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
     ...(deps.task.goal === undefined
       ? {}
       : { orient: { goal: deps.task.goal, floor: deps.task.floor.titleKey } }),
+    // The cycle's rest (operator rule 2026-11-06): the task's measured inn control, handed to the
+    // World unchanged — the World owns the tap and the end-of-cycle condition.
+    ...(deps.task.rest === undefined ? {} : { rest: deps.task.rest }),
   };
 }

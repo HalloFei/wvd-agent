@@ -931,6 +931,33 @@ must not become "no path". The orientation's 楼梯-门 command carries its cell
 `tests/automove.test.ts` pins the re-located retry, the unaimable refusal and the no-frame answer;
 `tests/world.test.ts` pins that an unaimed walk skips nothing; `tests/orient.test.ts` the cell.
 
+## A cycle ends asleep at the inn (2026-11-06)
+
+The operator's rule: **the full cycle ends with the rest at the inn.** The 02:36 and 02:40 cycles
+both ended standing in the rest town — the exit script's last step is `expect town` and nothing
+after it — so the farm had never slept on its own. The inn module was not the gap: the live dialog
+is read at confidence 1.00 (rows 住宿/对话/离开 at 1114,488 · 578 · 641), the room list and the
+confirmation likewise. The gap was the **entry**: the party has to be taken to the inn.
+
+Measured live 2026-11-06 02:47-02:52 on the rest town's view, which is a row of facility icons
+(旅店 (916,488), 酒馆 (712,635), 交易商 (1034,498), 道具店 (1195,574), 偏僻的打铁铺 (1143,415),
+寺院 (806,399)): **one tap on 旅店 opens the dialog**, and the whole visit — 住宿 → 标准房 → 确定 →
+13 s of frames nothing names → the `背包已补充完毕。` box → the menu → 离开 — takes **23 s**. The
+guide (live control, §4.1) records the points and the shape.
+
+So the task file grew a `rest` block (`{"at": [916, 488], "timeoutMs": 90000}`, contracts §10)
+and the World grows a **gate**: when the exit script finishes, the World taps `rest.at`, the inn
+plug-in rests the party, and the cycle counts once the party is back on the town's own screen — not
+when the script ends. While the gate is armed it owns the tick (the route must not aim at the town)
+and it holds the nothing-perceived stop, because the rest's own scene is ~13 s of unnamed frames: a
+slow rest must not end an unattended run. A visit that has not taken the party within
+`rest.timeoutMs` is given up on **with a warning** and the cycle ends unrested, so one missed tap
+cannot wedge the 99-cycle run.
+
+`tests/world.test.ts` pins the tap, the wait for the visit, the town that ends the cycle and the
+unrested timeout; `tests/task-schema.test.ts` the rest block and its refusals. A task whose floor
+cycle has no inn simply carries no `rest` and behaves as before.
+
 
 
 

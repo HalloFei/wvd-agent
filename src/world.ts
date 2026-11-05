@@ -622,6 +622,14 @@ export class WvdWorld implements World {
   #innWarned = false;
   /** This inn visit has committed a rest: the dialogs that follow are backed out of, not restarted. */
   #innRested = false;
+
+  /**
+   * The cycle's rest (operator rule 2026-11-06). Armed when the exit script returns the party to the
+   * town: the World then taps the task's measured inn control, the inn plug-in rests, and the cycle
+   * counts once the party is back on the town's own screen — or when the visit has been given up on
+   * (`TaskRest.timeoutMs`), so one missed tap cannot wedge an unattended run.
+   */
+  #restGate: { readonly sinceMs: number; readonly timeoutMs: number; seenInn: boolean } | null = null;
   /** Consecutive frames of the revive QTE: the modal has to stay up, not flicker. */
   #reviveFrames = 0;
   /** The revive QTE has been sent to Coo for this death (one question, not one per tick). */
@@ -1053,6 +1061,7 @@ export class WvdWorld implements World {
       this.#lastFailed = false;
       this.#engineProblem = null;
       this.#cyclesDone = 0;
+      this.#restGate = null;
       this.#battlesEntered = 0;
       this.#orienting = false;
       this.#orientAbort = null;
@@ -1257,6 +1266,10 @@ export class WvdWorld implements World {
     // verdict is still taken — a stalled action has to be able to escalate — but nothing is sent.
     const waiting = await this.#advanceInFlight(observation, frame, now);
 
+    // The cycle's rest (operator rule 2026-11-06): while the gate is armed the tick still dispatches
+    // the inn and message plug-ins — the gate is what counts the cycle once the party is back in town.
+    if (await this.#advanceRestGate(observation, now)) return;
+
     // The heal is the game's own quick heal, and it is only valid from the 3-D view: a battle or a
     // chest set the flag, this tick spends it as one command (the four taps carry their own settles).
     if (this.#healDue && now - this.#healDueAtMs > HEAL_WINDOW_MS) this.#healDue = false;
@@ -1401,7 +1414,16 @@ export class WvdWorld implements World {
     if (verdict === 'escalate' && unnamed && this.#mode.mode !== 'unknown') verdict = 'ok';
     // The nothing-perceived stop is the transition's, not one frame's: hold it while the blank frames
     // are still young. A session whose frames never come back stops at `escalateSettleMs`.
-    if (verdict === 'stop' && blank && now - (this.#blankSinceMs ?? now) < this.#cfg.escalateSettleMs) {
+    //
+    // …except inside the cycle's rest (operator rule 2026-11-06): the rest draws its own scene, and
+    // measured 2026-11-06 it is ~13 s of frames nothing names between 确定 and the after-rest box.
+    // While the gate is armed that blank is the visit's, so a slow rest must not end the run.
+    if (
+      verdict === 'stop'
+      && blank
+      && this.#restGate === null
+      && now - (this.#blankSinceMs ?? now) < this.#cfg.escalateSettleMs
+    ) {
       return;
     }
     // A stage in progress is the loop's own work, and the screens it walks through are why the route
@@ -2132,6 +2154,71 @@ export class WvdWorld implements World {
     this.#orientTravelFailures = 0;
     this.#orientClimbs = 0;
     this.#settleUntilMs = 0;
+    this.#restGate = null;
+  }
+
+  /**
+   * The cycle is over: count it, then either start the next one or complete the task. Called by the
+   * exit stage's end (a task with no rest) and by the rest gate (the party slept and is back in town).
+   */
+  async #finishCycle(): Promise<void> {
+    this.#cyclesDone += 1;
+    if (this.#cyclesDone < Math.max(1, this.#cfg.cycles) && this.#task !== null) {
+      this.#resetCycle();
+      if (this.#task.orient !== undefined) {
+        // A goal task orients back in; there is no entry script to run.
+        this.#orienting = true;
+        this.#host?.log.info(`wvd: cycle ${this.#cyclesDone} done; orienting back to the farm`);
+        return;
+      }
+      const entered = await this.#task.runScript('enter');
+      if (!this.#running) return;
+      if (!entered.ok) {
+        await this.#endSession(
+          entered.reason === 'cancelled'
+            ? 'the session was stopped during the task entry'
+            : `the task entry stopped at step ${entered.step}: ${entered.reason}`,
+          { report: true, failed: entered.reason !== 'cancelled' },
+        );
+        return;
+      }
+      this.#handOffEntry(this.#now());
+      this.#host?.log.info(`wvd: cycle ${this.#cyclesDone} done; re-entered for cycle ${this.#cyclesDone + 1}`);
+      return;
+    }
+    await this.#endSession(`task-complete: ${this.#cyclesDone} of ${Math.max(1, this.#cfg.cycles)} cycles`, { report: true });
+  }
+
+  /**
+   * The rest gate's tick (operator rule 2026-11-06). `true` means this tick spent the cycle's end,
+   * so nothing else may act: the gate is the only thing left to decide.
+   */
+  async #advanceRestGate(observation: Observation, now: number): Promise<boolean> {
+    const gate = this.#restGate;
+    if (gate === null) return false;
+    // A rest under way is a known pause, not a stall: the visit itself is progress.
+    this.#lastProgressAtMs = now;
+    // The inn's own screens are the plug-in's, and they are the visit: the gate only watches for it.
+    if (observation.screen === 'inn' || observation.screen === 'message') {
+      gate.seenInn = true;
+      return false;
+    }
+    if (gate.seenInn && observation.screen === 'town') {
+      this.#restGate = null;
+      this.#host?.log.info('wvd: the rest is over; the cycle ends here');
+      await this.#finishCycle();
+      return true;
+    }
+    if (now - gate.sinceMs >= gate.timeoutMs) {
+      this.#restGate = null;
+      this.#host?.log.warn(
+        `wvd: the inn did not take the party within ${Math.round(gate.timeoutMs / 1000)} s; the cycle ends unrested`,
+      );
+      await this.#finishCycle();
+      return true;
+    }
+    // Between the tap and the visit the gate owns the tick: the route must not aim at the town.
+    return true;
   }
 
   /**
@@ -2582,31 +2669,20 @@ export class WvdWorld implements World {
         // The stage's own screens and presses are progress the loop could not see while it ran.
         this.#lastProgressAtMs = this.#now();
         if (intent.name !== 'exit') return;
-        this.#cyclesDone += 1;
-        if (this.#cyclesDone < Math.max(1, this.#cfg.cycles) && this.#task !== null) {
-          this.#resetCycle();
-          if (this.#task.orient !== undefined) {
-            // A goal task orients back in; there is no entry script to run.
-            this.#orienting = true;
-            this.#host?.log.info(`wvd: cycle ${this.#cyclesDone} done; orienting back to the farm`);
-            return;
-          }
-          const entered = await this.#task.runScript('enter');
-          if (!this.#running) return;
-          if (!entered.ok) {
-            await this.#endSession(
-              entered.reason === 'cancelled'
-                ? 'the session was stopped during the task entry'
-                : `the task entry stopped at step ${entered.step}: ${entered.reason}`,
-              { report: true, failed: entered.reason !== 'cancelled' },
-            );
-            return;
-          }
-          this.#handOffEntry(this.#now());
-          this.#host?.log.info(`wvd: cycle ${this.#cyclesDone} done; re-entered for cycle ${this.#cyclesDone + 1}`);
+        // The cycle ends where it began: asleep at the inn (operator rule 2026-11-06). The exit script
+        // only brings the party back to the town; the inn is one measured control from there and the
+        // visit is the plug-in's. The cycle counts once the party is back on the town's own screen.
+        const rest = this.#task?.rest;
+        if (rest === undefined) {
+          await this.#finishCycle();
           return;
         }
-        await this.#endSession(`task-complete: ${this.#cyclesDone} of ${Math.max(1, this.#cfg.cycles)} cycles`, { report: true });
+        this.#restGate = { sinceMs: this.#now(), timeoutMs: rest.timeoutMs, seenInn: false };
+        this.#host?.log.info(`wvd: the cycle ends with a rest at the inn: tapping the town's inn control at ${rest.at.x},${rest.at.y}`);
+        const opened = await this.#commands.tapPoint(rest.at);
+        if (!opened.ok) {
+          this.#host?.log.warn(`wvd: the inn control tap was refused (${opened.reason})`);
+        }
         return;
       }
       case 'stop':

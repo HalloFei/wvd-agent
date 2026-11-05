@@ -6,6 +6,7 @@
     "site": "ffxi-gcn",
     "zone": "ffxi-zone3"
   },
+  "rest": { "at": [916, 488], "timeoutMs": 90000 },
   "exit": {
     "timeoutMs": 180000,
     "steps": [

@@ -3127,6 +3127,109 @@ describe('a chest the party cannot walk to', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// The cycle's rest at the inn (operator rule 2026-11-06)
+// ---------------------------------------------------------------------------------------------
+
+describe("the cycle's rest", () => {
+  const FARM = '000000007f3ffe007ffeff00220bb600';
+  const INN_AT = { x: 916, y: 488 };
+  const village: Observation = { screen: 'town', atMs: 100, confidence: 0.9 };
+  const farmMap: Observation = {
+    screen: 'dungeonmap',
+    atMs: 100,
+    confidence: 0.9,
+    map: { floorTitle: 'B1F', titleKey: FARM, player: { x: 19, y: 21 }, origin: { x: 960, y: 540 }, icons: [] },
+  };
+
+  function restTask(timeoutMs: number): { task: SessionTask; definition: TaskDefinition } {
+    const definition: TaskDefinition = {
+      id: 'ffxi-4f',
+      label: '[Chest] FFXI 4F',
+      floor: { titleKey: FARM },
+      goal: { site: 'ffxi-gcn', zone: 'ffxi-zone3' },
+      exit: { timeoutMs: 1_000, steps: [{ op: 'tap' as const, at: [1, 2] as const }] },
+      rest: { at: INN_AT, timeoutMs },
+    };
+    const task: SessionTask = {
+      enter: async () => ({ ok: true, steps: 0, ms: 0 }),
+      runScript: async () => ({ ok: true, steps: 15, ms: 1, complete: true }),
+      abort: () => {},
+      orient: { goal: definition.goal!, floor: definition.floor.titleKey },
+      rest: definition.rest,
+    };
+    return { task, definition };
+  }
+
+  it('taps the town\'s inn control and waits for the visit before counting the cycle', async () => {
+    // The exit script only brings the party back to the town; the cycle ends asleep at the inn
+    // (operator rule 2026-11-06: the rest module reads the inn, the town is one measured tap away).
+    const { task, definition } = restTask(90_000);
+    const { world, host, actuator, perceiver, clock } = makeWorld({
+      observation: farmMap,
+      task,
+      policy: createTaskPolicy(() => definition, routePolicy),
+      cfg: { cycles: 1 },
+    });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls.at(-1)).toBe(`tap ${INN_AT.x},${INN_AT.y}`);
+    expect(world.isRunning()).toBe(true);
+    expect(host.logRecords.some((line) => line.message.includes('the cycle ends with a rest at the inn'))).toBe(true);
+
+    // The inn dialog: the plug-in's, and the visit the gate waits for. The cycle must not count here.
+    perceiver.observation = {
+      screen: 'inn',
+      atMs: 200,
+      confidence: 0.9,
+      rows: [{ at: { x: 1114, y: 606 }, label: '标准房' }],
+    };
+    // The plug-in is paced: two frames on the same screen, then one tap per pace.
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls.at(-1)).toBe(`tap ${INN_AT.x},${INN_AT.y}`);
+    clock.advance(100);
+    await world.tick();
+    expect(world.isRunning()).toBe(true);
+    expect(actuator.calls.at(-1)).toBe('tap 1114,606');
+
+    // Back on the town's own screen: the rest is over, and this is where the cycle ends.
+    perceiver.observation = village;
+    clock.advance(100);
+    await world.tick();
+    expect(world.isRunning()).toBe(false);
+    expect(host.logRecords.some((line) => line.message.includes('the rest is over; the cycle ends here'))).toBe(true);
+  });
+
+  it('ends the cycle unrested, with a warning, when the inn never takes the party', async () => {
+    // One missed tap must not wedge an unattended run: the gate gives up after the task's own bound.
+    const { task, definition } = restTask(5_000);
+    const { world, host, actuator, perceiver, clock } = makeWorld({
+      observation: farmMap,
+      task,
+      policy: createTaskPolicy(() => definition, routePolicy),
+      cfg: { cycles: 1 },
+    });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls.at(-1)).toBe(`tap ${INN_AT.x},${INN_AT.y}`);
+
+    // The tap missed: the town stays town, and nothing else is sent while the gate holds the tick.
+    perceiver.observation = village;
+    clock.advance(1_000);
+    await world.tick();
+    expect(world.isRunning()).toBe(true);
+    expect(actuator.calls).toEqual([`tap ${INN_AT.x},${INN_AT.y}`]);
+
+    clock.advance(5_000);
+    await world.tick();
+    expect(world.isRunning()).toBe(false);
+    expect(host.logRecords.some((line) => line.message.includes('the cycle ends unrested'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // The rest town's inn (operator, 2026-11-06)
 // ---------------------------------------------------------------------------------------------
 

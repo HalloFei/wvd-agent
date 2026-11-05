@@ -394,6 +394,20 @@ export interface TaskClimb {
   readonly destination?: string;
 }
 
+/**
+ * The cycle's rest (operator rule 2026-11-06): a cycle ends where it began — asleep at the inn.
+ *
+ * `at` is the rest town's **inn control** on the town view, measured 2026-11-06 at 1920×1080: one
+ * tap opens the innkeeper's dialog, and from there the inn plug-in rests the party (its rows are
+ * the dialogue's own evidence). `timeoutMs` bounds the visit: the whole thing — the three dialogs,
+ * the rest scene, the after-rest box and the way out — measured 23 s, and a visit that has not
+ * taken the party by then is given up on so an unattended run cannot wedge on one missed tap.
+ */
+export interface TaskRest {
+  readonly at: Point;
+  readonly timeoutMs: number;
+}
+
 export interface TaskDefinition {
   readonly id: string;
   readonly label: string;
@@ -403,6 +417,8 @@ export interface TaskDefinition {
   readonly exit?: TaskScript;
   /** The goal the World orients to, from any screen. Absent for a scripted task. */
   readonly goal?: TaskGoal;
+  /** The rest the cycle ends with. Absent for a task whose floor cycle has no inn. */
+  readonly rest?: TaskRest;
 }
 
 /** What the World needs to orient: where the farm is, and the floor it farms on. */
@@ -521,6 +537,11 @@ export interface SessionTask {
   abort(): void;
   /** The orientation a goal task declares. Absent for a scripted task: its entry drives itself. */
   readonly orient?: TaskOrient | undefined;
+  /**
+   * The rest the cycle ends with (operator rule 2026-11-06): the World taps this control after the
+   * exit script and counts the cycle once the party is back on the town's own screen.
+   */
+  readonly rest?: TaskRest | undefined;
 }
 
 // §7 QTE timing

@@ -96,7 +96,37 @@ survives it.
 
 All coordinates are client pixels at 1920×1080.
 
-### 4.1 Open the world map (from town)
+### 4.1 The rest town's inn (the cycle's rest, 2026-11-06)
+
+The town view is a row of **facility icons** over the party standing in the square, each labelled
+under the glyph. Measured 2026-11-06 at 1920×1080:
+
+| Facility | Point |
+| --- | --- |
+| 旅店 (inn) | **(916, 488)** — the label's line; the rooster glyph sits ~38 px above it |
+| 酒馆 (tavern) | (712, 635) |
+| 交易商 (trader) | (1034, 498) |
+| 道具店 (item shop) | (1195, 574) |
+| 偏僻的打铁铺 (smith) | (1143, 415) |
+| 寺院 (temple) | (806, 399) |
+
+One tap on 旅店 opens the innkeeper's dialog — no panel, no walk. The whole visit, measured end to
+end on 2026-11-06 (**23 s**):
+
+1. **service menu** `住宿` / `对话` / `离开` at (1114,488) / (1114,578) / (1114,641);
+2. **room list** `马房` / `标准房` / `返回` at (1114,549) / (1114,606) / (1114,660);
+3. **confirmation** `取消` (854,675) / `确定` (1062,675) — 取消 **cancels** the rest, so the
+   confirmation belongs to the rest it opened (live 2026-11-06 02:03: the World cancelled a rest
+   it had already committed);
+4. the rest scene: **~13 s of frames nothing names**, between 确定 and the box;
+5. the after-rest box `背包已补充完毕。` — one tap at (960,571);
+6. the service menu again → `离开` → the town.
+
+The World's inn plug-in reads these rows and rests, one tap per pace. The task file's `rest.at` is
+the 旅店 control the World taps when the exit script brings the party back, and `rest.timeoutMs`
+(90 s) bounds the visit.
+
+### 4.2 Open the world map (from town)
 
 - The parchment-with-pin button at the bottom right, about **(1185, 1023)**, opens the world map.
 - The map has locations labelled in Chinese. Zoom: **Q** smaller, **E** larger (the buttons
@@ -107,7 +137,7 @@ All coordinates are client pixels at 1920×1080.
   at the first zoom it sat around **(758, 348)**, after zooming out around **(677, 372)**. Clicking
   it enters a loading screen and then Dungeon Select.
 
-### 4.2 Dungeon Select
+### 4.3 Dungeon Select
 
 The rows, top to bottom, are:
 
@@ -122,7 +152,7 @@ The rows, top to bottom, are:
 
 `第四区-城内2F深处-` is about **(1128, 592)**. Clicking it loads the 3D dungeon.
 
-### 4.3 Open the dungeon map
+### 4.4 Open the dungeon map
 
 - Click the **minimap** in the top-right, about **(1826, 120)**, or press **G** (`地图`).
 - The map title is the floor name (`第四区-城内2F深处-`), the player's grid position is the
@@ -136,12 +166,12 @@ The rows, top to bottom, are:
   | 移动至目的地 (move to destination) | **G** |
   | 切换指针模式 (toggle pointer mode) | **R** |
 
-- The legend is live: **L does move the party to a chest** (verified 2026-10-24 night, see §4.4).
+- The legend is live: **L does move the party to a chest** (verified 2026-10-24 night, see §4.5).
   The earlier "L did nothing" was a focus problem — the window was not foreground, so the engine
   refused or the game ignored the key. `G` on the map is 移动至目的地, not close.
 - Close the map with `关闭` at about **(961, 1060)**, or `Esc`.
 
-### 4.4 Automove to a chest — **solved**
+### 4.5 Automove to a chest — **solved**
 
 Two ways, both verified live:
 
@@ -173,7 +203,7 @@ Two facts that bound it:
 - **Opening the map takes `G` twice** from the 3D view: the first opens the menu (地图 `G`, 调查
   `F`, 切换指针 `Tab`, 返回 `Esc`), the second opens the map.
 
-### 4.5 What was left running
+### 4.6 What was left running
 
 The last live run left the party in `第四区-城内2F深处-`, 3D view, no chest opened, no zone changed.
 The altar teleporter menu was dismissed with `什么也不做` at about **(961, 899)**.
@@ -212,7 +242,7 @@ encode, in Node and in Electron-as-Node when it can find Electron. On the live g
 
 All four were settled on 2026-10-24 night, and one more was found:
 
-1. **Automove activation** — settled: `G`,`G` opens the map, `L` walks to a chest (see §4.3–§4.4).
+1. **Automove activation** — settled: `G`,`G` opens the map, `L` walks to a chest (see §4.4–§4.5).
    The earlier "L is inert" was a focus problem, not a dead key.
 2. **L gating** — settled: `L` works on the map when chest icons exist; on a floor with none it does
    nothing at all, which is correct behaviour to encode rather than retry.
