@@ -534,10 +534,12 @@ object (§0 rule 3).
 | `escalateSettleMs` | integer | `5000` | escalation | an unnamed screen must persist this long before the loop asks; `0` asks on the first frame |
 | `stopHotkey` | string | `Ctrl+Alt+W` | engine | global stop, registered natively by the child |
 
-`qteLatencyMs` is a **measured** value with provenance in the chest spec §3. `qteDecelPxPerS2` is
-**provisional** — a placeholder matched to two samples' slide distance, not a fitted stop profile;
-chest §3 states its error and how agent-timed taps refine it. Both are editable, and a fitted value
-replaces the default with a note in the commit that changes it.
+`qteLatencyMs` and `qteDecelPxPerS2` are **measured** values now, calibrated 2026-11-06 on the
+recorded press corpus (257 presses; `docs/status.md` carries the numbers): the input leg is 61–76 ms
+(median 64), and the prior slide time is `610 / (2 · qteDecelPxPerS2)` = 0.05 s, the corpus median.
+`qteBrakeEnabled` is on by default for the same reason — the parks carry 0.04–0.10 s past the press.
+All three remain editable, and a fitted value replaces the default with its provenance in the commit
+that changes it.
 
 ## 9. Ownership
 
