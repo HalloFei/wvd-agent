@@ -29,6 +29,7 @@ import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
 import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from '../src/actions/chest.ts';
 import { timeQte } from '../src/actions/qte.ts';
+import { tileOnScreen } from '../src/perception/map.ts';
 import { routePolicy } from '../src/policy/route.ts';
 import { classify } from '../src/policy/session.ts';
 import { WvdWorld, type WvdSession } from '../src/world.ts';
@@ -204,7 +205,13 @@ function makeConsole(options: {
     timing: timeQte,
     commands: {
       openMap: () => openMap(actuator, cfg.pressHoldMs),
-      automoveToTile: (at) => automoveToTile(actuator, at, cfg.pressHoldMs),
+      // The aim `main.ts` gives, over this harness's scripted map.
+      automoveToTile: (cell) => automoveToTile(actuator, cell, cfg.pressHoldMs, {
+        locate: async () => {
+          const observation = perceiver.observation;
+          return observation.screen === 'dungeonmap' ? tileOnScreen(observation.map, cell) : null;
+        },
+      }),
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),

@@ -87,7 +87,6 @@ import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
 import { tapOpenerCard } from './actions/opener.ts';
 import { bandSampler, REFERENCE_FRAME, type QteOutcome, type QteRefusal, type QteTimer } from './actions/qte.ts';
 import { openerCardCentre, openerSlot } from './perception/opener.ts';
-import { tileOnScreen } from './perception/map.ts';
 import { openerFor } from './actions/battle.ts';
 import { chooseOpener } from './policy/chest.ts';
 import { nextOrientStep, type OrientCommand } from './policy/orient.ts';
@@ -118,8 +117,12 @@ export type SessionClassifier = (
 /** The commands of `actions/automove.ts`, bound to an `Actuator` by the composition root. */
 export interface RouteCommands {
   openMap(): Promise<ActionResult>;
-  /** Walk to one tile of the open map: its screen point, converted from the map's grid here. */
-  automoveToTile(at: Point): Promise<ActionResult>;
+  /**
+   * Walk to one grid cell of the open map. The cell is the route's whole decree: where it is on the
+   * screen is read from a frame captured when the tap is sent (`AutoMoveAim`), because the map's
+   * canvas moves and a point converted from an older frame can land on another cell (2026-11-06).
+   */
+  automoveToTile(cell: Point): Promise<ActionResult>;
   automoveToExit(): Promise<ActionResult>;
   /** Accept the `打开` prompt of the chest the party stands at. */
   acceptChestPrompt(): Promise<ActionResult>;
@@ -2318,16 +2321,10 @@ export class WvdWorld implements World {
           );
           return;
         }
-        // The route names a grid cell; the chevron is the map's only absolute screen point, so the
-        // conversion happens once, here, from the map this tick read (contracts §3 `origin`).
-        const read = context?.observation ?? this.#lastObservation;
-        const map = read?.screen === 'dungeonmap' ? read.map : null;
-        if (map === null) {
-          this.#host?.log.warn('wvd: not walking to a tile: no map read to aim it from');
-          return;
-        }
-        const at = tileOnScreen(map, intent.target);
-        await this.#press('move', fromScreen, () => this.#commands.automoveToTile(at), intent.target);
+        // The route names a grid cell and nothing else: the pixel is read at tap time, from a frame
+        // captured then, by the binding in the composition root. Converting it here — from the frame
+        // the decision came from — is what aimed two reachable chests three cells off (2026-11-06).
+        await this.#press('move', fromScreen, () => this.#commands.automoveToTile(intent.target), intent.target);
         return;
       }
       case 'exit':
@@ -2653,10 +2650,11 @@ export class WvdWorld implements World {
         return;
       }
       case 'stairs': {
-        // The 楼梯-门 icon the map reader named. It is **the same interaction as a chest walk**: the tap
-        // on the cell raises the 自動移動 prompt and tapping the prompt starts the walk (live 2026-11-03
-        // 21:45: a bare tap raised the prompt and the screen never changed, so the press looked ignored).
-        // The climb therefore goes through the farm's own automove, which finds and taps that prompt.
+        // The 楼梯-门 icon the map reader named, as the **cell** it stands on. It is the same interaction
+        // as a chest walk: the tap on the cell raises the 自動移動 prompt and tapping the prompt starts
+        // the walk (live 2026-11-03 21:45: a bare tap raised the prompt and the screen never changed, so
+        // the press looked ignored). The climb therefore goes through the farm's own automove, which
+        // locates the cell on a fresh frame and taps that prompt.
         await this.#press('move', fromScreen, () => this.#commands.automoveToTile(command.at));
         return;
       }
@@ -2748,6 +2746,13 @@ export class WvdWorld implements World {
       // (measured 2026-11-02). Skip it and aim elsewhere; do not mark `move` failed, which is what
       // used to wedge the farm until the next advancement.
       if (kind === 'move' && target !== null) {
+        if (result.reason === 'unavailable') {
+          // A walk nobody could **aim** is no evidence about the cell at all (live 2026-11-06: a stale
+          // map read aimed every tap three cells off, and two reachable chests were called unreachable
+          // and skipped). Re-perceive and aim again instead of skipping the chest this cycle.
+          this.#host?.log.warn(`wvd: the walk was not aimed: ${result.detail ?? 'the map could not be read'}`);
+          return;
+        }
         const why = result.detail ?? result.reason;
         this.#skip(target, why);
         return;

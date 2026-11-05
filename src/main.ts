@@ -54,7 +54,7 @@ import { HudPerceiver } from './perception/hud.ts';
 import { TownPerceiver, WorldMapPerceiver } from './perception/location.ts';
 import { DungeonSelectPerceiver } from './perception/dungeon-select.ts';
 import { TRAVEL_IDS } from './perception/locations.ts';
-import { MapPerceiver } from './perception/map.ts';
+import { MapPerceiver, tileOnScreen } from './perception/map.ts';
 import { routePolicy } from './policy/route.ts';
 import { createTaskPolicy } from './tasks/policy.ts';
 import { createTaskRunner } from './tasks/runner.ts';
@@ -120,9 +120,12 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
    * Cheapest decisive gate first (ChestB band, then the map readout, then the wider HUD scan).
    * Each recogniser keeps its own floor; they happen to agree on the route's act floor.
    */
+  // The map reader is also the aim's reader: the walk asks it where a cell is on the frame it taps
+  // (see `automoveToTile` below), so one instance serves the loop and the tap.
+  const mapReader = new MapPerceiver();
   const perceiver = new CompositePerceiver([
     { perceiver: new ChestPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    { perceiver: new MapPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    { perceiver: mapReader, floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new ChestPromptPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The item-claim screen comes before the opening: the result banner (`获得了…` over the opened chest)
     // also clears the opening's gates — live 2026-11-01 it was named `chest-opening` 0.60 and the
@@ -242,11 +245,29 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       // The walk finds the 自動移動 element instead of tapping a fixed 81 px above the cell: near the
       // panel's top edge that rise lands on the title bar, and a cell with no path raises nothing
       // (measured 2026-11-02). The frame comes from the live session, like the orientation's travel.
-      automoveToTile: (at) => {
+      // The walk is aimed where the map itself draws the marker, read from a frame captured at tap
+      // time: the World hands the grid cell and the pixel is this binding's business (2026-11-06,
+      // `t-mw3veimb-ppbm9u`). A capture that fails is `null`, never a guess.
+      automoveToTile: (cell) => {
         const session = live;
-        return automoveToTile(actuator, at, pressHoldMs(), session === null
-          ? undefined
-          : { capture: () => session.source.capture() });
+        if (session === null) return automoveToTile(actuator, cell, pressHoldMs());
+        return automoveToTile(actuator, cell, pressHoldMs(), {
+          locate: async () => {
+            try {
+              const frame = await session.source.capture();
+              const observation = await mapReader.observe(frame);
+              if (observation.screen !== 'dungeonmap') return null;
+              const map = observation.map;
+              const icon = map.icons.find((one) => one.at.x === cell.x && one.at.y === cell.y);
+              // The located marker's own cell; a frame that reads the cell without its glyph (the
+              // reader misses one now and then) still has that cell's place on it.
+              return tileOnScreen(map, icon === undefined ? cell : icon.at);
+            } catch {
+              return null;
+            }
+          },
+          capture: () => session.source.capture(),
+        });
       },
       automoveToExit: () => automoveToExit(actuator, pressHoldMs()),
       acceptChestPrompt: () => acceptChestPrompt(actuator),

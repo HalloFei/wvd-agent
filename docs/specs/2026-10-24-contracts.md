@@ -266,9 +266,14 @@ about twenty screens — so `ruledOut`, not the number, is what the classifier a
 
 **`origin` is what makes a tile clickable.** The map's canvas scrolls, so no absolute origin is a
 constant; the chevron sits at the centre of the party's cell and is measured per frame. The
-conversion is done once, by the consumer, with `tileOnScreen(map, tile)` (`src/perception/map.ts`),
-which is the exact inverse of the transform that placed `icons`. A walk intent carries a grid cell
-(`§6`), never a screen point: the policy must not know where the canvas happens to sit.
+conversion is done with `tileOnScreen(map, tile)` (`src/perception/map.ts`), which is the exact
+inverse of the transform that placed `icons`. A walk intent carries a grid cell (`§6`), never a
+screen point: the policy must not know where the canvas happens to sit. The cell is pose-free and
+the pixel is not, so **the conversion happens at the tap, on a frame captured then** — the
+composition root's binding supplies it (`AutoMoveAim.locate`), never the frame the decision came
+from. Measured 2026-11-06: the same party cell read 112 px (3.1 cells) apart in two reads of one
+map, and a point converted from the older read landed on a wall cell, which the game answers with
+no `自動移動` element at all — indistinguishable from "no path".
 
 **The markers, as measured 2026-10-24.** Which markers cross a floor is the operator's account: the
 **harken** and the **entries/exits** do, and the orchid ring does **not** — it moves the party within

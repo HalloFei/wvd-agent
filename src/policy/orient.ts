@@ -24,7 +24,6 @@
  * retry budgets, because a budget is a count across ticks and this module has none.
  */
 import type { Observation, Point, TaskOrient } from '../contracts.ts';
-import { tileOnScreen } from '../perception/map.ts';
 import { isExpectedFloor } from '../tasks/steps.ts';
 
 /** The one command the orientation sends, if any. */
@@ -38,10 +37,11 @@ export type OrientCommand =
   /** Run the task's own climb script: the measured stair-up from the climb floor. */
   | { readonly kind: 'climb' }
   /**
-   * Tap the map's **楼梯-门** icon (`MapIcon.kind === 'stair-door'`) at this screen point: the stair
-   * entrance to the next floor. The operator's rule (2026-11-03): the farm's area is beside the stair
-   * entrance, while the harken teleports far from it — so a climb walks to this glyph, never to the
-   * harken, and never to a measured tile.
+   * Walk to the map's **楼梯-门** icon (`MapIcon.kind === 'stair-door'`), as the grid cell it stands
+   * on: the stair entrance to the next floor. The operator's rule (2026-11-03): the farm's area is
+   * beside the stair entrance, while the harken teleports far from it — so a climb walks to this glyph,
+   * never to the harken, and never to a measured tile. The cell is the whole decree: the screen point
+   * is read from a frame captured at tap time, because the map's canvas moves (2026-11-06).
    */
   | { readonly kind: 'stairs'; readonly at: Point };
 
@@ -75,7 +75,7 @@ export function nextOrientStep(observation: Observation, orient: TaskOrient): Or
       // The task's own climb script stays as the fallback for a floor without that icon.
       const stairDoor = observation.map.icons.find((icon) => icon.kind === 'stair-door');
       if (stairDoor !== undefined) {
-        return { kind: 'command', command: { kind: 'stairs', at: tileOnScreen(observation.map, stairDoor.at) } };
+        return { kind: 'command', command: { kind: 'stairs', at: stairDoor.at } };
       }
       const climb = orient.goal.climb;
       if (climb !== undefined && isExpectedFloor(climb.from, floor)) {

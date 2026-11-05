@@ -98,8 +98,14 @@ try {
       ];
       let moved = false;
       for (const cell of candidates) {
-        const at = tileOnScreen(read.map, cell);
-        const walked = await automoveToTile(actuator, at, HOLD_MS, { capture: () => source.capture() });
+        const walked = await automoveToTile(actuator, cell, HOLD_MS, {
+          locate: async () => {
+            const frame = await source.capture();
+            const observation = await new MapPerceiver().observe(frame);
+            return observation.screen === 'dungeonmap' ? tileOnScreen(observation.map, cell) : null;
+          },
+          capture: () => source.capture(),
+        });
         if (walked.ok) { moved = true; attempts.push({ walkTo: cell, screen: 'walking', moved }); break; }
       }
       if (!moved) { attempts.push({ walkTo: null, screen: 'no walk', moved }); continue; }

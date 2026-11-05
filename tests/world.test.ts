@@ -351,6 +351,8 @@ function makeWorld(options: {
   travelResult?: { ok: true } | { ok: false; reason: 'location-not-found' | 'unknown-location'; detail?: string };
   /** What a tile walk answers, when a test needs the game to refuse it (an unreachable cell). */
   moveResult?: ActionResult;
+  /** The aim cannot be read on this run: the walk is never given a point (live 2026-11-06). */
+  blindAim?: boolean;
   /** The opener list and the member reader (contracts §11); absent leaves battles to auto. */
   battle?: { readonly openers: readonly BattleOpener[]; readonly reader: BattleMemberReader };
   host?: FakeHost;
@@ -405,7 +407,15 @@ function makeWorld(options: {
       // `main.ts` reads `pressHoldMs` per command; the harness does the same, so a configured hold
       // that the loop ignored would show up here (Important 2).
       openMap: () => openMap(actuator, cfg.pressHoldMs),
-      automoveToTile: (at) => Promise.resolve(options.moveResult ?? automoveToTile(actuator, at, cfg.pressHoldMs)),
+      // The aim `main.ts` gives: the tick's own map read, at the marker it placed the cell on. The
+      // harness has no frame source for the popup, so the walk keeps its measured-rise path.
+      automoveToTile: (cell) => Promise.resolve(options.moveResult ?? automoveToTile(actuator, cell, cfg.pressHoldMs, {
+        locate: async () => {
+          if (options.blindAim === true) return null;
+          const observation = perceiver.observation;
+          return observation.screen === 'dungeonmap' ? tileOnScreen(mapOf(observation), cell) : null;
+        },
+      })),
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
@@ -3095,6 +3105,25 @@ describe('a chest the party cannot walk to', () => {
     expect(skips.filter((line) => line.message.includes('skipping it this cycle'))).toHaveLength(2);
     expect(skips[0]!.message).toContain('the tile raised no 自動移動 element');
   });
+
+  it('does not mark a chest unreachable when the walk could not be aimed', async () => {
+    // Live 2026-11-06 02:05 (`t-mw3veimb-ppbm9u`): the map read that aimed the tap was stale, every tap
+    // landed three cells off, and two reachable chests were put on the unreachable list and left behind.
+    // A walk nobody could aim is no evidence about the cell, so it is retried, never skipped.
+    const { world, host, actuator, clock } = makeWorld({ observation: twoChests, blindAim: true });
+    await started(world, host);
+
+    await world.tick();
+    clock.advance(100);
+    await world.tick();
+
+    // Two walks were attempted, neither tapped a point, and nothing was skipped or exited.
+    expect(actuator.calls).toEqual([`key ${SCAN.R} 60`, `key ${SCAN.R} 60`]);
+    expect(host.logRecords.some((line) => line.message.includes('the walk was not aimed'))).toBe(true);
+    expect(host.logRecords.some((line) => line.message.includes('cannot be walked to'))).toBe(false);
+    expect(host.logRecords.some((line) => line.message.includes('skipping it this cycle'))).toBe(false);
+    expect(world.isRunning()).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -3149,6 +3178,33 @@ describe("the inn's rest", () => {
 
     expect(actuator.calls).toEqual(['tap 1114,606']);
     expect(host.logRecords.some((line) => line.message.includes('the inn: rest at 标准房'))).toBe(true);
+  });
+
+  it('answers the rest confirmation once the visit has rested, instead of cancelling it', async () => {
+    // Live 2026-11-06 02:03: the room tap committed the rest, the 确定 / 取消 confirmation came up, and
+    // the rested branch backed out of it with 取消 — the party left the inn without sleeping.
+    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: innView });
+    await started(world, host);
+
+    await world.tick();
+    // 标准房 is the configured default: the rest is committed here.
+    expect(actuator.calls).toEqual(['tap 1114,606']);
+
+    perceiver.observation = {
+      screen: 'inn',
+      atMs: 200,
+      confidence: 0.9,
+      rows: [
+        { at: { x: 854, y: 675 }, label: '取消' },
+        { at: { x: 1062, y: 675 }, label: '确定' },
+      ],
+    };
+    clock.advance(1_200);
+    await world.tick();
+
+    // The confirmation belongs to the rest already committed, so it is answered, not cancelled.
+    expect(actuator.calls).toEqual(['tap 1114,606', 'tap 1062,675']);
+    expect(host.logRecords.some((line) => line.message.includes('the inn: confirm at 确定'))).toBe(true);
   });
 
   it('backs out of a room list with no room it can take, and warns once', async () => {

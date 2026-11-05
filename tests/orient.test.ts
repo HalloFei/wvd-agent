@@ -60,8 +60,9 @@ describe('nextOrientStep', () => {
     const decision = nextOrientStep(withStairs, orient);
     expect(decision).toMatchObject({ kind: 'command', command: { kind: 'stairs' } });
     if (decision.kind !== 'command' || decision.command.kind !== 'stairs') return;
-    // tileOnScreen: origin + (tile - player) * TILE_PX (36 px), with the y axis inverted.
-    expect(decision.command.at).toEqual({ x: 960 + 3 * 36, y: 540 - 2 * 36 });
+    // The cell is the whole decree: the screen point is read at tap time from a frame captured then,
+    // because the map's canvas moves (2026-11-06, t-mw3veimb-ppbm9u).
+    expect(decision.command.at).toEqual({ x: 13, y: 12 });
   });
 
   it('climbs from the floor that carries the measured stair-up', () => {

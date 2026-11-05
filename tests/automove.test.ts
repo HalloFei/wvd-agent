@@ -58,8 +58,17 @@ function fakeActuator(...results: ActionResult[]): Actuator & { readonly presses
 /** A foreground refusal, the failure the chain must never swallow. */
 const REJECTED: ActionResult = { ok: false, reason: 'rejected', detail: 'not-foreground' };
 
-/** The tile the route picked, in screen pixels, as `tileOnScreen` hands it over. */
+/** The cell the route picked: the decision's whole decree (the pixel is the map's answer). */
+const CELL: Point = { x: 14, y: 18 };
+
+/** The screen point the aim reads for that cell, as `tileOnScreen` hands it over at tap time. */
 const TILE: Point = { x: 1_000, y: 400 };
+
+/**
+ * An aim that answers with one point and cannot look for the popup: the caller has no frame source,
+ * so the walk keeps the measured rise (the module's documented blind path).
+ */
+const aimAt = (point: Point | null) => ({ locate: async (): Promise<Point | null> => point });
 
 afterEach(() => {
   vi.useRealTimers();
@@ -113,7 +122,7 @@ describe('the automove command chain (navigation §3d)', () => {
     // mode, and the 自动移动 element it raises is the second, confirming tap.
     vi.useFakeTimers();
     const actuator = fakeActuator();
-    const walking = automoveToTile(actuator, TILE);
+    const walking = automoveToTile(actuator, CELL, PRESS_MS, aimAt(TILE));
 
     // Pointer mode first: a tile click in the default mode is ignored by the game.
     await vi.advanceTimersByTimeAsync(0);
@@ -130,14 +139,14 @@ describe('the automove command chain (navigation §3d)', () => {
 
   it('stops after R when the pointer toggle is rejected, and returns it unchanged', async () => {
     const actuator = fakeActuator(REJECTED);
-    await expect(automoveToTile(actuator, TILE)).resolves.toBe(REJECTED);
+    await expect(automoveToTile(actuator, CELL, PRESS_MS, aimAt(TILE))).resolves.toBe(REJECTED);
     expect(actuator.calls).toEqual([{ kind: 'key', scan: SCAN.pointer, holdMs: PRESS_MS }]);
   });
 
   it('returns a rejected tile tap unchanged and never taps the popup', async () => {
     vi.useFakeTimers();
     const actuator = fakeActuator({ ok: true }, REJECTED);
-    const walking = automoveToTile(actuator, TILE);
+    const walking = automoveToTile(actuator, CELL, PRESS_MS, aimAt(TILE));
     await vi.advanceTimersByTimeAsync(5_000);
     await expect(walking).resolves.toBe(REJECTED);
     // One tap only: the popup is not drawn, and a second blind tap would be a different gesture.
@@ -147,7 +156,7 @@ describe('the automove command chain (navigation §3d)', () => {
   it('returns a rejected popup tap unchanged', async () => {
     vi.useFakeTimers();
     const actuator = fakeActuator({ ok: true }, { ok: true }, REJECTED);
-    const walking = automoveToTile(actuator, TILE);
+    const walking = automoveToTile(actuator, CELL, PRESS_MS, aimAt(TILE));
     await vi.advanceTimersByTimeAsync(5_000);
     await expect(walking).resolves.toBe(REJECTED);
     expect(actuator.taps).toHaveLength(2);
@@ -170,7 +179,7 @@ describe('the automove command chain (navigation §3d)', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await expect(opening).resolves.toEqual({ ok: true });
     await automoveToExit(actuator, configured);
-    const tileWalk = automoveToTile(actuator, TILE, configured);
+    const tileWalk = automoveToTile(actuator, CELL, configured, aimAt(TILE));
     await vi.advanceTimersByTimeAsync(5_000);
     await expect(tileWalk).resolves.toEqual({ ok: true });
 
@@ -203,7 +212,8 @@ describe('the 自動移動 element', () => {
     const actuator = fakeActuator();
     const tile = { x: 1_248, y: 766 };
 
-    const result = await automoveToTile(actuator, tile, PRESS_MS, {
+    const result = await automoveToTile(actuator, CELL, PRESS_MS, {
+      locate: async () => tile,
       capture: async () => frame,
       waitMs: 60,
       pollMs: 10,
@@ -222,7 +232,8 @@ describe('the 自動移動 element', () => {
     const actuator = fakeActuator();
     const tile = { x: 960, y: 158 };
 
-    const result = await automoveToTile(actuator, tile, PRESS_MS, {
+    const result = await automoveToTile(actuator, CELL, PRESS_MS, {
+      locate: async () => tile,
       capture: async () => frame,
       waitMs: 60,
       pollMs: 10,
@@ -240,7 +251,8 @@ describe('the 自動移動 element', () => {
     const actuator = fakeActuator();
     const tile = { x: 1_248, y: 766 };
 
-    const result = await automoveToTile(actuator, tile, PRESS_MS, {
+    const result = await automoveToTile(actuator, CELL, PRESS_MS, {
+      locate: async () => tile,
       capture: async () => frame,
       waitMs: 30,
       pollMs: 10,
@@ -252,5 +264,69 @@ describe('the 自動移動 element', () => {
     // cell (live 2026-11-02: a cell 18 rows up the map has no path).
     expect(actuator.taps).toEqual([tile, tile]);
     expect(actuator.presses.filter((press) => press.scan === SCAN.pointer)).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The aim is read at tap time, and a walk nobody aimed is not a refused walk (2026-11-06)
+// ---------------------------------------------------------------------------------------------
+
+describe('aiming the walk', () => {
+  it('refuses without a map reader instead of tapping a point it invented', async () => {
+    const actuator = fakeActuator();
+    const result = await automoveToTile(actuator, CELL);
+    expect(result).toMatchObject({ ok: false, reason: 'unavailable' });
+    expect(actuator.calls).toEqual([]);
+  });
+
+  it('taps nothing when the map could not be read, and says so instead of "no path"', async () => {
+    // Live 2026-11-06 02:05: a stale read aimed every tap three cells off, the game raised nothing,
+    // and two reachable chests went on the unreachable list. An unaimed walk carries no evidence.
+    const actuator = fakeActuator();
+    const result = await automoveToTile(actuator, CELL, PRESS_MS, {
+      locate: async () => null,
+      capture: async () => { throw new Error('capture timeout: stale-frame'); },
+    });
+    expect(result).toMatchObject({ ok: false, reason: 'unavailable' });
+    expect((result as { detail?: string }).detail).toContain('not aimed');
+    expect(actuator.taps).toEqual([]);
+    // One pointer toggle, never a blind tap of the rise.
+    expect(actuator.presses).toEqual([{ scan: SCAN.pointer, holdMs: PRESS_MS }]);
+  });
+
+  it('re-locates the point on its one retry instead of re-tapping the stale one', async () => {
+    // The map's canvas moves: the retry is aimed again from a frame read then.
+    const first = { x: 1_000, y: 400 };
+    const second = { x: 1_000, y: 288 };
+    const seen: Point[] = [];
+    const actuator = fakeActuator();
+    const result = await automoveToTile(actuator, CELL, PRESS_MS, {
+      locate: async () => {
+        const next = seen.length === 0 ? first : second;
+        seen.push(next);
+        return next;
+      },
+      // A map with no pill: the first aim is refused, so the retry re-aims.
+      capture: async () => { throw new Error('capture timeout: stale-frame'); },
+    });
+    expect(seen).toEqual([first, second]);
+    expect(actuator.taps).toEqual([first, second]);
+    expect(result).toMatchObject({ ok: false, reason: 'unavailable' });
+  });
+
+  it('never calls a cell unreachable when no frame arrived to look for the element', async () => {
+    // The engine's stale-frame bursts must not become a "no path" verdict: nothing was looked at.
+    const tile = { x: 1_000, y: 400 };
+    const actuator = fakeActuator();
+    const result = await automoveToTile(actuator, CELL, PRESS_MS, {
+      locate: async () => tile,
+      capture: async () => { throw new Error('capture timeout: stale-frame'); },
+      waitMs: 30,
+      pollMs: 10,
+    });
+    expect(result).toMatchObject({ ok: false, reason: 'unavailable' });
+    expect((result as { detail?: string }).detail).toContain('no frame arrived');
+    // Both pointer modes were tried, and no rise was tapped blind.
+    expect(actuator.taps).toEqual([tile, tile]);
   });
 });

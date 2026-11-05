@@ -182,7 +182,9 @@ Two consequences for the build, and both are now in the code:
 - **The target is a tile, so the map must publish a screen anchor.** The canvas scrolls, so the
   chevron is the only absolute point: contracts §3 gained `MapState.origin` (the chevron's own
   screen point), and `tileOnScreen` inverts the icon transform from it. The route keeps speaking
-  grid cells; the loop converts once, at the seam, and hands `automoveToTile` a screen point.
+  grid cells; the conversion is the composition root's, taken **at tap time** from a frame captured
+  then (`AutoMoveAim.locate`) — the canvas also moves between frames, and a point converted from
+  the decision's frame was measured 112 px (3.1 cells) off on 2026-11-06.
 - **The element is detected since 2026-11-02.** `perception/automove.ts` matches the pill's glyph
   (28x28, `scripts/extract-automove-template.ts`) in a band around the clicked tile and taps where
   the game drew it; the 81 px rise stays only as the fallback for a caller with no frame source.
@@ -257,10 +259,12 @@ what makes 第四区 and the glow frames readable at all: they parsed as **zero 
   glyph **is** and what the operator says it **does**; it does not claim the pairing.
 
 **Initiating the move.** Identification and initiation meet at one cell. The parser publishes the
-marker's grid cell; `tileOnScreen(map, cell)` turns it into the screen point; `automoveToTile` presses
-`R`, clicks that point and clicks the 自动移动 element 79–84 px above it (§3e). The link is tested, not
-assumed: 第四区's ring (12,18) maps to (925,446) against a measured ring centre of (923.5,449), and
-the harken's cell is the same cell a walk would be aimed at (`tests/map.test.ts`).
+marker's grid cell; `tileOnScreen(map, cell)` turns it into a screen point on a frame captured then;
+`automoveToTile` presses `R`, clicks that point and clicks the 自动移动 element 79–84 px above it
+(§3e). The link is tested, not assumed: 第四区's ring (12,18) maps to (925,446) against a measured
+ring centre of (923.5,449), and the harken's cell is the same cell a walk would be aimed at
+(`tests/map.test.ts`). Since 2026-11-06 the walk takes the **cell**, not the point: the point is read
+from the frame the tap follows, because a stale one lands on another cell.
 
 **Still open:** which entry/exit a floor crosses at (needs one live pairing of a marker with a floor
 change — the p0 FFXI session); and the door-with-arrow drawn at the top edge of both FFXI maps, which

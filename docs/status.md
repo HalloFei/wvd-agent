@@ -900,6 +900,37 @@ spread the World hands the timing call (45 px before a park, 12 px after) and th
 corpus is the `.tmp` logs and `qte.jsonl` files (not committed); the fit is a one-off extraction over
 them, and the numbers above are its output.
 
+## The walk is aimed where the map draws the marker, at tap time (2026-11-06)
+
+The 02:05 cycle left two chests behind and the operator asked why. The map showed three chests on
+第四区-城内2F深处-, the farm opened one, then called the other two **unreachable** twice each and left:
+`the chest at 21,4 cannot be walked to (the tile raised no 自動移動 element); skipping it this cycle`.
+
+**The probe was not the fault.** Live, same map, same order the World uses (read the map, press `R`,
+tap the cell), the pill was found at 0.87-0.91 in the first frame 120-150 ms after the tap, for both
+chests: `21,4` at tap (1248,694) -> pill (1212,618), `19,5` at tap (1176,770) -> pill (1141,695). The
+template, its two bands and its 0.7 floor are healthy.
+
+**The aim was the fault.** `tileOnScreen` bakes the chevron `origin` of *the frame the decision came
+from* into the tap point, and the map's canvas is not fixed: two reads of the same party cell
+(`X:21 Y:1`) put the chevron at y 802 and y 914 — **112 px, 3.1 cells** apart — and the chest glyphs
+moved with it. A tap aimed from the 802 pose lands three cells north on the 914 pose, on a wall, and
+the game answers a wall with no element at all. Reproduced: three taps aimed from the stale pose
+(both chest cells and the walkable cell north of the party) raised nothing; the same cells aimed from
+a fresh frame raised pills every time. The retry could never save it: it re-tapped the *same* point.
+
+The fix is the seam, not the timing. The World now hands `automoveToTile` the **grid cell** and no
+point; the composition root binds `AutoMoveAim.locate`, which captures a frame *now*, reads the map
+and returns the marker's point from it; the one retry re-locates instead of re-tapping. Two answers
+are now kept apart that used to be one: a walk that raised **no element** is a cell with no path
+(`timeout`, skipped as before), and a walk that could not be **aimed** — the map unreadable, or no
+frame at all — is `unavailable`, which the World logs and re-tries, never skips: live 2026-11-06 also
+logged four `capture timeout: stale-frame` failures in that same window, and "nothing was looked at"
+must not become "no path". The orientation's 楼梯-门 command carries its cell for the same reason.
+
+`tests/automove.test.ts` pins the re-located retry, the unaimable refusal and the no-frame answer;
+`tests/world.test.ts` pins that an unaimed walk skips nothing; `tests/orient.test.ts` the cell.
+
 
 
 
