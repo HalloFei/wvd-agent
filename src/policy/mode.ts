@@ -52,6 +52,9 @@ export function modeOf(observation: Observation): GameMode | null {
     case 'dungeon-select':
       return 'travel';
     case 'town':
+    // The inn is the rest town's dialog (operator, 2026-11-06): the town pipeline owns it, and the
+    // World's inn branch presses its row before the route could treat it as a town to walk out of.
+    case 'inn':
       return 'town';
     // The main character's death is its own moment, not a frame that changes a pipeline's mode:
     // named so it stops being an unnamed frame inside whatever mode the party died in.

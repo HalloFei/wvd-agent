@@ -66,7 +66,7 @@ export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
-  | 'unknown';
+  | 'inn' | 'unknown';
 ```
 
 `drop-item-claim` is the chest's item-claim overlay: the contents card with the `获得了…` caption, and
@@ -102,6 +102,18 @@ no close X). `perception/revive-qte.ts` carries the numbers and the thresholds b
 exists so the loop never presses into a member's death; the World either stops the session on it
 (`stopOnDeath`, an unattended run) or raises the question to Coo once per death. Playing the ring is
 still open (`t-mvy6dvsw`).
+
+\`inn\` is the rest town's inn (operator, 2026-11-06): the 旅店 dialog — the innkeeper's service menu
+(住宿 / 对话 / 离开) and the room list behind it (马房 / 标准房 / 返回, with a price on the room rows).
+The operator's rule is the evidence: **the room options identify it** — a dialog that offers rooms (or
+住宿, the row that leads to them) is the inn, whatever the room types are. The rows are the game's
+fixed UI, so they are measured positions (the room list at y 0.5083 / 0.5611 / 0.6111, the service menu
+at 0.4519 / 0.5352 / 0.5935) and each row's label is read against the measured library
+(\`perception/inn.ts\`, \`inn-library.ts\`, from the 1280 room-list and 1920 service-menu recordings): two
+known rows are the floor, one is never a dialog. The World takes one row a tick — the configured room
+(\`worlds.wvd.innRoom\`), else 标准房, else the first room the dialog offers, else 住宿 or the way out.
+The rest itself is the game's: the dialog closes, the party is healed, and the town it leaves the party
+in is the orientation's business.
 
 `character-page` is the menu a party HUD card opens (2026-11-03): a member's page with its stat block
 and the bottom tab row (关闭 / 强度 / 技能 / 咒文 / 装备 / 背包). Its evidence is the X 关闭 tile at
@@ -468,6 +480,7 @@ object (§0 rule 3).
 | `sessionMaxMinutes` | integer | `120` | World | hard stop for one session |
 | `stallStopSeconds` | integer | `120` | World | no progress this long ends the session |
 | `stopOnDeath` | boolean | `false` | World | a death (main character or party member) ends the session instead of asking Coo |
+| `innRoom` | string | `标准房` | World | the room the party takes at an inn; a room the dialog lacks falls back to 标准房 |
 
 ### 8.2 Capture and engine
 

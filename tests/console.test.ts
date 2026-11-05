@@ -212,6 +212,7 @@ function makeConsole(options: {
       healParty: async () => ({ ok: true }),
       closeCharacterPage: async () => ({ ok: true }),
       tapPoint: (at) => actuator.tap(at),
+      restAtInn: (at) => actuator.tap(at),
       battleSpeed: () => pressBattleSpeed(actuator),
       battleAuto: () => pressBattleAuto(actuator),
       battleSlot: async () => ({ ok: true }),

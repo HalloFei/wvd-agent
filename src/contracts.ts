@@ -44,7 +44,7 @@ export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
-  | 'unknown';
+  | 'inn' | 'unknown';
 
 // §3 Perception
 
@@ -123,6 +123,19 @@ export type Observation =
       readonly rows: readonly { readonly at: Point; readonly label: string | null }[];
     }
   | {
+      readonly screen: 'inn';
+      readonly atMs: number;
+      readonly confidence: number;
+      /**
+       * The inn dialog's rows, top to bottom: where each row sits, and the label the measured library
+       * knows. Only named rows are reported — a row the loop cannot name is one it will not tap. The
+       * room options are the screen's own evidence (operator rule 2026-11-06), so a dialog offering
+       * room types the library has never seen is still the inn: the policy takes the first room it
+       * does not know to be a non-room.
+       */
+      readonly rows: readonly { readonly at: Point; readonly label: string }[];
+    }
+  | {
       readonly screen: 'combat';
       readonly atMs: number;
       readonly confidence: number;
@@ -148,7 +161,7 @@ export type Observation =
        */
       readonly dungeonLike?: boolean;
     }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'unknown'>;
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }

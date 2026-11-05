@@ -972,6 +972,7 @@ function emptyScreens(): Record<ScreenId, number> {
     'character-page': 0,
     'main-character-dead': 0,
     'revive-qte': 0,
+    inn: 0,
     'harken-menu': 0,
     unknown: 0,
   };

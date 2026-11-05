@@ -92,6 +92,8 @@ import { tileOnScreen } from './perception/map.ts';
 import { openerFor } from './actions/battle.ts';
 import { chooseOpener } from './policy/chest.ts';
 import { nextOrientStep, type OrientCommand } from './policy/orient.ts';
+import { chooseInnRest } from './policy/inn.ts';
+import { restAtInn } from './actions/inn.ts';
 import { WORLD_SCREENS } from './tasks/steps.ts';
 import {
   CONSOLE_GET_METHODS,
@@ -135,6 +137,11 @@ export interface RouteCommands {
    * caller passes a control the frame itself reported (contracts §2 `harken-menu`).
    */
   tapPoint(at: Point): Promise<ActionResult>;
+  /**
+   * The rest town's inn: take the row the inn policy chose (the operator's room, else 标准房, else
+   * the first room the dialog offers). One tap at a row the frame named (contracts §2 `inn`).
+   */
+  restAtInn(at: Point): Promise<ActionResult>;
   /** The battle's 倍速 toggle: one press, sent only when the frame says it is off (contracts §2). */
   battleSpeed(): Promise<ActionResult>;
   /** The battle's 自動 toggle: one press, sent only when the frame says it is off. */
@@ -593,6 +600,8 @@ export class WvdWorld implements World {
   #battleRead: { readonly value: string | null; readonly frames: number } | null = null;
   /** The death scene has been sent to Coo for this death (one question, not one per tick). */
   #deathEscalated = false;
+  /** The inn's dialog offered no row this loop could take (one warning per visit). */
+  #innWarned = false;
   /** Consecutive frames of the revive QTE: the modal has to stay up, not flicker. */
   #reviveFrames = 0;
   /** The revive QTE has been sent to Coo for this death (one question, not one per tick). */
@@ -1265,6 +1274,31 @@ export class WvdWorld implements World {
       return;
     }
 
+    // The rest town's inn (operator, 2026-11-06): the dialog's room options are its own evidence, and
+    // the module's one command is the row the policy chose — the configured room, else 标准房, else
+    // the first room the dialog offers, else 住宿 (into the room list) or 返回 (out of a list with no
+    // usable room). One tap per pace; the rest scene itself is the game's, and the town it leaves the
+    // party in is the orientation's business.
+    if (!waiting && observation.screen === 'inn') {
+      if (!this.#pacer.ready(now)) return;
+      const choice = chooseInnRest(observation.rows, this.#cfg.innRoom);
+      if (choice === null) {
+        if (!this.#innWarned) {
+          this.#innWarned = true;
+          this.#host?.log.warn('wvd: the inn offers no row this loop can take');
+        }
+        return;
+      }
+      this.#pacer.act(now);
+      const tapped = await this.#commands.restAtInn(choice.at);
+      if (tapped.ok) {
+        this.#host?.log.info(`wvd: the inn: ${choice.kind} at ${choice.label} (${choice.at.x},${choice.at.y})`);
+      } else {
+        this.#host?.log.warn(`wvd: the inn row was refused (${tapped.reason})`);
+      }
+      return;
+    }
+
     // The harken's floor menu (operator rule 2026-11-03): the list is not fixed — a harken offers a
     // floor only once that floor's harken is reconstructed — so the climb reads it. The task names the
     // farm floor's row; when the menu offers it the World taps it (the teleport). When it does not, the
@@ -1485,6 +1519,7 @@ export class WvdWorld implements World {
       this.#reviveFrames = 0;
       this.#reviveAsked = false;
     }
+    if (observation.screen !== 'inn') this.#innWarned = false;
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen !== 'character-page') {
       this.#pageCloseTries = 0;

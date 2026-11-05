@@ -415,6 +415,7 @@ function makeWorld(options: {
       // The page's close is one measured tap, so the world tests can see it.
       closeCharacterPage: () => closeCharacterPage(actuator),
       tapPoint: (at) => actuator.tap(at),
+      restAtInn: (at) => actuator.tap(at),
       battleSpeed: () => pressBattleSpeed(actuator),
       battleAuto: () => pressBattleAuto(actuator),
       // The opener's taps are pinned in tests/battle-opener.test.ts; the world tests need the calls.
@@ -3063,5 +3064,58 @@ describe('a chest the party cannot walk to', () => {
     expect(skips.filter((line) => line.message.includes('trying once more'))).toHaveLength(2);
     expect(skips.filter((line) => line.message.includes('skipping it this cycle'))).toHaveLength(2);
     expect(skips[0]!.message).toContain('the tile raised no 自動移動 element');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The rest town's inn (operator, 2026-11-06)
+// ---------------------------------------------------------------------------------------------
+
+describe("the inn's rest", () => {
+  const roomList = [
+    { at: { x: 1114, y: 549 }, label: '马房' },
+    { at: { x: 1114, y: 606 }, label: '标准房' },
+    { at: { x: 1114, y: 660 }, label: '返回' },
+  ];
+  const innView: Observation = { screen: 'inn', atMs: 100, confidence: 0.9, rows: roomList };
+
+  it('takes the room the World is configured for', async () => {
+    const { world, host, actuator } = makeWorld({ observation: innView, cfg: { innRoom: '马房' } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['tap 1114,549']);
+    expect(host.logRecords.some((line) => line.message.includes('the inn: rest at 马房'))).toBe(true);
+    expect(world.isRunning()).toBe(true);
+  });
+
+  it('takes 标准房 when the configured room is not offered', async () => {
+    const { world, host, actuator } = makeWorld({ observation: innView, cfg: { innRoom: '上等房' } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['tap 1114,606']);
+    expect(host.logRecords.some((line) => line.message.includes('the inn: rest at 标准房'))).toBe(true);
+  });
+
+  it('backs out of a room list with no room it can take, and warns once', async () => {
+    const bare: Observation = {
+      screen: 'inn',
+      atMs: 100,
+      confidence: 0.9,
+      rows: [
+        { at: { x: 1114, y: 549 }, label: '对话' },
+        { at: { x: 1114, y: 660 }, label: '离开' },
+      ],
+    };
+    const { world, host, actuator } = makeWorld({ observation: bare });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['tap 1114,660']);
+    expect(host.logRecords.some((line) => line.message.includes('the inn: leave at 离开'))).toBe(true);
   });
 });

@@ -17,6 +17,8 @@ export interface WvdConfigSection extends WorldSection {
    * on so the stop is a stop, not a wait for an answer nobody is there to give.
    */
   stopOnDeath: boolean;
+  /** The room the party takes at an inn; a room the dialog does not offer falls back to 标准房. */
+  innRoom: string;
   /** Task file for the location to farm; empty keeps the built-in route (contracts §10). */
   taskFile: string;
   stallStopSeconds: number;
@@ -71,6 +73,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   sessionMaxMinutes: 120,
   cycles: 1,
   stopOnDeath: false,
+  innRoom: '标准房',
   taskFile: '',
   stallStopSeconds: 120,
   gameWindowTitle: 'WizardryVariantsDaphne',
@@ -135,6 +138,10 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       'worlds.wvd.stopOnDeath': {
         type: 'boolean', title: '死亡即停止',
         description: '主角死亡或队员倒下（复活 QTE）时结束会话，而不是等待回答；用于无人值守的连续跑图。',
+      },
+      'worlds.wvd.innRoom': {
+        type: 'string', title: '旅店房间',
+        description: '在旅店休息时选择的房间；旅店没有这个房间时用默认的标准房。',
       },
       'worlds.wvd.taskFile': {
         type: 'string', title: '任务文件',
