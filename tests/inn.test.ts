@@ -47,6 +47,21 @@ describe('the rest town\'s inn', () => {
     expect(answer.screen).toBe('inn');
   });
 
+  it('names the rest confirmation and the policy answers 确定 (1920 and its 1280 copy)', async () => {
+    for (const name of ['inn-confirm-1920.jpg', 'inn-confirm-1280.jpg']) {
+      const menu = findInn(await imageAt(INN, name));
+      expect(menu, name).not.toBeNull();
+      expect(menu!.rows.map((row) => row.label), name).toEqual(['取消', '确定']);
+      const answer = await new InnPerceiver().observe(await frameAt(INN, name));
+      expect(answer.screen, name).toBe('inn');
+    }
+    const choice = chooseInnRest([
+      { at: { x: 854, y: 675 }, label: '取消' },
+      { at: { x: 1062, y: 675 }, label: '确定' },
+    ], '标准房');
+    expect(choice).toMatchObject({ kind: 'confirm', label: '确定' });
+  });
+
   it('does not fire on the screens around it', async () => {
     const perceiver = new InnPerceiver();
     for (const [dir, name] of [
