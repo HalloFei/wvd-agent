@@ -12,6 +12,9 @@
  * 6. the **返回** / **离开** / **取消** row that backs out of a dialog with no usable room.
  *
  * A dialog with none of those is no decision: the caller waits, and the stall clock owns it.
+ *
+ * Once the visit has rested, rules 1-5 are off — but rule 4 is not: the confirmation is the rest the
+ * visit already committed, so it is answered before the dialogs that follow are backed out of.
  */
 import type { Point } from '../contracts.ts';
 
@@ -55,8 +58,15 @@ export function chooseInnRest(options: readonly InnOption[], wanted: string, res
   // a room type the library has never seen still a room the party may take.
   const rooms = options.filter((option) => !INN_NOT_ROOM_LABELS.includes(option.label));
   const leave = options.find((option) => option.label === '返回' || option.label === '离开' || option.label === '取消') ?? null;
-  // The visit has already committed a rest: back out of whatever dialog is up, never rest again.
-  if (rested) return leave === null ? null : { kind: 'leave', at: leave.at, label: leave.label };
+  // The visit has already committed a rest, so no second one is entered. The confirmation is not a
+  // second rest — it is the one already in motion (the room tap opens it) — and backing out of it is
+  // what cancelled a committed rest live on 2026-11-06 02:03 (the party left with 取消 and never
+  // slept). Answer it; back out of every other dialog.
+  if (rested) {
+    const confirm = options.find((option) => option.label === INN_CONFIRM_LABEL) ?? null;
+    if (confirm !== null) return { kind: 'confirm', at: confirm.at, label: confirm.label };
+    return leave === null ? null : { kind: 'leave', at: leave.at, label: leave.label };
+  }
   const configured = wanted.trim() === '' ? null : rooms.find((option) => option.label === wanted) ?? null;
   if (configured !== null) return { kind: 'rest', at: configured.at, label: configured.label, why: 'configured' };
   const fallback = rooms.find((option) => option.label === INN_DEFAULT_ROOM) ?? null;

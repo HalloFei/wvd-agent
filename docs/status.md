@@ -859,6 +859,12 @@ and the module rested again, five times in 25 s. The room tap (or its confirmati
 commitment; after it the dialogs are backed out of (返回 / 離開 / 取消) instead of re-entered, and the
 state resets once the party is back on the town's own screen.
 
+**The confirmation is not one of the dialogs that follow (live 2026-11-06 02:03).** The room tap
+committed the rest, the 确定 / 取消 confirmation came up, and the rested branch backed out of it with
+**取消** — the module left all three dialogs cleanly and the party never slept. The confirmation belongs
+to the rest the visit already committed, so the policy answers it even when the visit has rested; only
+the dialogs after it (the room list, the service menu) are left.
+
 `tests/message.test.ts` pins both sizes and ten negatives; `tests/inn.test.ts` the rested order;
 `tests/world.test.ts` the box's one tap and the inn's leave-after-rest behaviour.
 

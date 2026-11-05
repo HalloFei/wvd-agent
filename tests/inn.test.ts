@@ -129,11 +129,20 @@ describe('the inn\'s room choice', () => {
     // way out, not a second rest (the live 01:53 loop rested five times in 25 s).
     expect(chooseInnRest(roomList, '标准房', true)).toMatchObject({ kind: 'leave', label: '返回' });
     expect(chooseInnRest(service, '标准房', true)).toMatchObject({ kind: 'leave', label: '离开' });
-    expect(chooseInnRest([
+    expect(chooseInnRest([], '标准房', true)).toBeNull();
+  });
+
+  it('still confirms a rest that is already in motion once the visit has rested', () => {
+    // Live 2026-11-06 02:03: the room tap committed the rest, the confirmation came up, and the rested
+    // branch backed out with 取消 — the party left without sleeping. The confirmation belongs to the
+    // rest the visit already committed, so it is answered, not cancelled.
+    const confirmDialog = [
       { at: { x: 854, y: 675 }, label: '取消' },
       { at: { x: 1062, y: 675 }, label: '确定' },
-    ], '标准房', true)).toMatchObject({ kind: 'leave', label: '取消' });
-    expect(chooseInnRest([], '标准房', true)).toBeNull();
+    ];
+    expect(chooseInnRest(confirmDialog, '标准房', true)).toMatchObject({ kind: 'confirm', label: '确定' });
+    // …and a confirmation with no way out but itself is still the answer, not a null.
+    expect(chooseInnRest([confirmDialog[1]!], '标准房', true)).toMatchObject({ kind: 'confirm' });
   });
 
   it('makes no decision on a dialog with nothing it can use', () => {
