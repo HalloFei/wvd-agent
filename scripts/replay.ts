@@ -136,11 +136,11 @@ export interface ReplayOptions {
    */
   readonly planCheck?: boolean;
   /**
-   * Feed the planning model the brake carry (the 2026-10-24 recording's model) instead of the
-   * default plain `v·L`. Off by default so the check plans what production plans: the 2026-10-31
-   * live presses froze at the press, and `planTap`'s `brakeEnabled` defaults false.
+   * The slide time the harness feeds the planning model as its carry (the 2026-10-24 recording
+   * fitted 0.1017 s), instead of the no-carry plan. Off by default so the check plans what
+   * production plans when the bar has no measured park.
    */
-  readonly brakeEnabled?: boolean;
+  readonly carryTauS?: number;
 }
 
 export type ReplayTools =
@@ -193,7 +193,7 @@ export async function replay(dir: string, options: ReplayOptions = {}): Promise<
           positions: 0,
           violations: [],
           frameMs: 1_000 / info.fps,
-          brakeEnabled: options.brakeEnabled === true,
+          carryTauS: options.carryTauS ?? null,
         }
       : null;
   const composite = new CompositePerceiver([
@@ -491,18 +491,16 @@ interface PlanTally {
   readonly violations: string[];
   /** One video frame in ms; the press-instant lookup may not reach further than this. */
   readonly frameMs: number;
-  /** Whether the harness fed `planTap` the brake carry (`ReplayOptions#brakeEnabled`). */
-  readonly brakeEnabled: boolean;
+  /** The slide time the harness fed planTap as its carry (ReplayOptions#carryTauS), or null. */
+  readonly carryTauS: number | null;
 }
 
 /**
- * The contracts' defaults for the two `planTap` inputs `measurements.json` does not record —
- * `qteLatencyMs` and `qteDecelPxPerS2` (`WVD_DEFAULTS`, contracts §7) — so there is no measured
- * value to read. The numbers the recording *does* carry reach the check elsewhere: the zones through
- * `PlanReading.zones`, the marker's motion through its own readings.
+ * The recorded session's own input latency (the 2026-10-24 session planned with 75 ms; production's
+ * prior is 64 now, measured later). The numbers the recording *does* carry reach the check elsewhere:
+ * the zones through PlanReading.zones, the marker's motion through its own readings.
  */
 const PLAN_LATENCY_MS = 75;
-const PLAN_DECEL_PX_PER_S2 = 3000;
 
 /**
  * The harness's horizon, 1000 ms: **not** a contract default. Production passes what is left of the
@@ -560,9 +558,8 @@ function checkPlan(plan: PlanTally, atMs: number, qte: QteState, index: number):
     v,
     zones: qte.zones,
     latencyMs: PLAN_LATENCY_MS,
-    decelPxPerS2: PLAN_DECEL_PX_PER_S2,
     horizonMs: PLAN_HORIZON_MS,
-    brakeEnabled: plan.brakeEnabled,
+    ...(plan.carryTauS === null ? {} : { carryPx: v * plan.carryTauS }),
   });
   if (tap === null) return;
   plan.planned += 1;

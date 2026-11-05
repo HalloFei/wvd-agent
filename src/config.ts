@@ -40,13 +40,11 @@ export interface WvdConfigSection extends WorldSection {
   rerollLeadRatio: number;
   qteLatencyMs: number;
   /**
-   * When true, the planner adds the brake carry: the measured one for this bar, or the prior
-   * `brakeDistancePx(v, 2 * qteDecelPxPerS2)` on its first press. On by default since 2026-11-06: the
-   * recorded parks carry 0.04–0.10 s past the press, so a plan without it presses ~0.05 s too late.
+   * The slide time a bar's **first** press is planned with, seconds (2026-11-06): the median of the
+   * recorded parks, 0.05 s. After a press the bar's own measured park replaces it. There is no brake
+   * switch or deceleration constant — the plan's one slide term is a measured time.
    */
-  qteBrakeEnabled: boolean;
-  qteDecelPxPerS2: number;
-  qteMinWindowMs: number;
+  qtePriorCarryTauS: number;
   qteAttemptsFallback: number;
   /** How long the QTE timing sub-loop may hold the tick before it gives up, milliseconds. */
   qteSubLoopMs: number;
@@ -97,11 +95,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   rerollLeadRatio: 0.5,
   // The measured input leg: 61–76 ms over the 2026-11-04/05 presses (median 63.5), so 64.
   qteLatencyMs: 64,
-  qteBrakeEnabled: true,
-  // The prior brake time is 610 / (2 * 6100) = 0.05 s — the median of the ten normal parks
-  // (2026-11-06). The old 3000 encoded 0.1017 s from the single 2026-10-24 stop, an outlier.
-  qteDecelPxPerS2: 6100,
-  qteMinWindowMs: 150,
+  qtePriorCarryTauS: 0.05,
   qteAttemptsFallback: 2,
   qteSubLoopMs: 4000,
   lootTapIntervalMs: 400,
@@ -206,19 +200,12 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       'worlds.wvd.qteLatencyMs': {
         type: 'integer', title: 'QTE 输入延迟', description: '实测的输入延迟，毫秒。', minimum: 1,
       },
-      'worlds.wvd.qteBrakeEnabled': {
-        type: 'boolean', title: 'QTE 刹车模型',
-        description: '启用后按滑行刹车提前量计划：已测得的本杆滑行优先，未测得的按滑行先验；2026-11-06 的停位数据表明滑行是真实的，默认开启。',
+      'worlds.wvd.qtePriorCarryTauS': {
+        type: 'number', title: 'QTE 滑行先验',
+        description: '每根新杆第一次按压的滑行时间先验，秒；测过停位后改用该杆自己的滑行。默认 0.05 秒（2026-11-06 停位数据的中位数）。',
+        minimum: 0,
       },
-      'worlds.wvd.qteDecelPxPerS2': {
-        type: 'integer', title: 'QTE 减速度',
-        description: '滑行先验常数，像素/秒²：先验滑行时间 = 610 / (2 × 这个值)，默认 6100 即 0.05 秒（停位数据的中位数）。',
-        minimum: 1,
-      },
-      'worlds.wvd.qteMinWindowMs': {
-        type: 'integer', title: 'QTE 最小窗口',
-        description: '比这更窄的过法直接放弃，毫秒；零表示不设下限。', minimum: 0,
-      },
+
       'worlds.wvd.qteAttemptsFallback': {
         type: 'integer', title: 'QTE 次数兜底', description: '读不出计数时使用。',
       },

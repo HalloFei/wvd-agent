@@ -438,7 +438,7 @@ that produces a valid `Observation` requires no policy change.
  * no clock, and §0.4's one-clock rule is satisfied by the caller adding `frame.atMs`. A planner that
  * compares it to `frame.atMs` instead of adding it is wrong by a whole session.
  *
- * It carries no `qteMinWindowMs` check either: a window shorter than the floor is refused by the
+ * It carries no window-floor check either: a pass the band refuses is what the reroll answers, and
  * **caller**, who is the only one that knows the configured floor.
  */
 export interface TapPlan {
@@ -462,7 +462,7 @@ export function planTap(input: {
 ```
 
 Rules fixed by the spec: the lead carries `sign(v)`; a target beyond the next bounce is
-unreachable; a window shorter than `qteMinWindowMs` is refused rather than gambled.
+unreachable; a pass whose stop band does not fit a zone to 95 % is what the reroll answers.
 
 ## 8. Configuration (`worlds.wvd`)
 
@@ -512,9 +512,7 @@ object (§0 rule 3).
 | `maxRerolls` | integer | `3` | chest | QTE rerolls per chest, floor chests only |
 | `rerollLeadRatio` | number 0–1 | `0.5` | chest | reroll when lead exceeds this fraction of the zone |
 | `qteLatencyMs` | integer | `64` | chest | measured input leg (61–76 ms over the 2026-11-04/05 presses) |
-| `qteBrakeEnabled` | boolean | `true` | chest | add the carry to plans: this bar's measured park, else the prior; on since 2026-11-06 (the parks carry 0.04–0.10 s) |
-| `qteDecelPxPerS2` | integer | `6100` | chest | the prior's slide constant: prior slide time = 610 / (2 × this) = 0.05 s, the median of ten parks |
-| `qteMinWindowMs` | integer | `150` | chest | refuse a pass tighter than this |
+| `qtePriorCarryTauS` | number | `0.05` | chest | the slide time a bar's **first** press is planned with (the median of the ten recorded parks); after a press the bar's own park replaces it |
 | `qteAttemptsFallback` | integer | `2` | chest | used when the counter is unreadable |
 | `qteSubLoopMs` | integer | `4000` | chest | how long the QTE sub-loop may hold the tick before it gives up |
 | `lootTapIntervalMs` | integer | `400` | chest | between loot taps; the pacing primitive's 700 ms is the floor (effective interval = max(700 ms, this)) |
@@ -534,12 +532,13 @@ object (§0 rule 3).
 | `escalateSettleMs` | integer | `5000` | escalation | an unnamed screen must persist this long before the loop asks; `0` asks on the first frame |
 | `stopHotkey` | string | `Ctrl+Alt+W` | engine | global stop, registered natively by the child |
 
-`qteLatencyMs` and `qteDecelPxPerS2` are **measured** values now, calibrated 2026-11-06 on the
-recorded press corpus (257 presses; `docs/status.md` carries the numbers): the input leg is 61–76 ms
-(median 64), and the prior slide time is `610 / (2 · qteDecelPxPerS2)` = 0.05 s, the corpus median.
-`qteBrakeEnabled` is on by default for the same reason — the parks carry 0.04–0.10 s past the press.
-All three remain editable, and a fitted value replaces the default with its provenance in the commit
-that changes it.
+`qteLatencyMs` and `qtePriorCarryTauS` are **measured** values, calibrated 2026-11-06 on the recorded
+press corpus (257 presses; `docs/status.md` carries the numbers): the input leg is 61–76 ms (median
+64) and the prior slide is 0.05 s, the corpus median. There is **no brake switch and no deceleration
+constant** — the plan's one slide term is a measured time (the bar's park, else this prior). The old
+`qteMinWindowMs` window floor is gone too: the stop band's 95 % overlap is the one "can this pass
+succeed" test, and a pass the band refuses is what the reroll answers. Both values remain editable,
+and a fitted value replaces the default with its provenance in the commit that changes it.
 
 ## 9. Ownership
 

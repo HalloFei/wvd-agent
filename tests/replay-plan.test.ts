@@ -44,8 +44,14 @@ function reading(overrides: Partial<PlanReading> = {}): PlanReading {
 }
 
 /** A real rightward plan taken at `markerX`, and the press position its own formula predicts. */
-function rightwardPlan(markerX = 800, brakeEnabled = false): { readonly plan: TapPlan; readonly pressX: number } {
-  const plan = planTap({ markerX, v: 610, zones: PARSED_ZONES, ...TAP, brakeEnabled });
+function rightwardPlan(markerX = 800, carryTauS?: number): { readonly plan: TapPlan; readonly pressX: number } {
+  const plan = planTap({
+    markerX,
+    v: 610,
+    zones: PARSED_ZONES,
+    ...TAP,
+    ...(carryTauS === undefined ? {} : { carryPx: 610 * carryTauS }),
+  });
   if (plan === null) throw new Error('the test input must plan');
   return { plan, pressX: markerX + 610 * (plan.atMs / 1_000) };
 }
@@ -159,10 +165,10 @@ describe('planProblem', () => {
     expect(outside.compared).toBe(true);
   });
 
-  it('keeps the 2026-10-24 ~27 px / 450 ms check with brakeEnabled: true', () => {
+  it('keeps the 2026-10-24 ~27 px / 450 ms check with the measured carry', () => {
     // The pre-switch numbers, preserved under the switch: at 729 the braked plan runs 449.6 ms, so a
     // 10 % speed error displaces the prediction by 0.1 · 610 px/s · 0.45 s ≈ 27 px.
-    const { plan, pressX } = rightwardPlan(729, true);
+    const { plan, pressX } = rightwardPlan(729, 610 / 6_000);
     expect(plan.atMs).toBeGreaterThan(440);
     expect(plan.atMs).toBeLessThan(460);
 

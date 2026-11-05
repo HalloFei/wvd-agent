@@ -70,7 +70,6 @@ import type {
 } from './contracts.ts';
 import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
-import { chooseQtePass, type QtePass } from './policy/qte.ts';
 import { advanceMode, INITIAL_MODE, type ModeMemory } from './policy/mode.ts';
 import { OPERATION_PACE_MS, Pacer } from './policy/pacing.ts';
 import { BattleSequence } from './policy/battle-sequence.ts';
@@ -681,10 +680,6 @@ export class WvdWorld implements World {
   #qteTries = 0;
   /** The spin guard's warning has been written for this bar. */
   #qteSpinWarned = false;
-  /** The pass the policy saw on the last decision, recorded only while the baseline is filling. */
-  #lastQtePass: QtePass | null = null;
-  /** The reroll budget is spent with nothing better: the bar is taken as the last attempt. */
-  #qteGivenUp = false;
   /**
    * A battle or a chest happened: heal when the loop is back on the 3-D view — and only then. The flag
    * is bounded (`#healDueAtMs`) and cancelled by an orientation command, so entering the dungeon on a
@@ -1037,8 +1032,6 @@ export class WvdWorld implements World {
       this.#lastIntent = null;
       this.#lastObservation = null;
       this.#qteRerolls = 0;
-      this.#lastQtePass = null;
-      this.#qteGivenUp = false;
       this.#lootTapAtMs = null;
       this.#lootTaps = 0;
       this.#ticks = 0;
@@ -1650,8 +1643,6 @@ export class WvdWorld implements World {
     // to the chest, not to the approach.
     if (observation.screen === 'drop-item-claim' || observation.screen === 'combat') {
       this.#qteRerolls = 0;
-      this.#lastQtePass = null;
-      this.#qteGivenUp = false;
       // Both are the moments after which the party is hurt: heal once the loop is back on the view.
       this.#healDue = true;
       this.#healDueAtMs = now;
@@ -2106,9 +2097,7 @@ export class WvdWorld implements World {
     this.#escalationCooldownUntilMs = 0;
     // Per-cycle QTE/battle state: a give-up or a partly spent reroll budget in one cycle must not
     // silence the next cycle's bar.
-    this.#qteGivenUp = false;
     this.#qteRerolls = 0;
-    this.#lastQtePass = null;
     this.#rearmBattle();
     this.#askedForMap = false;
     this.#pacer.reset();
@@ -2141,7 +2130,7 @@ export class WvdWorld implements World {
    * - **A stop during the wait sends nothing**: `press` re-checks the session, and an outcome that
    *   arrives after the session ended is dropped rather than logged as this session's.
    *
-   * The success line is the fit input for `qteDecelPxPerS2` (chest spec §3, task #18): the recorded
+   * The success line is the fit input for the carry prior (chest spec §3, task #18): the recorded
    * speed, the planned delay (`delayMs` — never `atMs`, which everywhere else is a clock stamp,
    * contracts §0.4), the zone centre, where the marker was, where it parked and whether that read
    * settled. An unsettled `restX` is a moving marker, not a rest, and the fit must be able to tell.
@@ -2197,28 +2186,16 @@ export class WvdWorld implements World {
           timer.unref?.();
         }),
         // The measured terms win over the config once this bar has produced them (operator rule
-        // 2026-11-05): the last press's round trip is the input leg, its park's carry time the brake.
-        // The config values are the prior for a bar's first press.
+        // 2026-11-05): the last press's round trip is the input leg, its park's carry time the slide.
+        // The config values are the prior for a bar's first press — and the plan always gets a slide
+        // time now (there is no brake switch): measured, else the measured prior.
         latencyMs: this.#qteLatencyMs ?? cfg.qteLatencyMs,
-        brakeEnabled: cfg.qteBrakeEnabled,
-        decelPxPerS2: cfg.qteDecelPxPerS2,
         budgetMs: cfg.qteSubLoopMs,
-        ...(this.#qteCarryTauS === null ? {} : { carryTauS: this.#qteCarryTauS }),
+        carryTauS: this.#qteCarryTauS ?? Math.max(0, cfg.qtePriorCarryTauS),
         latencySpreadMs: QTE_LATENCY_SPREAD_MS,
         // The band is only as honest as the carry's source: the prior before this bar has a park,
         // the bar's own measured value after (operator rule 2026-11-05, calibrated 2026-11-06).
         carrySpreadPx: this.#qteCarryTauS === null ? QTE_CARRY_SPREAD_PX : QTE_MEASURED_CARRY_SPREAD_PX,
-        // The attempt-vs-reroll rule (operator, 2026-10-31): five rerolls per chest, the first two
-        // rerolled passes recorded as the baseline, and only a later pass that beats both baselines
-        // is taken. The callback also stashes the pass for the recording below; the policy is pure.
-        choosePass: (pass) => {
-          this.#lastQtePass = pass;
-          if (this.#qteGivenUp) return 'press';
-          return chooseQtePass(pass, {
-            rerolls: this.#qteRerolls,
-            budget: Math.max(0, cfg.maxRerolls),
-          }, cfg.qteMinWindowMs);
-        },
       });
     } catch (error) {
       this.#host?.log.warn(`wvd: the chest QTE could not be timed: ${message(error)}`);
@@ -2227,10 +2204,11 @@ export class WvdWorld implements World {
     // A stop can land inside the sub-loop. Nothing is acted on — or reported as this session's —
     // after it, exactly as the tick itself re-checks after every await.
     if (!this.#running || this.#session !== session) return;
-    if (!outcome.ok && outcome.reason === 'reroll') {
-      // Record the pass while the baseline is filling (the first two *rerolls*), then cancel the QTE:
-      // a cancellation costs no attempt (chest §4), and the panel returns for the next card click.
-      const pass = this.#lastQtePass;
+    if (!outcome.ok && outcome.reason === 'no-reachable-zone' && this.#qteRerolls < Math.max(0, cfg.maxRerolls)) {
+      // The pass produced no plan the stop band accepted, so this bar cannot be pressed within the
+      // operator's 95 % rule (2026-11-06: the hard 150 ms window floor is gone — the band is the one
+      // "can this pass succeed" test). Cancel the bar and let the panel pick an opener again: a
+      // cancellation costs no attempt (chest §4), and a new bar may be slower.
       const cancelled = await this.#commands.cancelQte();
       if (cancelled.ok) {
         this.#qteRerolls += 1;
@@ -2258,8 +2236,7 @@ export class WvdWorld implements World {
       }
       this.#host?.log.info(
         `wvd: chest QTE reroll ${this.#qteRerolls}/${cfg.maxRerolls}: `
-          + (cancelled.ok ? 'the bar was left' : `the bar could not be left (${cancelled.reason})`)
-          + `, window ${Math.round(pass?.windowMs ?? 0)} ms`,
+          + (cancelled.ok ? 'the band refused the pass, the bar was left' : `the bar could not be left (${cancelled.reason})`),
       );
       return;
     }
@@ -2271,12 +2248,11 @@ export class WvdWorld implements World {
       const roundTripMs = outcome.ackAtMs - outcome.pressAtMs;
       if (Number.isFinite(roundTripMs) && roundTripMs > 0) this.#qteLatencyMs = roundTripMs;
     }
-    if (!outcome.ok && outcome.reason === 'no-better-pass') {
-      // The budget is gone and no reroll beat the first two: the operator accepted the failure.
-      this.#qteGivenUp = true;
+    if (!outcome.ok && outcome.reason === 'no-reachable-zone') {
+      // The reroll budget is spent and the band still refuses: the bar is left to the stall clock
+      // (the last-attempt landing press has already had its chance inside the sub-loop).
       this.#host?.log.warn(
-        `wvd: chest QTE given up after ${this.#qteRerolls} rerolls: no pass cleared `
-          + `the ${this.#cfg.qteMinWindowMs} ms floor`,
+        `wvd: chest QTE given up after ${this.#qteRerolls} rerolls: no pass fit a zone to 95 %`,
       );
       return;
     }

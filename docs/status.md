@@ -854,10 +854,16 @@ own `inputMs`) — gives the numbers the plan needs:
 - **the input leg**: 61–76 ms, median 63.5 → `qteLatencyMs` **64** (was 75).
 - **the carry is real**: the ten normal parks implied 0.04–0.10 s of slide past the press (two more
   implied −0.07…−0.05), so a plan without it schedules the press too late and parks past the target.
-  `qteBrakeEnabled` is **on** by default now (the 2026-10-31 "frozen at registration" reading is
-  falsified), and the prior slide is `610 / (2 · qteDecelPxPerS2)` = **0.05 s**: `qteDecelPxPerS2`
-  6100, where the old 3000 encoded 0.1017 s from the single 2026-10-24 stop — an outlier against the
-  corpus.
+  The prior slide is **0.05 s** (`qtePriorCarryTauS`, the corpus median; the 2026-10-24 stop's
+  0.1017 s was an outlier against it). **There is no brake switch and no deceleration constant any
+  more** (2026-11-06): the plan's one slide term is a measured time — the bar's own park once it has
+  one, else the prior — so the model the World runs is `qteLatencyMs` + `qtePriorCarryTauS` + the
+  stop band, and nothing else.
+- **the window floor is gone**: the hard `qteMinWindowMs` 150 ms test was a second opinion beside the
+  stop band and blocked the fast bars (the 2026-11-06 run rerolled 113–150 ms passes five times and
+  lost the chest). The band's 95 % overlap is the one "can this pass succeed" test; a pass the band
+  refuses for a whole sub-loop is `no-reachable-zone`, and the World cancels the bar (a free cancel)
+  up to `maxRerolls` to try another opener, then leaves it to the stall clock.
 - **the band**: before a bar has a park its carry is uncertain by ±0.08 s → `QTE_CARRY_SPREAD_PX`
   **45** (was 20); after the park the bar's own slide is stable (±0.02 s on the stuck bar) →
   `QTE_MEASURED_CARRY_SPREAD_PX` **12**; the input leg's own spread is **12 ms** (was 15).

@@ -659,8 +659,8 @@ describe('the chest QTE', () => {
     // the policy's judgement: the World hands the loop a `choosePass` carrying the configured floor,
     // and the loop itself no longer has a lead floor to pass in.
     expect(seen[0]!.budgetMs).toBe(WVD_DEFAULTS.qteSubLoopMs);
-    expect(seen[0]!.choosePass?.({ windowMs: WVD_DEFAULTS.qteMinWindowMs, speedPxPerS: 900 })).toBe('press');
-    expect(seen[0]!.choosePass?.({ windowMs: WVD_DEFAULTS.qteMinWindowMs - 1, speedPxPerS: 900 })).toBe('reroll');
+    // A bar with no measured park is planned with the measured prior slide, not with a switch.
+    expect(seen[0]!.carryTauS).toBeCloseTo(WVD_DEFAULTS.qtePriorCarryTauS, 9);
     // The disarm is Space (0x39), held for the configured duration — a key, not a tap, not a literal.
     expect(actuator.calls).toEqual([`key ${DISARM_SCAN} ${WVD_DEFAULTS.pressHoldMs}`]);
     // The success line is #18's fit input: the plan's delay is `delayMs` (every `atMs` is a clock
@@ -690,27 +690,32 @@ describe('the chest QTE', () => {
     expect(world.isRunning()).toBe(true);
   });
 
-  it('presses the bar as the last attempt after the reroll budget is spent', async () => {
-    let calls = 0;
-    const timing: QteTimer = async (options) => {
-      calls += 1;
-      if (calls === 1) return { ok: false, reason: 'no-better-pass' };
-      // The budget is spent, but a plan exists: the bar is taken as the last attempt.
-      expect(options.choosePass?.({ windowMs: 1, speedPxPerS: 1200 })).toBe('press');
-      const pressed = await options.press();
-      return pressed.ok
-        ? {
-          ok: true, v: 0, atMs: 0, target: 0, tapX: 0, restX: null, restSettled: false,
-          pressAtMs: 0, ackAtMs: 0, delayActualMs: 0, inputMs: null, tauS: null,
-        }
-        : { ok: false, reason: 'press-refused' };
-    };
+  it('re-rolls a bar the stop band refuses', async () => {
+    // 2026-11-06: the hard 150 ms window floor is gone; the one "can this pass succeed" test is the
+    // stop band. A pass the band refuses for the whole sub-loop is `no-reachable-zone`, and the
+    // World cancels the bar (a free cancel) to let the panel pick another opener.
+    const timing: QteTimer = async () => ({ ok: false, reason: 'no-reachable-zone' });
     const { world, host, actuator } = makeWorld({ observation: qteBar, timing });
     await started(world, host);
 
-    await world.tick();                 // the budget is spent; the bar is left for this tick
-    await world.tick();                 // the next tick presses it anyway
-    expect(actuator.calls).toEqual([`key ${DISARM_SCAN} ${WVD_DEFAULTS.pressHoldMs}`]);
+    await world.tick();
+
+    expect(host.logRecords.some((record) => record.message.includes('chest QTE reroll 1/5'))).toBe(true);
+    // The cancel is the bar's round ✕ — a tap, and no disarm key was pressed.
+    expect(actuator.calls.some((call) => call.startsWith('tap'))).toBe(true);
+    expect(actuator.calls.some((call) => call.startsWith('key '))).toBe(false);
+    expect(world.isRunning()).toBe(true);
+  });
+
+  it('gives up on a bar the band refuses when the reroll budget is already spent', async () => {
+    const timing: QteTimer = async () => ({ ok: false, reason: 'no-reachable-zone' });
+    const { world, host } = makeWorld({ observation: qteBar, timing, cfg: { maxRerolls: 0 } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(host.logRecords.some((record) => record.message.includes('no pass fit a zone to 95 %'))).toBe(true);
+    expect(host.logRecords.some((record) => record.message.includes('chest QTE reroll'))).toBe(false);
     expect(world.isRunning()).toBe(true);
   });
 
@@ -862,7 +867,8 @@ describe('the chest QTE', () => {
 
     await world.tick();
     expect(seen).toHaveLength(1);
-    expect(seen[0]!.carryTauS).toBeUndefined();
+    // A bar with no park yet is planned with the measured prior slide; the park replaces it below.
+    expect(seen[0]!.carryTauS).toBeCloseTo(WVD_DEFAULTS.qtePriorCarryTauS, 9);
     // The band is as honest as the carry's source (calibrated 2026-11-06): the prior is the ten parks'
     // ±0.08 s of slide (45 px), the bar's own park narrows it to 12 px.
     expect(seen[0]!.carrySpreadPx).toBe(45);
@@ -2620,7 +2626,7 @@ describe('the chest re-engage after a QTE cancel', () => {
   it('cancels, steps off the chest once, and routes nothing until the prompt answers', async () => {
     const { world, host, perceiver, actuator, cfg } = makeWorld({
       observation: qteBar,
-      timing: async () => ({ ok: false, reason: 'reroll' }),
+      timing: async () => ({ ok: false, reason: 'no-reachable-zone' }),
     });
     await started(world, host);
 

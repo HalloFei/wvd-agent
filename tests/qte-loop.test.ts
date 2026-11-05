@@ -207,7 +207,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -229,7 +229,7 @@ describe('timeQte', () => {
     expect(sampler.passedPrevious.slice(0, 3)).toEqual([undefined, 700, 720]);
   });
 
-  it('presses the braked plan the 2026-10-24 recording measured (brakeEnabled: true)', async () => {
+  it('presses the braked plan the 2026-10-24 recording measured (carryTauS: 610 / 6_000)', async () => {
     // The same bar with the switch on: the 61.6 px carry puts the left zone's centre behind the
     // stop (740 + 36.4 + 61.6 = 838), so the plan aims at the right zone's 1111 and waits 450.5 ms —
     // the expectation this test had before the switch defaulted off.
@@ -247,7 +247,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
     });
 
     expect(out.ok).toBe(true);
@@ -282,7 +282,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -294,7 +294,7 @@ describe('timeQte', () => {
     expect(out.restX).toBe(820);
   });
 
-  it('presses the braked late landing (brakeEnabled: true)', async () => {
+  it('presses the braked late landing (carryTauS: 610 / 6_000)', async () => {
     // With the switch on, the same bar at 704.4 has its planned instant 9.9 ms away
     // ((808 − 704.4 − 97.58)/606), just behind the 10 ms sample cost; the predicted landing adds the
     // 61.6 px carry to the 42.4 px of age and input leg and parks at 808.4 — the pre-switch test.
@@ -313,7 +313,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
     });
 
     expect(out.ok).toBe(true);
@@ -345,7 +345,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -377,7 +377,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, record: (event) => events.push(event),
+      latencyMs: 60, budgetMs: 4000, record: (event) => events.push(event),
     });
 
     expect(out.ok).toBe(true);
@@ -416,7 +416,7 @@ describe('timeQte', () => {
     const press = async (): Promise<ActionResult> => ({ ok: true });
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -440,7 +440,7 @@ describe('timeQte', () => {
     const { press } = recordingPress(clock);
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, carryTauS: 0.2,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 0.2,
     });
     expect(out.ok).toBe(true);
     if (!out.ok) return;
@@ -480,7 +480,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -492,7 +492,7 @@ describe('timeQte', () => {
     expect(presses[0]).toBeCloseTo(66 + out.atMs, 1);
   });
 
-  it('keeps the braked 51 ms a stale frame leaves (brakeEnabled: true)', async () => {
+  it('keeps the braked 51 ms a stale frame leaves (carryTauS: 610 / 6_000)', async () => {
     // The pre-switch expectation for the same test: the carry makes the right zone the only
     // reachable target and its plan is 450.5 ms out, so 466 ms of clock leaves 50.5 ms of lead.
     const clock = virtualClock(0);
@@ -522,7 +522,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
     });
 
     expect(out.ok).toBe(true);
@@ -556,7 +556,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -568,7 +568,7 @@ describe('timeQte', () => {
     expect(presses).toHaveLength(1);
   });
 
-  it('presses the braked 1 242 px/s bar 55 ms out (brakeEnabled: true)', async () => {
+  it('presses the braked 1 242 px/s bar 55 ms out (carryTauS: 610 / 6_000)', async () => {
     // With the carry the plan is 64.5 ms out, so the 10 ms sample cost leaves 54.5 ms — the
     // pre-switch expectation.
     const clock = virtualClock(0);
@@ -588,7 +588,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
     });
 
     expect(out.ok).toBe(true);
@@ -622,7 +622,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -633,7 +633,7 @@ describe('timeQte', () => {
     expect(presses).toEqual([76]);         // 66 ms reading + the 10 ms sample cost
   });
 
-  it('presses the braked late landing past the plan instant (brakeEnabled: true)', async () => {
+  it('presses the braked late landing past the plan instant (carryTauS: 610 / 6_000)', async () => {
     // With the carry the same reading at 960 has its planned instant 49.9 ms behind (the lead is
     // 201 px against a 151 px gap), so the late press is taken: 960 + 213 px parks at 1 173, inside
     // [999,1223] — the pre-switch expectation.
@@ -654,7 +654,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000, brakeEnabled: true,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
     });
 
     expect(out.ok).toBe(true);
@@ -681,7 +681,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 400,
+      latencyMs: 60, budgetMs: 400,
     });
 
     // Speeds came but no landing was ever inside a zone: the loop reports that, not a spent budget.
@@ -703,7 +703,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'bar-gone' });
@@ -724,7 +724,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'resolved' });
@@ -745,7 +745,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 1000,
+      latencyMs: 60, budgetMs: 1000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'budget-spent' });
@@ -767,7 +767,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     // The press happened; a bar that vanished before it parked is not the press's failure.
@@ -801,7 +801,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     // A capture that throws after the press is the same unreadable rest as a refusal: `null`, and
@@ -827,7 +827,7 @@ describe('timeQte', () => {
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait,
       press: async () => ({ ok: false, reason: 'rejected', detail: 'not-foreground' }),
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'press-refused' });
@@ -846,7 +846,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'capture-failed' });
@@ -859,7 +859,7 @@ describe('timeQte', () => {
     const { press, presses } = recordingPress(clock);
     const base = {
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000,
+      latencyMs: 60,
     };
 
     // A non-positive or non-finite budget makes the loop unbounded; a non-finite clock makes every
@@ -888,7 +888,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 1000,
+      latencyMs: 60, budgetMs: 1000,
     });
 
     expect(out).toEqual({ ok: false, reason: 'no-velocity' });
@@ -911,7 +911,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 240,
+      latencyMs: 60, budgetMs: 240,
     });
 
     expect(out).toEqual({ ok: false, reason: 'no-reachable-zone' });
@@ -945,7 +945,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -984,7 +984,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press: pressPastBudget,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);
@@ -1145,7 +1145,7 @@ describe('bandSampler', () => {
 
     const out = await timeQte({
       sampler: bandSampler(source), now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, decelPxPerS2: 3000, budgetMs: 4000,
+      latencyMs: 60, budgetMs: 4000,
     });
 
     expect(out.ok).toBe(true);

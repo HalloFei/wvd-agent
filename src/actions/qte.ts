@@ -72,7 +72,7 @@ import type { ActionResult, Frame, FrameSource, Point, QteZone } from '../contra
 import { parseQte, qteWindow, type QteRefusalReason } from '../perception/chest.ts';
 import {
   BOUNCE_LEFT_X, BOUNCE_RIGHT_X, planTap, predictRest, qteVelocity,
-  type QtePass, type QtePassChoice, type QteSample,
+  type QteSample,
 } from '../policy/qte.ts';
 
 // ---------------------------------------------------------------------------------------------
@@ -93,7 +93,7 @@ const REST_POLL_MS = 16;
 /**
  * The margin a predicted landing keeps inside a zone, pixels. The prediction's real uncertainty is
  * the timing model's: with the brake switch on, the one measured stop gives tau = 112 ms while the
- * plan uses the 10 % shorter 101.7 ms (`2 x qteDecelPxPerS2`), so the actual landing is up to
+ * plan's carry is the measured prior (0.05 s), so the actual landing is up to
  * `v · 0.0103` px past the prediction — 12.8 px at 1 240 px/s. With it off (the default) the live
  * 2026-10-31 presses left ~4 px, and either way there are a few px of glyph and latency noise. 20 px
  * covers all of that, and a zone narrower than twice the margin is left to the exact path rather
@@ -154,8 +154,6 @@ export type QteRefusal =
   | 'no-velocity'       // fewer than three readings arrived before the budget ran out
   | 'no-reachable-zone' // speeds came, but no zone centre was reachable inside the horizon
   | 'budget-spent'      // three readings or more, no press, and nothing more specific to report
-  | 'reroll'            // the caller's attempt-vs-reroll policy took the bar as not worth pressing
-  | 'no-better-pass'     // the reroll budget is spent and no pass beat the recorded baseline
   | 'press-refused'     // the actuator declined the press (not foreground, engine gone)
   | 'misconfigured';    // bad budget or clock: refused before sampling
 
@@ -170,7 +168,7 @@ export interface QteTiming {
    * Whether `restX` is a rest at all: true only when two consecutive readings agreed within the
    * settle tolerance (which includes a marker that was already still when the read began). A marker
    * still moving at the deadline reports its last position with `restSettled: false` — the fit
-   * `qteDecelPxPerS2` (#18) makes from `(v, tapX, restX)` must not read a moving sample as a rest.
+   * the carry prior (#18) makes from `(v, tapX, restX)` must not read a moving sample as a rest.
    */
   readonly restSettled: boolean;
   /** When the press was sent, on the caller's clock (ms). */
@@ -205,7 +203,6 @@ export type QteRecordEvent =
     readonly v: number;
     readonly target: number;
     readonly delayMs: number;
-    readonly brakeEnabled: boolean;
   }
   | {
     readonly kind: 'press';
@@ -250,20 +247,7 @@ export interface QteTimingOptions {
   readonly now: () => number;
   readonly wait: (ms: number) => Promise<void>;
   readonly latencyMs: number;
-  readonly decelPxPerS2: number;
-  /**
-   * Add the drag brake's post-press carry to the plan and the late press. Default false: the live
-   * 2026-10-31 presses froze at the press, so the default lead is the plain input leg. Forwarded
-   * unchanged to `planTap` and `predictRest`; the World wires `worlds.wvd.qteBrakeEnabled`.
-   */
-  readonly brakeEnabled?: boolean;
   readonly budgetMs: number;
-  /**
-   * The attempt-vs-reroll decision (operator rule 2026-10-31). Absent means "press whenever a pass
-   * clears the floor", the v1 behaviour. `reroll` returns before any press so the caller can cancel
-   * the QTE and change the speed; `give-up` ends the budget without pressing.
-   */
-  readonly choosePass?: ((pass: QtePass) => QtePassChoice) | undefined;
   /**
    * Records the bar as it is timed (operator rule 2026-11-05): every accepted reading, the plan, the
    * press with its send/ack timing and the child's `inputMs`, and the rest with the carry time.
@@ -271,9 +255,9 @@ export interface QteTimingOptions {
    */
   readonly record?: QteRecordSink | undefined;
   /**
-   * The carry time measured on an earlier press of **this bar**, seconds: its park against the press
-   * timeline. Absent on a bar's first press (the fixed model is the prior); the caller feeds it back
-   * from the previous outcome's `tauS`.
+   * The bar's carry time, seconds: measured from its own park when it has one (the caller feeds the
+   * previous outcome's `tauS` back), else the measured prior the World passes for a bar's first
+   * press (`worlds.wvd.qtePriorCarryTauS`). The plan's one slide term.
    */
   readonly carryTauS?: number | undefined;
   /** ± uncertainty of the input leg, ms, for the stop band (operator rule 2026-11-05). */
@@ -303,7 +287,7 @@ export type QteTimer = (options: QteTimingOptions) => Promise<QteOutcome>;
  */
 export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
   const {
-    sampler, press, now, wait, latencyMs, decelPxPerS2, brakeEnabled = false, budgetMs, choosePass, record,
+    sampler, press, now, wait, latencyMs, budgetMs, record,
     carryTauS, latencySpreadMs = 0, carrySpreadPx = 0,
   } = options;
 
@@ -365,9 +349,7 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
       v,
       zones: reading.zones,
       latencyMs,
-      decelPxPerS2,
       horizonMs: remainingMs,
-      brakeEnabled,
       ...(carryPx === undefined ? {} : { carryPx }),
       latencySpreadMs,
       carrySpreadPx,
@@ -378,24 +360,12 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
     if (plan !== null) {
       planFound = true;
       record?.({
-        kind: 'plan', atMs: reading.atMs, v, target: plan.target, delayMs: plan.atMs, brakeEnabled,
+        kind: 'plan', atMs: reading.atMs, v, target: plan.target, delayMs: plan.atMs,
       });
     }
-    // The attempt-vs-reroll decision (operator rule 2026-10-31). It is asked on the plan, before any
-    // press: the policy judges the bar's own pass (zone width over speed), not how much lead is
-    // left. A `reroll` returns now, before any wait, so the caller can cancel the QTE and change the
-    // speed; the first two rerolled passes are its baseline.
-    if (plan !== null && choosePass !== undefined) {
-      const zone = reading.zones.find((z) => plan.target >= z.from && plan.target <= z.to) ?? null;
-      if (zone !== null) {
-        const choice = choosePass({
-          windowMs: ((zone.to - zone.from) / Math.abs(v)) * 1000,
-          speedPxPerS: Math.abs(v),
-        });
-        if (choice === 'reroll') return { ok: false, reason: 'reroll' };
-        if (choice === 'give-up') return { ok: false, reason: 'no-better-pass' };
-      }
-    }
+    // No attempt-vs-reroll callback any more (2026-11-06): the operator's "can this pass succeed?"
+    // question is the stop band's, and a pass the band refuses for the whole sub-loop comes back as
+    // `no-reachable-zone` — the World re-rolls the bar on that, while its budget lasts.
     // Two ways to a press, in order of accuracy. 1. The plan's instant is still ahead (`plan.atMs`
     // is a delay from the reading's clock, §7, and that clock can be hundreds of ms old): sleep to
     // it and the rest lands on the centre it aimed at. 2. It has passed, or no centre is reachable:
@@ -411,10 +381,9 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
         v,
         ageMs: now() - reading.atMs,
         latencyMs,
-        decelPxPerS2,
-        brakeEnabled,
+        ...(carryPx === undefined ? {} : { carryPx }),
       });
-      const landingAt = landingRest === null ? null : landingRest + Math.sign(v) * Math.abs(carryPx ?? 0);
+      const landingAt = landingRest;
       const landing = landingAt === null ? undefined : reading.zones.find((zone) =>
         landingAt >= zone.from + PREDICT_MARGIN_PX
         && landingAt <= zone.to - PREDICT_MARGIN_PX

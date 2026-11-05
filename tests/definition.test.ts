@@ -98,11 +98,11 @@ describe('WVD World definition', () => {
     expect(host.events).toEqual([]);
   });
 
-  it('declares all forty-one contracts §8 keys with defaults the console can render', () => {
+  it('declares all thirty-nine contracts §8 keys with defaults the console can render', () => {
     const properties = WVD_CONFIG_GROUP.schema.properties;
     const keyOf = (path: string) => path.slice('worlds.wvd.'.length);
-    expect(Object.keys(properties)).toHaveLength(41);
-    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(41);
+    expect(Object.keys(properties)).toHaveLength(39);
+    expect(Object.keys(WVD_DEFAULTS)).toHaveLength(39);
     for (const path of Object.keys(properties)) {
       expect(path.startsWith('worlds.wvd.')).toBe(true);
       expect(WVD_DEFAULTS).toHaveProperty(keyOf(path));
@@ -122,8 +122,7 @@ describe('WVD World definition', () => {
     // only as a bare `misconfigured` — while zero is a legal "no floor". A latency or decel of zero
     // is not a measurement, so both minima stay 1.
     expect(properties['worlds.wvd.qteLatencyMs']).toMatchObject({ type: 'integer', minimum: 1 });
-    expect(properties['worlds.wvd.qteDecelPxPerS2']).toMatchObject({ type: 'integer', minimum: 1 });
-    expect(properties['worlds.wvd.qteMinWindowMs']).toMatchObject({ type: 'integer', minimum: 0 });
+    expect(properties['worlds.wvd.qtePriorCarryTauS']).toMatchObject({ type: 'number', minimum: 0 });
     expect(properties['worlds.wvd.rerollLeadRatio']).toMatchObject({ type: 'number', minimum: 0, maximum: 1 });
     // The battle sequence's pace: its floor is the pacing primitive's 700 ms, and it is the config's
     // minimum rather than a silent clamp — a value under it is refused where it is written.
@@ -139,7 +138,7 @@ describe('WVD World definition', () => {
       gameWindowTitle: 'WizardryVariantsDaphne', jpegQuality: 75, engineTimeoutMs: 5000, pressHoldMs: 60, escalationImageWidth: 1280,
       mapOpenTimeoutMs: 3000, openerPanelTimeoutMs: 10000,
       willpowerFloor: 60, maxRerolls: 5, rerollLeadRatio: 0.5,
-      qteLatencyMs: 64, qteBrakeEnabled: true, qteDecelPxPerS2: 6100, qteMinWindowMs: 150,
+      qteLatencyMs: 64, qtePriorCarryTauS: 0.05,
       qteAttemptsFallback: 2, qteSubLoopMs: 4000,
       autoBattleEnableAttempts: 3, fightTimeoutMs: 180000, escalateMaxPerHour: 20, escalateTimeoutMs: 90000, escalateSettleMs: 5000, stopHotkey: 'Ctrl+Alt+W',
       battleStepMs: 1000, battleSettleMs: 1000, battleOpenerTimeoutMs: 10000,

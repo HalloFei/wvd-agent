@@ -5,7 +5,7 @@ import type { Frame, Observation, Perceiver, PixelRect, QteZone, RgbaImage } fro
 import { cropBgra } from '../src/engine/crop.mjs';
 import { ChestPerceiver, parseQte, qteWindow } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
-import { brakeAccelerationPxPerS2, brakeDistancePx, brakeTimeS, chooseQtePass, planTap, predictRest, qteVelocity, type QtePass } from '../src/policy/qte.ts';
+import { planTap, predictRest, qteVelocity } from '../src/policy/qte.ts';
 import { WVD_DEFAULTS } from '../src/config.ts';
 
 /**
@@ -516,14 +516,14 @@ describe('CompositePerceiver', () => {
 // ---------------------------------------------------------------------------------------------
 
 /** The configuration the chest policy will pass (contracts §8.4); 610 px/s is the video's speed. */
-const TAP = { latencyMs: 75, decelPxPerS2: 3_000, horizonMs: 1_000 } as const;
+const TAP = { latencyMs: 75, horizonMs: 1_000 } as const;
 
 describe('planTap', () => {
   it('plans a tap on the right zone for a rightward marker', async () => {
     const plan = planTap({ markerX: 800, v: 610, zones: ZONES, ...TAP });
 
     expect(plan).not.toBeNull();
-    // No brake (the default): stop = 800 + 610·0.075 = 845.75 → (1111 − 845.75)/610 = 434.84 ms.
+    // No carry: stop = 800 + 610·0.075 = 845.75 → (1111 − 845.75)/610 = 434.84 ms.
     expect(plan!.target).toBe(1111);
     expect(plan!.target).toBeGreaterThanOrEqual(ZONES[1].from);
     expect(plan!.target).toBeLessThanOrEqual(ZONES[1].to);
@@ -547,13 +547,13 @@ describe('planTap', () => {
   });
 
   it('plans a tap on the left zone for a leftward marker', () => {
-    // At 1 150 the right zone's centre (1 111) is already behind the no-brake stop (1 150 − 45.75 =
+    // At 1 150 the right zone's centre (1 111) is already behind the no-carry stop (1 150 − 45.75 =
     // 1 104.25), so the plan takes the left zone's 808.
     const plan = planTap({ markerX: 1150, v: -610, zones: ZONES, ...TAP });
 
     expect(plan).not.toBeNull();
     expect(plan!.target).toBe(808);
-    // No brake: (808 − 1 150 + 45.75)/(−610) = 485.66 ms.
+    // No carry: (808 − 1 150 + 45.75)/(−610) = 485.66 ms.
     expect(plan!.atMs).toBeCloseTo(485.66, 1);
   });
 
@@ -618,62 +618,62 @@ describe('planTap', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('predictRest', () => {
-  it('carries the reading through its age and the input leg, with no brake by default', () => {
+  it('carries the reading through its age and the input leg, with no carry', () => {
     // 610 px/s: 610·(0.050 + 0.075) = 76.25 px before the game sees the press, and nothing more —
     // the 2026-10-31 live presses had no post-press carry.
-    expect(predictRest({ markerX: 700, v: 610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000 }))
+    expect(predictRest({ markerX: 700, v: 610, ageMs: 50, latencyMs: 75 }))
       .toBeCloseTo(776.25, 1);
   });
 
   it('carries a leftward marker the other way', () => {
-    expect(predictRest({ markerX: 700, v: -610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000 }))
+    expect(predictRest({ markerX: 700, v: -610, ageMs: 50, latencyMs: 75 }))
       .toBeCloseTo(623.75, 1);
   });
 
   it('refuses an input it cannot answer', () => {
-    const base = { markerX: 700, v: 610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000 };
+    const base = { markerX: 700, v: 610, ageMs: 50, latencyMs: 75 };
     expect(predictRest({ ...base, v: 0 })).toBeNull();
     expect(predictRest({ ...base, markerX: Number.NaN })).toBeNull();
     expect(predictRest({ ...base, ageMs: -1 })).toBeNull();
     expect(predictRest({ ...base, latencyMs: Number.NaN })).toBeNull();
-    expect(predictRest({ ...base, decelPxPerS2: 0 })).toBeNull();
+    expect(predictRest({ ...base, latencyMs: -1 })).toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------------------------
-// The brake switch — the 2026-10-24 model, still reachable behind brakeEnabled
+// The measured carry — the 2026-10-24 slide, fed as carryPx
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The default is no brake, but the one recording with a stop measured a 68 px carry and the model
- * that reproduces it (`brakeDistancePx`) is still what a probe runs when it flips
- * `worlds.wvd.qteBrakeEnabled` on. These are the pre-switch expectations, kept under the switch so
- * the default change cannot silently delete the measured model.
+ * The carry is a measured distance, fed as carryPx: the 2026-10-24 recording fitted 62.02 px at
+ * 610 px/s, and the plan's slide term is that number. These are the pre-switch expectations, kept so
+ * the model's arithmetic cannot drift silently.
  */
 describe('the calibrated prior (2026-11-06)', () => {
-  it('encodes 0.05 s of slide at the default constant', () => {
-    // qteDecelPxPerS2 6100 -> the plan's reference is twice it; tau = 610 / (2 * 6100) = 0.05 s.
-    expect(brakeTimeS(610, 2 * 6100)).toBeCloseTo(0.05, 9);
-    expect(brakeDistancePx(610, 2 * 6100)).toBeCloseTo(30.5, 6);
-    // The default config the World hands the planner carries exactly that prior.
-    expect(WVD_DEFAULTS.qteBrakeEnabled).toBe(true);
-    expect(WVD_DEFAULTS.qteDecelPxPerS2).toBe(6100);
-    expect(brakeTimeS(610, 2 * WVD_DEFAULTS.qteDecelPxPerS2)).toBeCloseTo(0.05, 9);
+  it('is 0.05 s of slide, and the plan takes it as carryPx = |v|·tau', () => {
+    // The config hands the World the prior; the plan's one slide term is |v| times it.
+    expect(WVD_DEFAULTS.qtePriorCarryTauS).toBe(0.05);
+    const carryPx = 610 * WVD_DEFAULTS.qtePriorCarryTauS;
+    expect(carryPx).toBeCloseTo(30.5, 9);
+    // stop = 800 + 610·0.075 + 30.5 = 876.25 → (1111 − 876.25)/610 = 384.84 ms.
+    const plan = planTap({ markerX: 800, v: 610, zones: ZONES, ...TAP, carryPx });
+    expect(plan).not.toBeNull();
+    expect(plan!.atMs).toBeCloseTo(384.84, 1);
   });
 });
 
-describe('brakeEnabled: the 2026-10-24 brake expectations', () => {
+describe('the measured carry: the 2026-10-24 slide expectations', () => {
   it('plans with the carry at the recorded speed', () => {
     // stop = 800 + 610·0.075 + 61.02 = 907.77 → (1111 − 907.77)/610 = 333.17 ms.
-    const plan = planTap({ markerX: 800, v: 610, zones: ZONES, ...TAP, brakeEnabled: true });
+    const plan = planTap({ markerX: 800, v: 610, zones: ZONES, ...TAP, carryPx: 62.016666666666666 });
     expect(plan).not.toBeNull();
     expect(plan!.target).toBe(1111);
     expect(plan!.atMs).toBeCloseTo(333.17, 1);
   });
 
   it('mirrors the sign-corrected carry', () => {
-    const rightward = planTap({ markerX: 800, v: 610, zones: [{ from: 1101, to: 1121 }], ...TAP, brakeEnabled: true });
-    const leftward = planTap({ markerX: 1200, v: -610, zones: [{ from: 879, to: 899 }], ...TAP, brakeEnabled: true });
+    const rightward = planTap({ markerX: 800, v: 610, zones: [{ from: 1101, to: 1121 }], ...TAP, carryPx: 62.016666666666666 });
+    const leftward = planTap({ markerX: 1200, v: -610, zones: [{ from: 879, to: 899 }], ...TAP, carryPx: 62.016666666666666 });
     expect(leftward).not.toBeNull();
     expect(leftward!.target).toBeCloseTo(889, 6);
     expect(leftward!.atMs).toBeCloseTo(333.17, 1);
@@ -681,17 +681,17 @@ describe('brakeEnabled: the 2026-10-24 brake expectations', () => {
   });
 
   it('plans the left zone 465.96 ms out and takes the soonest zone at 82.35 ms', () => {
-    expect(planTap({ markerX: 1200, v: -610, zones: ZONES, ...TAP, brakeEnabled: true })!.atMs)
+    expect(planTap({ markerX: 1200, v: -610, zones: ZONES, ...TAP, carryPx: 62.016666666666666 })!.atMs)
       .toBeCloseTo(465.96, 1);
-    expect(planTap({ markerX: 650, v: 610, zones: ZONES, ...TAP, brakeEnabled: true })!.atMs)
+    expect(planTap({ markerX: 650, v: 610, zones: ZONES, ...TAP, carryPx: 62.016666666666666 })!.atMs)
       .toBeCloseTo(82.35, 1);
   });
 
-  it('predicts the braked rest', () => {
-    // The same 76.25 px of age and input leg, then the drag brake's 62.02 px.
-    expect(predictRest({ markerX: 700, v: 610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000, brakeEnabled: true }))
+  it('predicts the rest with the carry', () => {
+    // The same 76.25 px of age and input leg, then the measured carry's 62.02 px.
+    expect(predictRest({ markerX: 700, v: 610, ageMs: 50, latencyMs: 75, carryPx: 62.016666666666666 }))
       .toBeCloseTo(838.27, 1);
-    expect(predictRest({ markerX: 700, v: -610, ageMs: 50, latencyMs: 75, decelPxPerS2: 3000, brakeEnabled: true }))
+    expect(predictRest({ markerX: 700, v: -610, ageMs: 50, latencyMs: 75, carryPx: 62.016666666666666 }))
       .toBeCloseTo(561.73, 1);
   });
 });
@@ -716,9 +716,8 @@ describe('the live 2026-10-31 presses', () => {
   ] as const;
   const PARKED_PAST_PRESS_PX = 4;
   const LATENCY_MS = 75;
-  const DECEL_PX_PER_S2 = 3_000;
 
-  it('predicts each live rest without the brake, and the brake model misses by its carry', () => {
+  it('predicts each live rest without a carry, and the carry model misses by its slide', () => {
     for (const press of PRESSES) {
       const travel = Math.abs(press.restX - press.tapX);
       const pressTravel = travel - PARKED_PAST_PRESS_PX;
@@ -727,10 +726,10 @@ describe('the live 2026-10-31 presses', () => {
       expect(ageMs).toBeGreaterThan(0);
 
       const common = {
-        markerX: press.tapX, v: press.v, ageMs, latencyMs: LATENCY_MS, decelPxPerS2: DECEL_PX_PER_S2,
+        markerX: press.tapX, v: press.v, ageMs, latencyMs: LATENCY_MS,
       };
-      const noBrake = predictRest({ ...common, brakeEnabled: false });
-      const braked = predictRest({ ...common, brakeEnabled: true });
+      const noBrake = predictRest({ ...common });
+      const braked = predictRest({ ...common, carryPx: Math.abs(press.v) * (610 / 6_000) });
       expect(noBrake).not.toBeNull();
       expect(braked).not.toBeNull();
 
@@ -739,7 +738,7 @@ describe('the live 2026-10-31 presses', () => {
       const brakeError = Math.abs(braked! - press.restX);
       expect(noBrakeError).toBeCloseTo(PARKED_PAST_PRESS_PX, 6);
       // ... while the brake model overshoots by its carry, less that same residual.
-      expect(brakeError).toBeCloseTo(brakeDistancePx(press.v, 2 * DECEL_PX_PER_S2) - PARKED_PAST_PRESS_PX, 6);
+      expect(brakeError).toBeCloseTo(Math.abs(press.v) * (610 / 6_000) - PARKED_PAST_PRESS_PX, 6);
       expect(noBrakeError).toBeLessThan(brakeError);
     }
   });
@@ -831,47 +830,6 @@ describe('the half-tick budget', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// The attempt-vs-reroll policy (operator rule, 2026-10-31)
-// ---------------------------------------------------------------------------------------------
-
-/**
- * The rule as the operator stated it: **each open or reroll is judged on its own pass — press if
- * the pass can succeed, reroll if it cannot — and the budget is a ceiling, not a quota.** A pass can
- * succeed when the marker's time inside the aimed zone clears `qteMinWindowMs` (150 ms at default
- * settings), the same floor `timeQte` applies to the plan's lead time.
- *
- * The reroll is what makes this decidable at all: cancelling a floor chest's QTE costs no attempt
- * (chest §4), so an unacceptable bar is cancelled rather than gambled on, and the next card click
- * changes the marker's speed.
- */
-describe('chooseQtePass', () => {
-  const budget = 5;
-  const floor = 150;
-  const pass = (windowMs: number): QtePass => ({ windowMs, speedPxPerS: 600 });
-
-  it('presses the first pass that clears the floor, without spending a reroll', () => {
-    expect(chooseQtePass(pass(300), { rerolls: 0, budget }, floor)).toBe('press');
-    expect(chooseQtePass(pass(150), { rerolls: 0, budget }, floor)).toBe('press');
-  });
-
-  it('rerolls a pass that cannot be pressed while budget remains', () => {
-    expect(chooseQtePass(pass(149), { rerolls: 0, budget }, floor)).toBe('reroll');
-    expect(chooseQtePass(pass(40), { rerolls: 4, budget }, floor)).toBe('reroll');
-  });
-
-  it('presses a good pass after rerolls, so the budget is never spent just because it exists', () => {
-    expect(chooseQtePass(pass(220), { rerolls: 3, budget }, floor)).toBe('press');
-  });
-
-  it('gives up when the budget is spent and the bar still cannot be pressed', () => {
-    expect(chooseQtePass(pass(60), { rerolls: budget, budget }, floor)).toBe('give-up');
-    expect(chooseQtePass(pass(Number.NaN), { rerolls: budget, budget }, floor)).toBe('give-up');
-  });
-
-  it('treats a zero budget as "no rerolls", not as an unbounded one', () => {
-    expect(chooseQtePass(pass(60), { rerolls: 0, budget: 0 }, floor)).toBe('give-up');
-  });
-});
 
 // ---------------------------------------------------------------------------------------------
 // The native 1920 narrow-zone QTE (captured live 2026-10-31)
@@ -902,35 +860,5 @@ describe('the native narrow-zone QTE (2026-10-31)', () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.qte.zones.map((zone) => zone.to - zone.from)).toEqual([30, 43]);
-  });
-});
-
-// ---------------------------------------------------------------------------------------------
-// The brake model (2026-10-31)
-// ---------------------------------------------------------------------------------------------
-
-/**
- * Measured from the one recording that contains a stop (`2026-10-24-qte-recorded/qte.mp4`, 30 fps,
- * extracted to `.tmp/qtefull/`): the marker ran at 600–630 px/s, then the speed collapsed — 240,
- * 240, 225, 180, 165, 135, 120, 120, 60, 60, 60, 30, 30, 0 px/s over 15 frames — and parked 68 px
- * past the press. Not a constant deceleration: the head is ~12 000 px/s² and the tail ~450 px/s².
- * The shape is exponential, so the acceleration is proportional to the speed (exponent 1), which
- * makes the brake time a constant τ and the carry proportional to speed.
- */
-describe('the brake model', () => {
-  it('keeps the recorded carry at the recorded speed', () => {
-    expect(brakeDistancePx(610, 6000)).toBeCloseTo(62, 0);
-    expect(brakeTimeS(610, 6000)).toBeCloseTo(0.1017, 3);
-  });
-
-  it('scales the carry with speed, not with its square (the exponential stop)', () => {
-    expect(brakeDistancePx(305, 6000)).toBeCloseTo(brakeDistancePx(610, 6000) / 2, 1);
-    expect(brakeTimeS(305, 6000)).toBeCloseTo(brakeTimeS(610, 6000), 6);
-  });
-
-  it('refuses a model it cannot evaluate instead of inventing a carry', () => {
-    expect(brakeDistancePx(0, 6000)).toBe(0);
-    expect(brakeDistancePx(610, 0)).toBe(0);
-    expect(Number.isNaN(brakeAccelerationPxPerS2(610, Number.NaN))).toBe(true);
   });
 });
