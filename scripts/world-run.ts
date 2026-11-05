@@ -125,13 +125,26 @@ async function finish(why: string): Promise<void> {
   if (closing) return;
   closing = true;
   console.log(stamp() + ' STOP ' + why);
+  const statusNow = async (): Promise<Record<string, unknown> | null> => {
+    try {
+      const res = await world.invoke('wvd-console', 'status');
+      return res.ok && typeof res.value === 'object' && res.value !== null
+        ? res.value as Record<string, unknown>
+        : null;
+    } catch { return null; }
+  };
+  // Read the World's own ending **before** asking the console to stop: a session that ended itself
+  // says why in `detail` (`task-complete: 1 of 1 cycles`, the stall, the death), and the console's own
+  // stop overwrites that with "the session was stopped" — which is exactly the word this report is
+  // supposed to be able to tell apart (live 2026-11-06 02:39: the World finished the cycle and the
+  // harness reported exit 2 and completed=false).
+  const ended = await statusNow();
   try { await world.invoke('wvd-console', 'stop'); } catch { /* already down */ }
-  let final: Record<string, unknown> | null = null;
-  try {
-    const res = await world.invoke('wvd-console', 'status');
-    if (res.ok && typeof res.value === 'object' && res.value !== null) final = res.value as Record<string, unknown>;
-  } catch { /* the report says what it can */ }
-  const detail = typeof final?.detail === 'string' ? final.detail : null;
+  const stopped = await statusNow();
+  const final = stopped ?? ended;
+  const detail = typeof ended?.detail === 'string'
+    ? ended.detail
+    : typeof final?.detail === 'string' ? final.detail : null;
   // The World's own words for a finished farm: task-complete: N of M cycles.
   const completed = detail !== null && detail.startsWith('task-complete');
   const exitCode = completed ? 0 : 2;
