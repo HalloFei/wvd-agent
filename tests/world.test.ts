@@ -2932,6 +2932,47 @@ describe('the orientation', () => {
     expect(world.isRunning()).toBe(false);
   });
 
+  it('keeps driving a stage on screens the route has no intent for', async () => {
+    // The exit script walks through the Dungeon Select list and a harken menu, screens the route
+    // answers with a wait. The stage in progress is still the tick's work (operator rule 2026-11-05),
+    // or the loop would wait the stage to death at the first screen it does not own.
+    const definition = goalDefinition();
+    const screens: (string | null)[] = [];
+    let complete = false;
+    const task: SessionTask = {
+      enter: async () => ({ ok: true, steps: 0, ms: 0 }),
+      runScript: async (name, observation) => {
+        screens.push(observation?.screen ?? null);
+        if (name === 'exit' && !complete) return { ok: true, steps: 1, ms: 1, complete: false };
+        return { ok: true, steps: 15, ms: 1, complete: true };
+      },
+      abort: () => {},
+      orient: { goal: definition.goal!, floor: definition.floor.titleKey },
+    };
+    const { world, host, perceiver, clock } = makeWorld({
+      observation: mapWith(FARM),
+      task,
+      policy: createTaskPolicy(() => definition, routePolicy),
+      cfg: { cycles: 2 },
+    });
+    await started(world, host);
+
+    await world.tick();                              // the route says exit: the stage starts
+    expect(screens).toEqual(['dungeonmap']);
+
+    // The Dungeon Select list: the route waits, the stage must not.
+    perceiver.observation = { screen: 'dungeon-select', atMs: 200, confidence: 0.9 };
+    clock.advance(200);
+    await world.tick();
+    expect(screens).toEqual(['dungeonmap', 'dungeon-select']);
+
+    complete = true;
+    clock.advance(200);
+    await world.tick();
+    expect(world.isRunning()).toBe(true);             // cycle 1 done; cycle 2 orients back in
+    expect(screens).toEqual(['dungeonmap', 'dungeon-select', 'dungeon-select']);
+  });
+
   it('re-orients after the exit script instead of running a scripted entry', async () => {
     const definition = goalDefinition();
     const { task, calls } = goalTask(definition);

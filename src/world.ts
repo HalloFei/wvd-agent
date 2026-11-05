@@ -59,6 +59,7 @@ import type {
   Point,
   RouteState,
   ScreenId,
+  ScriptId,
   GameMode,
   ScriptResult,
   SessionTask,
@@ -91,6 +92,7 @@ import { tileOnScreen } from './perception/map.ts';
 import { openerFor } from './actions/battle.ts';
 import { chooseOpener } from './policy/chest.ts';
 import { nextOrientStep, type OrientCommand } from './policy/orient.ts';
+import { WORLD_SCREENS } from './tasks/steps.ts';
 import {
   CONSOLE_GET_METHODS,
   CONSOLE_LOG_LIMIT,
@@ -559,6 +561,13 @@ export class WvdWorld implements World {
   #task: SessionTask | null = null;
   /** Completed exit scripts this session; the loop re-enters until `cfg.cycles` is reached. */
   #cyclesDone = 0;
+  /**
+   * The task stage in progress (operator rule 2026-11-05: a stage is one step per tick). It is not
+   * only the route's intent: the exit script walks through the Dungeon Select list, a harken menu and
+   * the game's load fades, and the route has no intent for those screens, so the loop would wait the
+   * stage to death. While this is set the stage is pumped before the orientation and the route.
+   */
+  #staging: ScriptId | null = null;
   /**
    * Battles entered this session. The opener belongs to the **first** one (operator rule 2026-11-04,
    * refined 2026-11-04): the first battle of the first cycle is disengaged and cast; every later
@@ -1361,6 +1370,20 @@ export class WvdWorld implements World {
     }
 
     if (waiting) return;
+
+    // A stage in progress owns the screens it walks through — the Dungeon Select list, the harken
+    // menu, a load fade — that the route answers with a wait, so the stage is pumped here, one
+    // operation a tick. A screen the loop owns (a battle, the chest it leaves, a death) is
+    // `WORLD_SCREENS` and is left to the loop's own dispatch below.
+    if (this.#staging !== null && !WORLD_SCREENS.has(observation.screen)) {
+      await this.#execute({ kind: 'run-script', name: this.#staging }, observation.screen, {
+        session,
+        frame,
+        observation,
+        now,
+      });
+      return;
+    }
 
     // The orientation (contracts §10, the goal form): from whatever screen the session started on,
     // one command per tick until the map shows the farm floor. A screen the farm owns — a chest,
@@ -2466,6 +2489,7 @@ export class WvdWorld implements World {
         // A stage is one step per tick (operator rule 2026-11-05): the loop hands it the frame it just
         // observed and keeps its own tick, so a battle, the chest after it, or the death scene is
         // dispatched by the loop and the stage resumes from its cursor.
+        this.#staging = intent.name;
         const result = context === undefined
           ? await task.runScript(intent.name)                 // no frame: the script runs blocking
           : await task.runScript(intent.name, context.observation);
@@ -2476,6 +2500,7 @@ export class WvdWorld implements World {
           return;
         }
         if (!result.ok) {
+          this.#staging = null;
           await this.#endSession(
             result.reason === 'cancelled'
               ? 'the session was stopped while the task exit ran'
@@ -2485,6 +2510,7 @@ export class WvdWorld implements World {
           return;
         }
         if (result.complete === false) return;      // partial progress: the stage has more steps
+        this.#staging = null;
         // The stage's own screens and presses are progress the loop could not see while it ran.
         this.#lastProgressAtMs = this.#now();
         if (intent.name !== 'exit') return;
@@ -2742,6 +2768,7 @@ export class WvdWorld implements World {
     // must not keep pressing keys into a closed session.
     const task = this.#task;
     this.#task = null;
+    this.#staging = null;
     task?.abort();
     // A stop that lands during the orientation's travel or climb must not keep pressing keys.
     this.#orientAbort?.abort();

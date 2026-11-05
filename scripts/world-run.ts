@@ -20,6 +20,8 @@
  * | WVD_SESSION_MINUTES | 40 | the World's session limit; 0 = none |
  * | WVD_STALL_SECONDS | 120 | no-progress stop |
  * | WVD_ESCALATE_TIMEOUT_MS | 20000 | how long an unanswered question waits |
+ * | WVD_SETTLE_MS | 5000 | how long a blank/unnamed frame is held before it stops or asks |
+ * | WVD_ESCALATE_MAX | 20 | the hourly question budget |
  * | WVD_REPORT_DIR | .tmp/runs/<stamp> | report and frames of one run |
  * | WVD_PAUSE_ON_STALL | off | stop at the first unnamed frame instead of waiting for the stop |
  * | WVD_STOP_ON_OPENER_MISS | off | stop at a battle whose opener was given up |
@@ -40,6 +42,10 @@ const WALL_MS = Number(process.env.WVD_WALL_MS ?? 45 * 60_000);
 const SESSION_MINUTES = Math.max(0, Number(process.env.WVD_SESSION_MINUTES ?? 40));
 const STALL_SECONDS = Math.max(1, Number(process.env.WVD_STALL_SECONDS ?? 120));
 const ESCALATE_TIMEOUT_MS = Math.max(1, Number(process.env.WVD_ESCALATE_TIMEOUT_MS ?? 20_000));
+/** How long a blank or unnamed frame is held before it is the question's (and before the blank stop). */
+const SETTLE_MS = Math.max(0, Number(process.env.WVD_SETTLE_MS ?? WVD_DEFAULTS.escalateSettleMs));
+/** The hourly question budget; an unattended run has nobody to answer, so it is only a backstop. */
+const ESCALATE_MAX = Math.max(1, Number(process.env.WVD_ESCALATE_MAX ?? WVD_DEFAULTS.escalateMaxPerHour));
 const PAUSE_ON_STALL = process.env.WVD_PAUSE_ON_STALL === '1';
 const STOP_ON_OPENER_MISS = process.env.WVD_STOP_ON_OPENER_MISS === '1';
 /** One directory per run, so two runs never overwrite each other's record. */
@@ -59,6 +65,8 @@ const cfg = {
   // only holds the loop until it times out.
   stopOnDeath: true,
   escalateTimeoutMs: ESCALATE_TIMEOUT_MS,
+  escalateSettleMs: SETTLE_MS,
+  escalateMaxPerHour: ESCALATE_MAX,
 };
 const world = createWvdWorld({ cfg, timezone: 'Asia/Shanghai' });
 /** Local time of day: the morning reader's clock, not UTC. */
@@ -136,6 +144,8 @@ async function finish(why: string): Promise<void> {
     sessionMinutes: SESSION_MINUTES,
     stallSeconds: STALL_SECONDS,
     escalateTimeoutMs: ESCALATE_TIMEOUT_MS,
+    settleMs: SETTLE_MS,
+    escalateMaxPerHour: ESCALATE_MAX,
     startedAt: startedAt.toISOString(),
     endedAt: endedAt.toISOString(),
     durationMs: endedAt.getTime() - startedAt.getTime(),
