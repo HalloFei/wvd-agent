@@ -61,6 +61,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   'main-character-dead': screen('main-character-dead'),
   'revive-qte': screen('revive-qte'),
   inn: { screen: 'inn', atMs: AT, confidence: CONFIDENT, rows: [] },
+  message: { screen: 'message', atMs: AT, confidence: CONFIDENT, at: { x: 960, y: 570 } },
   'harken-menu': { screen: 'harken-menu', atMs: AT, confidence: CONFIDENT, rows: [] },
 };
 

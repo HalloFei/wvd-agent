@@ -30,6 +30,7 @@ import { CharacterPagePerceiver } from './perception/character-page.ts';
 import { MainCharacterDeathPerceiver } from './perception/death.ts';
 import { ReviveQtePerceiver } from './perception/revive-qte.ts';
 import { InnPerceiver } from './perception/inn.ts';
+import { MessagePerceiver } from './perception/message.ts';
 import { restAtInn } from './actions/inn.ts';
 import { HarkenMenuPerceiver } from './perception/harken.ts';
 import { healParty } from './actions/heal.ts';
@@ -140,6 +141,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     // The rest town's inn dialog (2026-11-06): its own rows are the evidence, and it must be named
     // before the HUD or the town, or the room rows are walked around instead of pressed.
     { perceiver: new InnPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    // The game's one-off message box (2026-11-06): named before the HUD/town so the panel is answered
+    // instead of the screen behind it being steered.
+    { perceiver: new MessagePerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new CombatPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new HudPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The HUD refuses both of these at 0.2; they run last so a dungeon frame never pays for them.

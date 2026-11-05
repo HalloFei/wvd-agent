@@ -3101,6 +3101,27 @@ describe('a chest the party cannot walk to', () => {
 // The rest town's inn (operator, 2026-11-06)
 // ---------------------------------------------------------------------------------------------
 
+describe("the game's one-off message box", () => {
+  const box: Observation = { screen: 'message', atMs: 100, confidence: 0.85, at: { x: 960, y: 570 } };
+
+  it('advances the box with one tap at the frame\'s own point, once per pace', async () => {
+    const { world, host, actuator, clock } = makeWorld({ observation: box });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,570']);
+    expect(host.logRecords.some((line) => line.message.includes('advanced the message box'))).toBe(true);
+
+    // The pace is the pacing primitive's: a second tap waits for it.
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,570']);
+    clock.advance(1_200);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,570', 'tap 960,570']);
+    expect(world.isRunning()).toBe(true);
+  });
+});
+
 describe("the inn's rest", () => {
   const roomList = [
     { at: { x: 1114, y: 549 }, label: '马房' },

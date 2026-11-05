@@ -124,6 +124,18 @@ describe('the inn\'s room choice', () => {
       .toMatchObject({ kind: 'leave', label: '返回' });
   });
 
+  it('backs out instead of resting again once the visit has rested', () => {
+    // Operator rule 2026-11-06: the inn heals once a visit; a menu that reopens after the rest is the
+    // way out, not a second rest (the live 01:53 loop rested five times in 25 s).
+    expect(chooseInnRest(roomList, '标准房', true)).toMatchObject({ kind: 'leave', label: '返回' });
+    expect(chooseInnRest(service, '标准房', true)).toMatchObject({ kind: 'leave', label: '离开' });
+    expect(chooseInnRest([
+      { at: { x: 854, y: 675 }, label: '取消' },
+      { at: { x: 1062, y: 675 }, label: '确定' },
+    ], '标准房', true)).toMatchObject({ kind: 'leave', label: '取消' });
+    expect(chooseInnRest([], '标准房', true)).toBeNull();
+  });
+
   it('makes no decision on a dialog with nothing it can use', () => {
     expect(chooseInnRest([], '标准房')).toBeNull();
     expect(chooseInnRest([{ at: { x: 1, y: 2 }, label: '对话' }], '标准房')).toBeNull();

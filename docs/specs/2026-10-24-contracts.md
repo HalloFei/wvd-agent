@@ -115,6 +115,15 @@ known rows are the floor, one is never a dialog. The World takes one row a tick 
 The rest itself is the game's: the dialog closes, the party is healed, and the town it leaves the party
 in is the orientation's business.
 
+`message` is the game's **one-off message box** (operator, 2026-11-06): a centred dark panel with a
+caption line and the yellow continue mark below it — the after-rest 背包已补充完毕。 was the first one
+the farm met, unnamed, so the loop escalated on it every 4 s. Measured on
+`testdata/screens/2026-11-06-message/` (1920 and its 1280 copy): the panel's top and bottom border runs
+0.266–0.299 and 0.284–0.291 of the width, the caption's white ink 0.0033–0.0050 of its band, and the
+continue mark 0.0031–0.0040 of its band against **0.0000 on every other recorded screen**. The
+observation carries the tap point (0.5, 0.529); the World advances the box one tap per pace, and the
+screen behind it is the next tick's business.
+
 `character-page` is the menu a party HUD card opens (2026-11-03): a member's page with its stat block
 and the bottom tab row (关闭 / 强度 / 技能 / 咒文 / 装备 / 背包). Its evidence is the X 关闭 tile at
 (683,983), 61×67, template-matched (`perception/character-page.ts`): 1.000 on the page, at most 0.357 on

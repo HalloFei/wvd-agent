@@ -89,6 +89,9 @@ export function nextIntent(state: RouteState): Intent {
       // here — the game's own revive changes the screen, and the loop waits for it. A session that
       // cannot come back is the stall clock's business, not a click's.
       return { kind: 'wait', ms: HANDOFF_MS };
+    case 'message':
+      // The game's one-off message box is the World's (contracts §2 message): one tap advances it.
+      return { kind: 'wait', ms: HANDOFF_MS };
     case 'inn':
       // The inn dialog is the rest plug-in's (operator, 2026-11-06): the World chooses the room and
       // presses its row before the route is asked, so this case is a wait, never a second press.

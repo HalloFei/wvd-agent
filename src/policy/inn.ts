@@ -44,11 +44,19 @@ export const INN_NOT_ROOM_LABELS: readonly string[] = ['住宿', '对话', '离�
 /** The operator's default when the configured room is not offered. */
 export const INN_DEFAULT_ROOM = '标准房';
 
-/** The row to take, or null when the dialog offers nothing this loop can use. */
-export function chooseInnRest(options: readonly InnOption[], wanted: string): InnRest | null {
+/**
+ * The row to take, or null when the dialog offers nothing this loop can use. `rested` is the visit's
+ * state (operator rule 2026-11-06): once this visit has committed a rest, the dialog is backed out of
+ * instead of re-entered — the inn heals once a visit, and a menu that reopens after the rest is the
+ * way out, not a second rest.
+ */
+export function chooseInnRest(options: readonly InnOption[], wanted: string, rested = false): InnRest | null {
   // A room option is any row that is not one of the dialog's known non-room rows: that is what makes
   // a room type the library has never seen still a room the party may take.
   const rooms = options.filter((option) => !INN_NOT_ROOM_LABELS.includes(option.label));
+  const leave = options.find((option) => option.label === '返回' || option.label === '离开' || option.label === '取消') ?? null;
+  // The visit has already committed a rest: back out of whatever dialog is up, never rest again.
+  if (rested) return leave === null ? null : { kind: 'leave', at: leave.at, label: leave.label };
   const configured = wanted.trim() === '' ? null : rooms.find((option) => option.label === wanted) ?? null;
   if (configured !== null) return { kind: 'rest', at: configured.at, label: configured.label, why: 'configured' };
   const fallback = rooms.find((option) => option.label === INN_DEFAULT_ROOM) ?? null;
@@ -61,7 +69,6 @@ export function chooseInnRest(options: readonly InnOption[], wanted: string): In
   if (confirm !== null) return { kind: 'confirm', at: confirm.at, label: confirm.label };
   const stay = options.find((option) => option.label === INN_STAY_LABEL) ?? null;
   if (stay !== null) return { kind: 'stay', at: stay.at, label: stay.label };
-  const leave = options.find((option) => option.label === '返回' || option.label === '离开' || option.label === '取消') ?? null;
   if (leave !== null) return { kind: 'leave', at: leave.at, label: leave.label };
   return null;
 }

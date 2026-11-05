@@ -845,6 +845,23 @@ orientation's business. Live check 2026-11-06: the probe answers `inn` at 1.00 o
 `tests/inn.test.ts` pins both recordings, the choice order and the negatives; `tests/world.test.ts`
 pins the one tap the World sends.
 
+### The message box, and the inn's visit state (2026-11-06)
+
+The 01:53 live run rested (住宿 → 标准房 → 确定) and the game answered **背包已补充完毕。** — a centred
+panel with a caption and a yellow continue mark. No recogniser named it: the loop escalated on it
+every ~4 s, and when the chest's loot recogniser happened to claim it, it was dismissed as a loot card
+by accident (that accident is why earlier runs looked like they handled it). It is `message` now: the
+panel's border runs, the caption's ink and the yellow arrow (0.0031–0.0040 of its band, 0.0000 on every
+other recorded screen) name it, and the World advances it one tap per pace.
+
+The same run exposed the inn's missing **visit state**: after the rest the innkeeper's menu reappeared
+and the module rested again, five times in 25 s. The room tap (or its confirmation) is now the visit's
+commitment; after it the dialogs are backed out of (返回 / 離開 / 取消) instead of re-entered, and the
+state resets once the party is back on the town's own screen.
+
+`tests/message.test.ts` pins both sizes and ten negatives; `tests/inn.test.ts` the rested order;
+`tests/world.test.ts` the box's one tap and the inn's leave-after-rest behaviour.
+
 ## The QTE model, calibrated on the press corpus (2026-11-06)
 
 The chest path's priors were the last unmeasured part of the timing model. The corpus — 257 presses

@@ -34,6 +34,7 @@ import { LootPerceiver } from '../src/perception/loot.ts';
 import { CharacterPagePerceiver } from '../src/perception/character-page.ts';
 import { HarkenMenuPerceiver } from '../src/perception/harken.ts';
 import { InnPerceiver } from '../src/perception/inn.ts';
+import { MessagePerceiver } from '../src/perception/message.ts';
 import { MainCharacterDeathPerceiver } from '../src/perception/death.ts';
 import { ReviveQtePerceiver } from '../src/perception/revive-qte.ts';
 import { CombatPerceiver } from '../src/perception/combat.ts';
@@ -74,6 +75,7 @@ function perceiver(): CompositePerceiver {
     { perceiver: new CharacterPagePerceiver(), floor: 0.5 },
   { perceiver: new HarkenMenuPerceiver(), floor: 0.5 },
   { perceiver: new InnPerceiver(), floor: 0.5 },
+  { perceiver: new MessagePerceiver(), floor: 0.5 },
   { perceiver: new MainCharacterDeathPerceiver(), floor: 0.5 },
   { perceiver: new CombatPerceiver(), floor: 0.5 },
     { perceiver: new HudPerceiver(), floor: 0.5 },

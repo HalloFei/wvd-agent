@@ -617,6 +617,8 @@ export class WvdWorld implements World {
   #deathEscalated = false;
   /** The inn's dialog offered no row this loop could take (one warning per visit). */
   #innWarned = false;
+  /** This inn visit has committed a rest: the dialogs that follow are backed out of, not restarted. */
+  #innRested = false;
   /** Consecutive frames of the revive QTE: the modal has to stay up, not flicker. */
   #reviveFrames = 0;
   /** The revive QTE has been sent to Coo for this death (one question, not one per tick). */
@@ -1294,7 +1296,7 @@ export class WvdWorld implements World {
     // party in is the orientation's business.
     if (!waiting && observation.screen === 'inn') {
       if (!this.#pacer.ready(now)) return;
-      const choice = chooseInnRest(observation.rows, this.#cfg.innRoom);
+      const choice = chooseInnRest(observation.rows, this.#cfg.innRoom, this.#innRested);
       if (choice === null) {
         if (!this.#innWarned) {
           this.#innWarned = true;
@@ -1305,10 +1307,25 @@ export class WvdWorld implements World {
       this.#pacer.act(now);
       const tapped = await this.#commands.restAtInn(choice.at);
       if (tapped.ok) {
+        // The room tap, or its confirmation, is the rest's commitment: the visit's rest is spent, and
+        // the dialogs that follow (the after-rest box, the menu again) are backed out of.
+        if (choice.kind === 'rest' || choice.kind === 'confirm') this.#innRested = true;
         this.#host?.log.info(`wvd: the inn: ${choice.kind} at ${choice.label} (${choice.at.x},${choice.at.y})`);
       } else {
         this.#host?.log.warn(`wvd: the inn row was refused (${tapped.reason})`);
       }
+      return;
+    }
+
+    // The game's one-off message box (operator, 2026-11-06): the after-rest 背包已补充完毕。 first. One
+    // tap on the panel advances it, and the screen behind it is someone else's (the inn's menu, the
+    // town, the dungeon).
+    if (!waiting && observation.screen === 'message') {
+      if (!this.#pacer.ready(now)) return;
+      this.#pacer.act(now);
+      const tapped = await this.#commands.tapPoint(observation.at);
+      if (tapped.ok) this.#host?.log.info('wvd: advanced the message box');
+      else this.#host?.log.warn(`wvd: the message box tap was refused (${tapped.reason})`);
       return;
     }
 
@@ -1533,6 +1550,9 @@ export class WvdWorld implements World {
       this.#reviveAsked = false;
     }
     if (observation.screen !== 'inn') this.#innWarned = false;
+    // The visit is over when the party is back on the town's own screen: the next sighting of the inn
+    // is a fresh visit, and may rest again.
+    if (observation.screen === 'town') this.#innRested = false;
     if (observation.screen !== 'chest-qte') {
       this.#qteTries = 0;
       this.#qteSpinWarned = false;

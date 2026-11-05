@@ -60,6 +60,7 @@ export function modeOf(observation: Observation): GameMode | null {
     // named so it stops being an unnamed frame inside whatever mode the party died in.
     // Nothing was named: the mode is not this frame's to change.
     case 'main-character-dead':
+    case 'message':
     case 'unknown':
     case 'loading':
       return null;

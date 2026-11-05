@@ -44,7 +44,7 @@ export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
-  | 'inn' | 'unknown';
+  | 'inn' | 'message' | 'unknown';
 
 // §3 Perception
 
@@ -150,6 +150,16 @@ export type Observation =
       readonly autoOn?: boolean;
     }
   | {
+      readonly screen: 'message';
+      readonly atMs: number;
+      readonly confidence: number;
+      /**
+       * The game's one-off message box (operator, 2026-11-06): a centred dark panel with a caption line
+       * and the yellow continue mark below it. The tap advances it.
+       */
+      readonly at: Point;
+    }
+  | {
       readonly screen: 'unknown';
       readonly atMs: number;
       readonly confidence: number;
@@ -161,7 +171,7 @@ export type Observation =
        */
       readonly dungeonLike?: boolean;
     }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'unknown'>;
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'message' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }
