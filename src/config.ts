@@ -39,7 +39,11 @@ export interface WvdConfigSection extends WorldSection {
   maxRerolls: number;
   rerollLeadRatio: number;
   qteLatencyMs: number;
-  /** When true, the planner adds the measured brake carry; default false (freeze at registration). */
+  /**
+   * When true, the planner adds the brake carry: the measured one for this bar, or the prior
+   * `brakeDistancePx(v, 2 * qteDecelPxPerS2)` on its first press. On by default since 2026-11-06: the
+   * recorded parks carry 0.04–0.10 s past the press, so a plan without it presses ~0.05 s too late.
+   */
   qteBrakeEnabled: boolean;
   qteDecelPxPerS2: number;
   qteMinWindowMs: number;
@@ -91,9 +95,12 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   willpowerFloor: 60,
   maxRerolls: 5,
   rerollLeadRatio: 0.5,
-  qteLatencyMs: 75,
-  qteBrakeEnabled: false,
-  qteDecelPxPerS2: 3000,
+  // The measured input leg: 61–76 ms over the 2026-11-04/05 presses (median 63.5), so 64.
+  qteLatencyMs: 64,
+  qteBrakeEnabled: true,
+  // The prior brake time is 610 / (2 * 6100) = 0.05 s — the median of the ten normal parks
+  // (2026-11-06). The old 3000 encoded 0.1017 s from the single 2026-10-24 stop, an outlier.
+  qteDecelPxPerS2: 6100,
   qteMinWindowMs: 150,
   qteAttemptsFallback: 2,
   qteSubLoopMs: 4000,
@@ -201,10 +208,12 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.wvd.qteBrakeEnabled': {
         type: 'boolean', title: 'QTE 刹车模型',
-        description: '启用后按滑行刹车提前量计划；默认关闭（2026-10-31 实测按压在登记点冻结）。',
+        description: '启用后按滑行刹车提前量计划：已测得的本杆滑行优先，未测得的按滑行先验；2026-11-06 的停位数据表明滑行是真实的，默认开启。',
       },
       'worlds.wvd.qteDecelPxPerS2': {
-        type: 'integer', title: 'QTE 减速度', description: '拟合的滑行常数，像素/秒²；暂定值。', minimum: 1,
+        type: 'integer', title: 'QTE 减速度',
+        description: '滑行先验常数，像素/秒²：先验滑行时间 = 610 / (2 × 这个值)，默认 6100 即 0.05 秒（停位数据的中位数）。',
+        minimum: 1,
       },
       'worlds.wvd.qteMinWindowMs': {
         type: 'integer', title: 'QTE 最小窗口',

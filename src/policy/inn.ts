@@ -3,7 +3,7 @@
  *
  * The operator's order:
  *
- * 1. the room the World is configured for (\`worlds.wvd.innRoom\`);
+ * 1. the room the World is configured for (`worlds.wvd.innRoom`);
  * 2. when the inn does not offer it, the default **标准房**;
  * 3. when it offers no room this loop knows, the first room it does offer (the cheapest is drawn
  *    first — the operator's "other room types" still rest the party);

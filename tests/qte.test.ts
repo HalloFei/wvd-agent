@@ -6,6 +6,7 @@ import { cropBgra } from '../src/engine/crop.mjs';
 import { ChestPerceiver, parseQte, qteWindow } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
 import { brakeAccelerationPxPerS2, brakeDistancePx, brakeTimeS, chooseQtePass, planTap, predictRest, qteVelocity, type QtePass } from '../src/policy/qte.ts';
+import { WVD_DEFAULTS } from '../src/config.ts';
 
 /**
  * The six stills are one chest, recorded 2026-10-24 01:41 (`testdata/chest/2026-10-24-qte-0141/`).
@@ -649,6 +650,18 @@ describe('predictRest', () => {
  * `worlds.wvd.qteBrakeEnabled` on. These are the pre-switch expectations, kept under the switch so
  * the default change cannot silently delete the measured model.
  */
+describe('the calibrated prior (2026-11-06)', () => {
+  it('encodes 0.05 s of slide at the default constant', () => {
+    // qteDecelPxPerS2 6100 -> the plan's reference is twice it; tau = 610 / (2 * 6100) = 0.05 s.
+    expect(brakeTimeS(610, 2 * 6100)).toBeCloseTo(0.05, 9);
+    expect(brakeDistancePx(610, 2 * 6100)).toBeCloseTo(30.5, 6);
+    // The default config the World hands the planner carries exactly that prior.
+    expect(WVD_DEFAULTS.qteBrakeEnabled).toBe(true);
+    expect(WVD_DEFAULTS.qteDecelPxPerS2).toBe(6100);
+    expect(brakeTimeS(610, 2 * WVD_DEFAULTS.qteDecelPxPerS2)).toBeCloseTo(0.05, 9);
+  });
+});
+
 describe('brakeEnabled: the 2026-10-24 brake expectations', () => {
   it('plans with the carry at the recorded speed', () => {
     // stop = 800 + 610·0.075 + 61.02 = 907.77 → (1111 − 907.77)/610 = 333.17 ms.

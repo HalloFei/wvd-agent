@@ -5,15 +5,15 @@
  *
  * The operator's rule is what makes it a screen: **the room options identify it** — a dialog that
  * offers rooms (or the 住宿 row that leads to them) is the inn, whatever the room types are. So the
- * recogniser reads the dialog's rows against the measured library (\`inn-library.ts\`): a row whose
+ * recogniser reads the dialog's rows against the measured library (`inn-library.ts`): a row whose
  * label the library knows is a row, and two named rows are the floor — one stray match is never a
  * dialog.
  *
  * The dialog is the game's fixed UI, so the rows are **measured positions**, not a text-line scan
  * (the labels' dark outlines split a scan into fragments on the live frame — measured 2026-11-06):
  *
- * - the room list (\`inn-rooms-1280.jpg\`): 马房 / 标准房 / 返回 at y 0.5083 / 0.5611 / 0.6111;
- * - the service menu (\`inn-service-1920.jpg\`): 住宿 / 对话 / 离开 at y 0.4519 / 0.5352 / 0.5935.
+ * - the room list (`inn-rooms-1280.jpg`): 马房 / 标准房 / 返回 at y 0.5083 / 0.5611 / 0.6111;
+ * - the service menu (`inn-service-1920.jpg`): 住宿 / 对话 / 离开 at y 0.4519 / 0.5352 / 0.5935.
  *
  * Each row is read in the band the library was sampled in (x 0.50..0.615, ±0.014 of the height), and
  * the tap point is x 0.58 of the width — the button's interior, left of the room prices — at the

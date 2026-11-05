@@ -103,15 +103,15 @@ exists so the loop never presses into a member's death; the World either stops t
 (`stopOnDeath`, an unattended run) or raises the question to Coo once per death. Playing the ring is
 still open (`t-mvy6dvsw`).
 
-\`inn\` is the rest town's inn (operator, 2026-11-06): the 旅店 dialog — the innkeeper's service menu
+`inn` is the rest town's inn (operator, 2026-11-06): the 旅店 dialog — the innkeeper's service menu
 (住宿 / 对话 / 离开) and the room list behind it (马房 / 标准房 / 返回, with a price on the room rows).
 The operator's rule is the evidence: **the room options identify it** — a dialog that offers rooms (or
 住宿, the row that leads to them) is the inn, whatever the room types are. The rows are the game's
 fixed UI, so they are measured positions (the room list at y 0.5083 / 0.5611 / 0.6111, the service menu
 at 0.4519 / 0.5352 / 0.5935) and each row's label is read against the measured library
-(\`perception/inn.ts\`, \`inn-library.ts\`, from the 1280 room-list and 1920 service-menu recordings): two
+(`perception/inn.ts`, `inn-library.ts`, from the 1280 room-list and 1920 service-menu recordings): two
 known rows are the floor, one is never a dialog. The World takes one row a tick — the configured room
-(\`worlds.wvd.innRoom\`), else 标准房, else the first room the dialog offers, else 住宿 or the way out.
+(`worlds.wvd.innRoom`), else 标准房, else the first room the dialog offers, else 住宿 or the way out.
 The rest itself is the game's: the dialog closes, the party is healed, and the town it leaves the party
 in is the orientation's business.
 
@@ -511,9 +511,9 @@ object (§0 rule 3).
 | `willpowerFloor` | integer | `60` | chest | never choose an opener below this |
 | `maxRerolls` | integer | `3` | chest | QTE rerolls per chest, floor chests only |
 | `rerollLeadRatio` | number 0–1 | `0.5` | chest | reroll when lead exceeds this fraction of the zone |
-| `qteLatencyMs` | integer | `75` | chest | measured input latency |
-| `qteBrakeEnabled` | boolean | `false` | chest | add the measured brake carry to plans; default off (press resolves at registration) |
-| `qteDecelPxPerS2` | integer | `3000` | chest | fitted slide constant, provisional |
+| `qteLatencyMs` | integer | `64` | chest | measured input leg (61–76 ms over the 2026-11-04/05 presses) |
+| `qteBrakeEnabled` | boolean | `true` | chest | add the carry to plans: this bar's measured park, else the prior; on since 2026-11-06 (the parks carry 0.04–0.10 s) |
+| `qteDecelPxPerS2` | integer | `6100` | chest | the prior's slide constant: prior slide time = 610 / (2 × this) = 0.05 s, the median of ten parks |
 | `qteMinWindowMs` | integer | `150` | chest | refuse a pass tighter than this |
 | `qteAttemptsFallback` | integer | `2` | chest | used when the counter is unreadable |
 | `qteSubLoopMs` | integer | `4000` | chest | how long the QTE sub-loop may hold the tick before it gives up |

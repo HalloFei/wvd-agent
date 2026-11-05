@@ -863,12 +863,36 @@ describe('the chest QTE', () => {
     await world.tick();
     expect(seen).toHaveLength(1);
     expect(seen[0]!.carryTauS).toBeUndefined();
+    // The band is as honest as the carry's source (calibrated 2026-11-06): the prior is the ten parks'
+    // ±0.08 s of slide (45 px), the bar's own park narrows it to 12 px.
+    expect(seen[0]!.carrySpreadPx).toBe(45);
+    expect(seen[0]!.latencySpreadMs).toBe(12);
 
     clock.advance(100);
     await world.tick();
     expect(seen).toHaveLength(2);
     expect(seen[1]!.carryTauS).toBeCloseTo(0.2, 6);
     expect(seen[1]!.latencyMs).toBeCloseTo(64, 6);
+    expect(seen[1]!.carrySpreadPx).toBe(12);
+  });
+
+  it('stops pressing a bar that will not resolve, after the spin guard, with one warning', async () => {
+    // The 2026-10-31 bar was pressed 224 times in 4.5 min, every press a refusal (2026-11-06 data).
+    const seen: QteTimingOptions[] = [];
+    const timing: QteTimer = async (options) => {
+      seen.push(options);
+      return { ok: false, reason: 'bar-gone' };
+    };
+    const { world, host } = makeWorld({ observation: qteBar, timing });
+    await started(world, host);
+
+    for (let tick = 0; tick < 10; tick += 1) await world.tick();
+
+    // QTE_MAX_TRIES_PER_BAR: six sub-loops on one bar, then the stall clock's.
+    expect(seen).toHaveLength(6);
+    const warned = host.logRecords.filter((line) => line.message.includes('leaving it to the stall clock'));
+    expect(warned).toHaveLength(1);
+    expect(world.isRunning()).toBe(true);
   });
 
   it('sends no press in a dry run, even on the bar', async () => {

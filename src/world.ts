@@ -312,8 +312,17 @@ const WALK_RETRIES = 2;
  * 0.042 s and one at 0.089 s). Chosen bounds, not measured ones: the model exists to say 95 % only
  * when it can, and a narrow bound would lie.
  */
-const QTE_LATENCY_SPREAD_MS = 15;
-const QTE_CARRY_SPREAD_PX = 20;
+/** ± the input leg's own spread, ms: the measured legs were 61–76 against the 64 prior (+12/−3). */
+const QTE_LATENCY_SPREAD_MS = 12;
+/**
+ * ± the carry **before this bar has a measured park**, px (2026-11-06 calibration): the ten normal
+ * parks implied 0.04–0.10 s of carry (one -0.07 … -0.05), so the first press of a bar is uncertain by
+ * ±0.08 s of slide — ~45 px at the farm bars' 550 px/s. A one-press bar is a gamble the 95 % gate must
+ * be shown to be worth; the number is the data's spread, not a preference.
+ */
+const QTE_CARRY_SPREAD_PX = 45;
+/** ± the carry **after** this bar's park was measured, px: the bar's own slide is stable (0.26–0.31 on the stuck bar). */
+const QTE_MEASURED_CARRY_SPREAD_PX = 12;
 
 /**
  * How many consecutive frames must answer the **same** ACTIVE member before the opener trusts it
@@ -322,6 +331,13 @@ const QTE_CARRY_SPREAD_PX = 20;
  * `battleOpenerTimeoutMs`, not a fixed window.
  */
 const BATTLE_STABLE_READS = 2;
+/**
+ * How many sub-loops one bar may consume before the loop stops pressing it (2026-11-06): the 2026-10-31
+ * bar that would not resolve was pressed 224 times in 4.5 min, and every press was a refusal. A bar
+ * that resolves takes one pass; a reroll ends the screen and resets the count, so this only bounds a
+ * bar that stays.
+ */
+const QTE_MAX_TRIES_PER_BAR = 6;
 /** Frames the revive QTE must stay up: one is a modal still drawing, two is a member down. */
 const PARTY_DOWN_FRAMES = 2;
 
@@ -661,6 +677,10 @@ export class WvdWorld implements World {
   #walkFailures = new Map<string, number>();
   /** Rerolls spent on the chest's QTE; reset when a chest starts or ends (operator rule). */
   #qteRerolls = 0;
+  /** Sub-loops spent on the bar now on screen; the spin guard (2026-11-06). */
+  #qteTries = 0;
+  /** The spin guard's warning has been written for this bar. */
+  #qteSpinWarned = false;
   /** The pass the policy saw on the last decision, recorded only while the baseline is filling. */
   #lastQtePass: QtePass | null = null;
   /** The reroll budget is spent with nothing better: the bar is taken as the last attempt. */
@@ -1520,6 +1540,10 @@ export class WvdWorld implements World {
       this.#reviveAsked = false;
     }
     if (observation.screen !== 'inn') this.#innWarned = false;
+    if (observation.screen !== 'chest-qte') {
+      this.#qteTries = 0;
+      this.#qteSpinWarned = false;
+    }
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
     if (observation.screen !== 'character-page') {
       this.#pageCloseTries = 0;
@@ -2139,6 +2163,18 @@ export class WvdWorld implements World {
       );
       return;
     }
+    // The spin guard: one bar may not eat the loop. A bar that resolves takes one pass; a reroll ends
+    // the screen and clears this; only a bar that stays on screen reaches the cap.
+    if (this.#qteTries >= QTE_MAX_TRIES_PER_BAR) {
+      if (!this.#qteSpinWarned) {
+        this.#qteSpinWarned = true;
+        this.#host?.log.warn(
+          `wvd: the chest QTE has had ${this.#qteTries} passes on one bar; leaving it to the stall clock`,
+        );
+      }
+      return;
+    }
+    this.#qteTries += 1;
     const cfg = this.#cfg;
     let outcome: QteOutcome;
     try {
@@ -2169,7 +2205,9 @@ export class WvdWorld implements World {
         budgetMs: cfg.qteSubLoopMs,
         ...(this.#qteCarryTauS === null ? {} : { carryTauS: this.#qteCarryTauS }),
         latencySpreadMs: QTE_LATENCY_SPREAD_MS,
-        carrySpreadPx: QTE_CARRY_SPREAD_PX,
+        // The band is only as honest as the carry's source: the prior before this bar has a park,
+        // the bar's own measured value after (operator rule 2026-11-05, calibrated 2026-11-06).
+        carrySpreadPx: this.#qteCarryTauS === null ? QTE_CARRY_SPREAD_PX : QTE_MEASURED_CARRY_SPREAD_PX,
         // The attempt-vs-reroll rule (operator, 2026-10-31): five rerolls per chest, the first two
         // rerolled passes recorded as the baseline, and only a later pass that beats both baselines
         // is taken. The callback also stashes the pass for the recording below; the policy is pure.
