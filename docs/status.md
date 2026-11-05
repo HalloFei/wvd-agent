@@ -845,6 +845,19 @@ orientation's business. Live check 2026-11-06: the probe answers `inn` at 1.00 o
 `tests/inn.test.ts` pins both recordings, the choice order and the negatives; `tests/world.test.ts`
 pins the one tap the World sends.
 
+### The claim tap is the reward, never a control (2026-11-06)
+
+The operator's rule, as they put it: *in the chest claim scene a tap anywhere on the screen claims the
+item and moves to the next item or scene; only the bottom controls — AUTO and the others — cannot
+resolve the claim.* The banner's tap was (1203,1040), a point in the bottom strip: the 2026-11-01
+note read it as "the continue arrow", but it was empty screen at the bottom — one layout away from
+the AUTO control the operator has since named. It is now **(960, 880)**: the caption's own line
+(`获得了…！！`), measured on two live frames the same night — the caption's ink band sits at y 871–888
+at 1920×1080, and at y 581–591 in the 1280-wide escalation snapshot (586 → 879 at the client scale).
+
+The card's collect stays the reward rectangle's centre, (960, 510), and the rule is the same for both
+halves of `drop-item-claim`: the reward area claims, the bottom controls do not.
+
 ### The message box, and the inn's visit state (2026-11-06)
 
 The 01:53 live run rested (住宿 → 标准房 → 确定) and the game answered **背包已补充完毕。** — a centred

@@ -202,10 +202,18 @@ describe('the loot result banner', () => {
     expect(observation.screen).toBe('drop-item-claim');
   });
 
-  it('is dismissed with one tap at the measured continue arrow', async () => {
+  it('is claimed with one tap on the banner\'s own line, never a bottom control', async () => {
+    // Operator rule 2026-11-06: in the claim scene a tap anywhere claims the loot, and only the bottom
+    // controls (AUTO and the rest) fail to; so the banner's point is the caption's line, well above
+    // the bottom strip, and the card and the banner are claimed the same way.
     const actuator = recordingActuator();
     await expect(dismissLoot(actuator)).resolves.toEqual({ ok: true });
-    expect(actuator.taps).toEqual([{ x: 1_203, y: 1_040 }]);
-    expect(LOOT_DISMISS_AT).toEqual({ x: 1_203, y: 1_040 });
+    expect(actuator.taps).toEqual([{ x: 960, y: 880 }]);
+    expect(LOOT_DISMISS_AT).toEqual({ x: 960, y: 880 });
+    // The measured caption band is y 871-888 at 1920x1080 (both 2026-11-06 fixtures), so the point
+    // is inside it, on the reward area, and above the bottom controls.
+    expect(LOOT_DISMISS_AT.y).toBeGreaterThanOrEqual(871);
+    expect(LOOT_DISMISS_AT.y).toBeLessThanOrEqual(888);
+    expect(LOOT_DISMISS_AT.y).toBeLessThan(1_000);
   });
 });

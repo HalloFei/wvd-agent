@@ -2494,8 +2494,9 @@ export class WvdWorld implements World {
         if (this.#lootTapAtMs !== null
           && tappedAt - this.#lootTapAtMs < Math.max(1, this.#cfg.lootTapIntervalMs)) return;
         if (this.#lootTaps >= Math.max(1, this.#cfg.lootTapMax)) {
-          // The card is gone and the result banner is up: it has its own continue arrow, and the
-          // card's centre does nothing on it (measured live 2026-11-01). One tap, once per screen.
+          // The card is gone and the result banner is up: the claim resolves on the banner's own
+          // line (operator rule 2026-11-06: a tap anywhere on the reward claims it, the bottom
+          // controls — AUTO and the rest — do not). One tap, once per screen.
           if (this.#lootDismissed) {
             this.#host?.log.warn('wvd: the loot screen did not leave after the configured taps');
             return;

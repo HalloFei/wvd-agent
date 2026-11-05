@@ -129,12 +129,15 @@ export async function enableBattleAuto(actuator: Actuator): Promise<ActionResult
 }
 
 /**
- * The loot overlay's collect: the centre of the contents card, (960, 510) on the 1920×1080 client.
+ * The loot overlay's collect: the centre of the **reward rectangle** — the contents card — at
+ * (960, 510) on the 1920×1080 client.
  *
  * **Measured live (2026-10-31).** The operator's manual tap at this point collected the loot and
- * dismissed the card; no control is drawn under it, so the card itself is the target. The perceiver
- * that names the screen is `LootPerceiver` (`src/perception/loot.ts`); this point has nothing to do
- * with that capture's 1280×720 size — the action always speaks the client's pixels.
+ * dismissed the card; no control is drawn under it, so the card itself is the target — the same rule
+ * the banner follows (operator rule 2026-11-06: a tap anywhere on the reward claims it; the bottom
+ * controls do not). The perceiver that names the screen is `LootPerceiver`
+ * (`src/perception/loot.ts`); this point has nothing to do with that capture's 1280×720 size — the
+ * action always speaks the client's pixels.
  *
  * One tap per call. A caller that wants to repeat a tap until the card leaves owns that repetition
  * (it is a policy fact, not an action's), and a rejected tap is returned unchanged, never retried.
@@ -147,16 +150,24 @@ export async function tapLoot(actuator: Actuator): Promise<ActionResult> {
 }
 
 /**
- * The result banner's only control: the small continue arrow at the client's bottom right.
+ * The result banner's claim: a tap **on the banner itself**, (960, 880) — the caption line the game
+ * draws over the opened chest (`获得了…！！`).
  *
- * **Measured live (2026-11-01).** After the card was collected the game drew `获得了北穿幽冥城的三彩
- * 杂物 × 2！！` over the opened chest; a tap at the card centre did nothing, and one tap at (1203,1040)
- * dismissed it and returned to the 3-D view. The card and the banner are one screen (`drop-item-claim`); this is
- * the banner's own point.
+ * The operator's rule (2026-11-06): *in the chest claim scene a tap anywhere on the screen claims the
+ * item and moves to the next item or scene; only the bottom controls — AUTO and the others — cannot
+ * resolve the claim.* So this point is the reward area and never a button. The old point, (1203,1040),
+ * sat in the bottom strip where the AUTO control is drawn: its 2026-11-01 'it dismissed it' was a tap
+ * on empty screen at the bottom, not a control, and a claim scene that offers a button there is one
+ * tap away from pressing it.
+ *
+ * **Measured 2026-11-06** on two live frames (`testdata/screens/2026-11-06-loot-currency/`, the
+ * currency banner and the item card): the caption band's ink sits at y 871–888 at 1920×1080, i.e.
+ * 880 here, and at y 581–591 in the 1280-wide escalation frame (586 → 879 at the client scale). The
+ * card and the banner are one screen (`drop-item-claim`); this is the banner's place on it.
  */
-export const LOOT_DISMISS_AT: Point = { x: 1_203, y: 1_040 };
+export const LOOT_DISMISS_AT: Point = { x: 960, y: 880 };
 
-/** Dismiss the loot result banner with one tap at its continue arrow. */
+/** Claim the loot result banner: one tap on the caption's own line, never a bottom control. */
 export async function dismissLoot(actuator: Actuator): Promise<ActionResult> {
   return actuator.tap(LOOT_DISMISS_AT);
 }

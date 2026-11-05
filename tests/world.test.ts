@@ -2603,7 +2603,7 @@ describe('the chest module is paced', () => {
 
     clock.advance(800);
     await world.tick();
-    expect(actuator.calls).toEqual(['tap 960,510', 'tap 1203,1040']);
+    expect(actuator.calls).toEqual(['tap 960,510', 'tap 960,880']);
   });
 
   it('keeps a configured loot interval longer than the pace', async () => {
