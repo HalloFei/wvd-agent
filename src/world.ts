@@ -1337,6 +1337,22 @@ export class WvdWorld implements World {
     if (verdict === 'stop' && blank && now - (this.#blankSinceMs ?? now) < this.#cfg.escalateSettleMs) {
       return;
     }
+    // A stage in progress is the loop's own work, and the screens it walks through are why the route
+    // has no intent for it: the Dungeon Select list, the harken menu, the town it arrives in, a load
+    // fade. It is pumped before the stall clock can turn the tick into a question — a town frame at
+    // 0.94 is not a stall, it is the stage's next `expect` (live 2026-11-06: the exit's town arrival
+    // escalated six times and the fallback's map presses opened the inn dialog, which no recogniser
+    // names). Its own step is progress the loop cannot see, exactly as a finished script is.
+    if (verdict === 'ok' && !waiting && this.#staging !== null && !WORLD_SCREENS.has(observation.screen)) {
+      this.#lastProgressAtMs = now;
+      await this.#execute({ kind: 'run-script', name: this.#staging }, observation.screen, {
+        session,
+        frame,
+        observation,
+        now,
+      });
+      return;
+    }
     if (verdict === 'ok' && stalledMs >= this.#stallEscalateMs()) verdict = 'escalate';
 
     // Operator rule 2026-11-03: ask the game before asking the model. An unnamed frame is often the
@@ -1370,20 +1386,6 @@ export class WvdWorld implements World {
     }
 
     if (waiting) return;
-
-    // A stage in progress owns the screens it walks through — the Dungeon Select list, the harken
-    // menu, a load fade — that the route answers with a wait, so the stage is pumped here, one
-    // operation a tick. A screen the loop owns (a battle, the chest it leaves, a death) is
-    // `WORLD_SCREENS` and is left to the loop's own dispatch below.
-    if (this.#staging !== null && !WORLD_SCREENS.has(observation.screen)) {
-      await this.#execute({ kind: 'run-script', name: this.#staging }, observation.screen, {
-        session,
-        frame,
-        observation,
-        now,
-      });
-      return;
-    }
 
     // The orientation (contracts §10, the goal form): from whatever screen the session started on,
     // one command per tick until the map shows the farm floor. A screen the farm owns — a chest,
