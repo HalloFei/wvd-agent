@@ -4,7 +4,7 @@ Where the plan stands. The plan file is the specification of the work, not the r
 is the record, updated at each milestone, and `docs/plans/2026-10-24-wvd-world-v1.md` stays the
 authority on *what* each task requires.
 
-Last updated 2026-11-02 22:10, on `main`.
+Last updated 2026-11-06 22:05, on `main`.
 
 ## Task table
 
@@ -1009,6 +1009,25 @@ status prints `mode battle`.
 
 The revive QTE is now *held* rather than questioned; its ring timing is the next card (`t-mvy6dvsw`).
 The design record is `2026-11-03-game-mode-design.md`.
+
+## The UI knowledge base (2026-11-06)
+
+A probe session with the operator turned the game's menus into a directed graph: pages are nodes,
+buttons are edges of three kinds — enter, exit, other — and every named page knows the measured tap
+that leaves it. `src/ui/catalog.ts` fixes the shape, `src/ui/pages.ts` holds what has been probed,
+`src/ui/graph.ts` answers `exitOf`, `rootOf` and `routeToRoot` (advisory: the World re-reads the frame
+after every command, which is what makes a non-tree safe).
+
+Fourteen pages were measured live, every exit seen to work, with stills under
+`testdata/screens/2026-11-06-ui/`: the dungeon's HUD pages (选项, 记录, 每日任务, 道具一览, 角色页) and
+the rest town's (旅店's three dialogs, 寺院, 道具店, 交易商, 祝福之日). The 记录 menu that stopped the
+99-cycle run is now a named page with a measured close (960, 870). `tests/ui-graph.test.ts` proves the
+catalog is sound: unique ids, one exit per non-root, every exit chain ending at a section root, every
+page reachable, and no route that would pass through a purchase.
+
+Not yet built: the perceiver that reads the catalog (one `ui-menu` observation, one World branch that
+closes what it names), the remaining town facilities, and the options/records children. The probe
+workflow itself is the `wvd-ui-probe` skill. Design record: `2026-11-06-ui-knowledge-base.md`.
 
 ## Open work — the task board is the authority
 
