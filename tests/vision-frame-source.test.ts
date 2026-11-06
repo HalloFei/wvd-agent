@@ -84,6 +84,28 @@ describe('Win32Capture over the frame channel', () => {
     }
   });
 
+  it('stamps atMs from the reported age at reply time, not from the request time', async () => {
+    const AGE_MS = 120;
+    const DELAY_MS = 25;
+    const channel = channelOf(WIDTH, HEIGHT);
+    publish(channel, picture(WIDTH, HEIGHT), { capturedAtMs: Date.now() });
+    const engine: EngineRequester = {
+      async request() {
+        await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+        return captureOk(WIDTH, HEIGHT, AGE_MS);
+      },
+    };
+
+    const before = performance.now();
+    const frame = await new Win32Capture(engine, channel).capture();
+    const after = performance.now();
+
+    // atMs = the reply instant minus ageMs, which cannot be the request instant 25 ms earlier
+    // (5 ms of slack for timer rounding; request-time semantics would be 25 ms below the bound)
+    expect(frame.atMs).toBeGreaterThanOrEqual(before + DELAY_MS - AGE_MS - 5);
+    expect(frame.atMs).toBeLessThanOrEqual(after - AGE_MS);
+  });
+
   it('hands out a copy: a later publish never rewrites a frame already taken', async () => {
     const channel = channelOf(WIDTH, HEIGHT);
     publish(channel, picture(WIDTH, HEIGHT), { capturedAtMs: Date.now() });

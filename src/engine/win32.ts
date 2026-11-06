@@ -154,8 +154,11 @@ export class Win32Capture implements FrameSource {
   ) {}
 
   async capture(): Promise<Frame> {
+    const reply = await this.engine.request({ op: 'capture' });
+    // stamped at the reply, not at the request: the round trip is latency, and charging it to the
+    // frame's age would make every frame older than it is (contracts §0.4, §7)
     const receivedAt = performance.now();
-    const value = captureOf(await this.engine.request({ op: 'capture' }));
+    const value = captureOf(reply);
     if (isStaleFrame(value.ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
     const served = this.serve();
     let image: RgbaImage | undefined;
@@ -178,8 +181,9 @@ export class Win32Capture implements FrameSource {
    */
   async captureBand(rect: PixelRect): Promise<Frame> {
     if (!isCropRect(rect)) throw new EngineCaptureError('rejected', 'crop-out-of-range');
+    const reply = await this.engine.request({ op: 'capture' });
     const receivedAt = performance.now();
-    const value = captureOf(await this.engine.request({ op: 'capture' }));
+    const value = captureOf(reply);
     if (isStaleFrame(value.ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
     const served = this.serve();
     let cropped;
