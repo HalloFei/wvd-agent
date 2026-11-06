@@ -36,6 +36,7 @@ import type {
   Point,
   RgbaImage,
 } from '../contracts.ts';
+import { readNumbersViaOcr, type OcrReadout } from './readout-ocr.ts';
 
 // ---------------------------------------------------------------------------------------------
 // Measured constants
@@ -67,6 +68,14 @@ const READOUT_LABEL_TOLERANCE = 2;
 const READOUT_INK_ROWS_MIN = 1;
 /** …and fewer than this, or it is the panel's border rather than a glyph (R28). */
 const READOUT_CHROME_ROWS = 13;
+/** The readout band a fallback OCR reader is handed: the line plus a little air around it. */
+export const READOUT_BAND = { x: READOUT_X, y: READOUT_Y - 8, width: READOUT_W + 10, height: READOUT_H + 16 } as const;
+
+/** The gates that mean "the line is there but its digits could not be named". */
+export function isReadoutGate(gate: string): boolean {
+  return gate.startsWith('readout-');
+}
+
 const READOUT_LABEL_MIN_W = 9;
 const READOUT_LABEL_MAX_W = 13;
 /** Digit widths measured 4–9 px; 3–10 leaves the proportional advances room (research §3). */
@@ -548,8 +557,15 @@ export function tileOnScreen(map: MapState, tile: Point): Point {
 
 /** A `Perceiver` over the dungeon map. `unknown` (confidence 0) is its refusal. */
 export class MapPerceiver implements Perceiver {
+  /**
+   * `ocr` is the optional escalation (operator, 2026-11-07): when the readout's digits cannot be
+   * classified but the line is there, the band is handed to an OCR package and its numbers are fed
+   * back into the same parse. Off is the default — it costs a process, and only a refused frame pays.
+   */
+  constructor(private readonly ocr?: OcrReadout) {}
+
   async observe(frame: Frame): Promise<Observation> {
-    const parsed = await parse(frame);
+    const parsed = await this.#parse(frame);
     if (!parsed.ok) return { screen: 'unknown', atMs: frame.atMs, confidence: 0 };
     return {
       screen: 'dungeonmap',
@@ -557,6 +573,21 @@ export class MapPerceiver implements Perceiver {
       confidence: parsed.confidence,
       map: parsed.map,
     };
+  }
+
+  /** The parse, with the OCR escalation on a refused readout. */
+  async #parse(frame: Frame): Promise<MapParse> {
+    let image: RgbaImage;
+    try {
+      image = await frame.toRgba();
+    } catch {
+      return { ok: false, gate: 'decode-failed' };
+    }
+    const first = parseImage(image);
+    if (first.ok || this.ocr === undefined || !isReadoutGate(first.gate)) return first;
+    const numbers = await readNumbersViaOcr(image, READOUT_BAND, this.ocr);
+    if (numbers === null) return first;
+    return parseImage(image, { readout: numbers });
   }
 }
 
@@ -572,7 +603,7 @@ async function parse(frame: Frame): Promise<MapParse> {
   return parseImage(image);
 }
 
-function parseImage(image: RgbaImage): MapParse {
+function parseImage(image: RgbaImage, options?: { readonly readout?: Point }): MapParse {
   const { data, width, height } = image;
 
   // 0. Size and uniformity -------------------------------------------------------------------
@@ -580,7 +611,14 @@ function parseImage(image: RgbaImage): MapParse {
   if (isUniform(data, width, height)) return { ok: false, gate: 'uniform-frame' };
 
   // 1. G1: the coordinate readout ------------------------------------------------------------
-  const readout = readReadout(data, width);
+  //    A readout the digit reader could not name may still be readable by the OCR escalation; the
+  //    caller hands the numbers back in and the rest of the parse runs unchanged (2026-11-07).
+  const parsedReadout = readReadout(data, width);
+  const readout = parsedReadout.ok
+    ? parsedReadout
+    : options?.readout === undefined
+      ? parsedReadout
+      : { ok: true as const, x: options.readout.x, y: options.readout.y, margins: [] };
   if (!readout.ok) return readout;
 
   // 2. G2: the title bar's dark strip --------------------------------------------------------

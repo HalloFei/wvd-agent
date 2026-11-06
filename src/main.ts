@@ -124,7 +124,15 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
    */
   // The map reader is also the aim's reader: the walk asks it where a cell is on the frame it taps
   // (see `automoveToTile` below), so one instance serves the loop and the tap.
-  const mapReader = new MapPerceiver();
+  // The readout's OCR escalation (operator, 2026-11-07): a package reads the numbers when the local
+  // digit reader refuses them. Off unless the harness names an interpreter that has it.
+  const ocrPython = process.env.WVD_OCR_PYTHON;
+  const ocrScript = process.env.WVD_OCR_SCRIPT;
+  const mapReader = new MapPerceiver(
+    ocrPython !== undefined && ocrScript !== undefined
+      ? { python: ocrPython, script: ocrScript, timeoutMs: 20_000 }
+      : undefined,
+  );
   const perceiver = new CompositePerceiver([
     { perceiver: new ChestPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: mapReader, floor: ACTING_CONFIDENCE_FLOOR },

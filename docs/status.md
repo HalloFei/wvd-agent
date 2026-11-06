@@ -1072,6 +1072,17 @@ chest-opening perceiver named the scene `chest-opening` 0.60 (a blurred inn draw
 warm interior passes the chest's warm-mass gate), so two cycles each burned 90 s at the inn, called
 themselves unrested, and the scene then blocked the next orientation for 45 s until the stall stopped
 the run. Live: the scene on screen at 00:55 answers `inn-rest` 0.75 with the tap at (1192,1008).
+## The readout's numbers are OCR'd, not templated (2026-11-07)
+
+A coordinate can be any number, so a committed 8x12 glyph per digit is not a reader — it only knows the
+digits somebody already met (`X: 16` stalled a run because no `6` had been committed). Two readers now
+exist: the loop's own rule-based classifier (`src/perception/number.ts`: holes, their placement, ink
+distribution) as the fast path, and an **OCR escalation** for the readouts it refuses — the band is
+written as a PPM and read by RapidOCR (`scripts/ocr-readout.py`, `pip install rapidocr-onnxruntime`, no
+key, no network at runtime after the models land). Its two integers are fed back into the same map
+parse. Measured on the four committed readouts: 16/4, 13/25, 19/2, 20/14 — all correct, including a
+frame whose OCR boxes came back out of label order. The escalation is off unless the harness sets
+`WVD_OCR_PYTHON` and `WVD_OCR_SCRIPT`, so the loop's behaviour is unchanged without them.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only
