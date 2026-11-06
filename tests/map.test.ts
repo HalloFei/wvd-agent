@@ -55,6 +55,23 @@ describe('the live map frames of 2026-11-01', () => {
   });
 });
 
+describe('the atlas digits (2026-11-07)', () => {
+  it('reads a floor whose readout carries a digit the atlas first lacked', async () => {
+    // Live 2026-11-07 01:43: the readout reached X:16 and every frame refused with
+    // `readout-digit-unmatched` — the atlas held 0,1,2,3,4,5,7,9 and no 6. The loop stalled for 45 s and
+    // the run stopped. The frame is the live client's own capture (q75, 1920x1080).
+    const url = new URL('../testdata/screens/2026-11-07-map-refused/map-1920.jpg', import.meta.url);
+    const bytes = await readFile(url);
+    const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+    const image: RgbaImage = { data: decoded.data, width: decoded.width, height: decoded.height };
+    const frame: Frame = { atMs: 0, width: decoded.width, height: decoded.height, toRgba: async () => image };
+    const map = await readMap(frame);
+    expect(map).not.toBeNull();
+    expect(map!.player).toEqual({ x: 16, y: 4 });
+    expect(map!.titleKey).toBe('000000007f3ffe007ffeff00220bb600');
+  });
+});
+
 describe('the 楼梯-门 icon (operator name, 2026-11-03)', () => {
   it('is found on the FFXI 第三区-城内2F map, one cell from the party', async () => {
     // The door-with-arrow glyph the operator sent: the stair entrance to the next floor. The operator's

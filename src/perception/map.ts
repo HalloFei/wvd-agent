@@ -362,9 +362,11 @@ const HAZARD_SCAN_BOTTOM = 900;
 
 /**
  * Digits: 8×12 glyphs, one byte per pixel, luma after the research's normalisation (§3 step: crop
- * the 12-px ink row run, `(L−70)/170` clamped to [0,1], resize to 8×12). The set is incomplete on
- * purpose: the corpus only contains `20/14`, `19/21`, `22/17` and `23/13`, so **0, 1, 2, 3, 4, 7, 9**
- * exist and **5, 6, 8 do not**. A glyph that falls below the match/margin floor returns `null`.
+ * the 12-px ink row run, `(L−70)/170` clamped to [0,1], resize to 8×12). The set is what the corpus
+ * measured: 0, 1, 2, 3, 4, 5, 7, 9 from the recordings, and **6 added 2026-11-07** when a floor's
+ * readout first reached `X: 16` and every frame refused with `readout-digit-unmatched` — a digit the
+ * atlas lacks is a map the loop cannot read at all. **8 is still missing** (no frame has carried it). A
+ * glyph that falls below the match/margin floor returns `null`.
  *
  * Provenance (not run in CI): `scripts/extract-map-templates.mjs`. Digit 0/2/4 from `map.png`,
  * 9 from `popup.png`, 3 from a captured `007_017.png`, 7 from a captured `000_001.png`; the last two
@@ -377,6 +379,10 @@ const DIGIT_TEMPLATE_B64: Readonly<Record<string, string>> = {
   '3': 'AAAAAAAAAAAAAhcoJA8AACRNgKvBokUAAAAAHHzEeAkAAAAHVZZIAQAAIl+LawoAACFcntPUgQ8AAAAMR6TJVAAAAAAPXMJcPhcIBiFgjS1FOSMcOUwjAAACAwICAQAA',
   '4': 'AAAAAAAAAAAAAAAAAAseAAAAAAAcbaYAAAAAFWPKzwAAAAQ2itjPAAACFjlvus8ACk4pC0OzzwJUPxocX8LXKjgmGzZ8zt5PAAAADlrG2DMAAAAWR3d8TAAAAAAAAQIA',
   '5': 'AAAAAAAAAAAAAAAXOTwbAAAAfLz73WQAAAowKi8dAAAAcloeAAAAAADD7s97OgAAACiLz+/2KAEAAAAjc//EFAAAAAAIt+8jK0UQBwqkeAErXTshIU0AAAAAAwMAAAAA',
+  // Measured live 2026-11-07: the floor's readout reached X:16 and every frame refused with
+  // `readout-digit-unmatched` — the atlas had no 6. Cut from `testdata/screens/2026-11-07-map-refused/`
+  // by scripts/extract-map-digit.ts (run index 3 of `X: 16  Y: 4`).
+  '6': 'eHh4eHh4eHh4eHh4eHh5eHh4eHiHi3t4eHl/jId6eHh4go+Le3h4eHiUkoiHioB4fpuTgXqMmIOAm4h4eHyXjH6Xh3h4eJeNeI+LfHl8lYR4fIOCfYSCenh4eHl5eXh4',
   '7': 'AAAAAAAAAAAAHisrKSwqAkK51dXV1bsgLyAVEh1OTwAAAAAACmMBAAAAAABDYwAAAAAAKYQPAAAAAAJekQAAAAAAIoV7AAAAAABer1UAAAAAADtgIwAAAAAAAAAAAAAA',
   '9': 'AAAAAAAAAAAAAAQbHxEAAAA6XC0KZlEABKtkAAAssT8i2GEAAAPIdh7ahggAA8qLAIfCl1mG9HwADDI5Nm/QTgAAAAAUmHUIAAAJHmJwCAAAABsxJQAAAAAAAAAAAAAA',
 };
