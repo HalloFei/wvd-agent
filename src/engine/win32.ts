@@ -9,7 +9,6 @@ import jpeg from 'jpeg-js';
 import type {
   ActionFailure,
   ActionResult,
-  EngineEvent,
   EngineReply,
   EngineRequest,
   Frame,
