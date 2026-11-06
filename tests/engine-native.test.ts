@@ -1,8 +1,16 @@
-import { MessageChannel, Worker } from 'node:worker_threads';
+import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
-import { createJpegEncoder, decodeJpeg, gdiplusProblem } from '../src/engine/gdiplus.mjs';
+import { decodeJpeg, gdiplusProblem } from '../src/engine/gdiplus.mjs';
 
 const WINDOWS = process.platform === 'win32';
+
+/**
+ * The native JPEG **decoder**, without the native encoder it used to round-trip with. The encoder was
+ * deleted with the vision module (2026-11-07): the child publishes raw BGRA and the World encodes only
+ * escalation snapshots, with jpeg-js. Here jpeg-js is therefore the producer and GDI+ the consumer —
+ * the two halves of the surviving artifact path — so the fixture still proves channel order, stride
+ * and orientation agree between them without the crashing COM `Seek` the encoder needed.
+ */
 
 /** BGRA quadrants with very different colours, so a channel swap or a stride error is visible. */
 function quadrantFrame(width: number, height: number): Uint8Array {
@@ -26,6 +34,17 @@ function quadrantFrame(width: number, height: number): Uint8Array {
   return data;
 }
 
+/** BGRA (the capture's order) to the RGBA jpeg-js encodes; the swap is its own inverse. */
+function toRgba(bgra: Uint8Array): Uint8Array {
+  const rgba = Uint8Array.from(bgra);
+  for (let offset = 0; offset < rgba.length; offset += 4) {
+    const blue = rgba[offset];
+    rgba[offset] = rgba[offset + 2];
+    rgba[offset + 2] = blue;
+  }
+  return rgba;
+}
+
 /** RGBA of a quadrant centre, from the decoded frame. */
 function centre(decoded: { width: number; height: number; data: Uint8Array }, quadrant: number): number[] {
   const x = Math.floor(decoded.width / 4) + (quadrant % 2) * Math.floor(decoded.width / 2);
@@ -34,15 +53,13 @@ function centre(decoded: { width: number; height: number; data: Uint8Array }, qu
   return [...decoded.data.subarray(offset, offset + 4)];
 }
 
-describe('native JPEG path', () => {
-  it.skipIf(!WINDOWS)('round-trips a synthetic 1920x1080 BGRA frame through the GDI+ encoder and decoder (R22)', () => {
-    const encoder = createJpegEncoder(90);
-    if (!encoder) throw new Error(`GDI+ unavailable: ${gdiplusProblem()}`);
+describe('native JPEG decode', () => {
+  it.skipIf(!WINDOWS)('decodes a 1920x1080 frame to RGBA with the channel order intact', () => {
     const width = 1920;
     const height = 1080;
     const bgra = quadrantFrame(width, height);
 
-    const jpegBytes = encoder.encode(bgra, width, height);
+    const jpegBytes = Uint8Array.from(jpeg.encode({ data: toRgba(bgra), width, height }, 90).data);
 
     expect(jpegBytes.length).toBeGreaterThan(1000);
     expect([...jpegBytes.subarray(0, 2)]).toEqual([0xff, 0xd8]);
@@ -60,91 +77,8 @@ describe('native JPEG path', () => {
     }
   });
 
-  it.skipIf(!WINDOWS)('the encoder worker uses GDI+ and reports no problem on a working machine', async () => {
-    const { port1, port2 } = new MessageChannel();
-    const worker = new Worker(new URL('../src/engine/jpeg-worker.mjs', import.meta.url), {
-      workerData: { quality: 80, port: port2 },
-      transferList: [port2],
-    });
-    try {
-      const messages: Array<Record<string, unknown>> = [];
-      const frame = new Promise((resolve) => worker.on('message', (message) => {
-        messages.push(message);
-        if (message.kind === 'frame') resolve(message);
-      }));
-      const width = 64;
-      const height = 48;
-      const pixels = quadrantFrame(width, height);
-      port1.postMessage({ seq: 1, pixels: pixels.buffer, width, height, capturedAt: 0 }, [pixels.buffer as ArrayBuffer]);
-      const encoded = (await frame) as { width: number; height: number; jpeg: Uint8Array };
-      expect(encoded.width).toBe(width);
-      expect(encoded.height).toBe(height);
-      expect([...new Uint8Array(encoded.jpeg).subarray(0, 2)]).toEqual([0xff, 0xd8]);
-      expect(messages.some((message) => message.kind === 'problem')).toBe(false);
-    } finally {
-      worker.terminate();
-      port1.close();
-    }
-  }, 20000);
-
-  it.skipIf(!WINDOWS)('the encoder worker encodes with jpeg-js when it is asked for, and reports no problem', async () => {
-    // Operator 2026-11-07: jpeg-js was wanted as the default because the GDI+ save path's COM vtable
-    // call through koffi crashed the worker at the end of long runs. It is not the default yet: a full
-    // 1920x1080 frame costs 174 ms at q75 (measured), and the child's one-frame variant path (the QTE
-    // band crop, the escalation snapshot) stopped serving under it in the snapshot fixture.
-    const { port1, port2 } = new MessageChannel();
-    const worker = new Worker(new URL('../src/engine/jpeg-worker.mjs', import.meta.url), {
-      workerData: { quality: 80, useJpegJs: true, port: port2 },
-      transferList: [port2],
-    });
-    try {
-      const messages: Array<Record<string, unknown>> = [];
-      const frame = new Promise((resolve) => worker.on('message', (message) => {
-        messages.push(message);
-        if (message.kind === 'frame') resolve(message);
-      }));
-      const width = 64;
-      const height = 48;
-      const pixels = quadrantFrame(width, height);
-      port1.postMessage({ seq: 1, pixels: pixels.buffer, width, height, capturedAt: 0 }, [pixels.buffer as ArrayBuffer]);
-      const encoded = (await frame) as { width: number; height: number; jpeg: Uint8Array };
-      expect(encoded.width).toBe(width);
-      expect(encoded.height).toBe(height);
-      expect([...new Uint8Array(encoded.jpeg).subarray(0, 2)]).toEqual([0xff, 0xd8]);
-      expect(messages.some((message) => message.kind === 'problem')).toBe(false);
-      const ready = messages.find((message) => message.kind === 'ready');
-      expect(ready).toMatchObject({ kind: 'ready', role: 'encoder', gdiplus: false });
-    } finally {
-      worker.terminate();
-      port1.close();
-    }
-  }, 20000);
-
-  it.skipIf(!WINDOWS)('the encoder worker falls back to jpeg-js and reports native-encoder-unavailable (R23)', async () => {
-    const { port1, port2 } = new MessageChannel();
-    const worker = new Worker(new URL('../src/engine/jpeg-worker.mjs', import.meta.url), {
-      workerData: { quality: 80, forceJpegJs: true, port: port2 },
-      transferList: [port2],
-    });
-    try {
-      const problems: Array<Record<string, unknown>> = [];
-      const frame = new Promise((resolve) => worker.on('message', (message) => {
-        if (message.kind === 'problem') problems.push(message);
-        if (message.kind === 'frame') resolve(message);
-      }));
-      const width = 64;
-      const height = 48;
-      const pixels = quadrantFrame(width, height);
-      port1.postMessage({ seq: 1, pixels: pixels.buffer, width, height, capturedAt: 0 }, [pixels.buffer as ArrayBuffer]);
-      const encoded = (await frame) as { width: number; height: number; jpeg: Uint8Array };
-      expect(problems).toEqual([{ kind: 'problem', detail: 'native-encoder-unavailable' }]);
-      expect(encoded.width).toBe(width);
-      expect(encoded.height).toBe(height);
-      expect([...new Uint8Array(encoded.jpeg).subarray(0, 2)]).toEqual([0xff, 0xd8]);
-    } finally {
-      worker.terminate();
-      port1.close();
-    }
-  }, 20000);
+  it.skipIf(gdiplusProblem() !== '')('refuses bytes that are not a JPEG', () => {
+    // failure is a value at every other boundary; the decoder itself throws and the caller decides
+    expect(() => decodeJpeg(Uint8Array.of(1, 2, 3))).toThrow();
+  });
 });
-

@@ -556,7 +556,7 @@ object (§0 rule 3).
 | Key | Type | Default | Owner | Meaning |
 |---|---|---|---|---|
 | `gameWindowTitle` | string | `WizardryVariantsDaphne` | engine | window to capture and drive |
-| `jpegQuality` | integer 30–95 | `75` | engine | frame encoding quality |
+| `jpegQuality` | integer 30–95 | `75` | World | escalation snapshot quality; the loop encodes no frame |
 | `engineTimeoutMs` | integer | `5000` | engine | one child request |
 | `pressHoldMs` | integer 40–500 | `60` | actuator | press duration; 0 ms is dropped at 30 fps |
 | `escalationImageWidth` | integer | `1280` | World | downscale before sending a frame to the model |

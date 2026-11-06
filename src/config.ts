@@ -155,7 +155,9 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
         type: 'string', title: '游戏窗口标题', description: '要捕获和操作的窗口。',
       },
       'worlds.wvd.jpegQuality': {
-        type: 'integer', title: 'JPEG 质量', description: '帧编码质量。', minimum: 30, maximum: 95,
+        // The loop encodes nothing since the vision module (2026-11-07): this is the World-side
+        // escalation snapshot's quality, the only JPEG the machine still makes.
+        type: 'integer', title: 'JPEG 质量', description: '升级快照的 JPEG 质量。', minimum: 30, maximum: 95,
       },
       'worlds.wvd.engineTimeoutMs': {
         type: 'integer', title: '引擎超时', description: '子进程一次请求的等待上限，毫秒。',

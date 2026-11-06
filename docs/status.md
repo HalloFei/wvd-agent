@@ -4,7 +4,8 @@ Where the plan stands. The plan file is the specification of the work, not the r
 is the record, updated at each milestone, and `docs/plans/2026-10-24-wvd-world-v1.md` stays the
 authority on *what* each task requires.
 
-Last updated 2026-11-06 22:05, on `main`.
+Last updated 2026-11-07, on `feat/vision-module` (Tasks 3–7 of the vision module; the live
+acceptance is Task 8, and the test count below predates this branch's full-suite run).
 
 ## Task table
 
@@ -27,8 +28,10 @@ Last updated 2026-11-06 22:05, on `main`.
 ## What runs
 
 - The package mounts in Coopanion (verified through the host's own loader, `worldId: wvd`, api 6).
-- The engine child captures the real game at 30 fps while **occluded** — 2.5 ms round trip, 23 ms
-  native decode, 20 ms native encode — which is the whole point of the design.
+- The engine child captures the real game while **occluded** (the 30 fps / 2.5 ms round trip was the
+  JPEG-era measurement) and publishes raw BGRA into a shared channel; the World copies the newest slot
+  (~2 ms) and encodes nothing per frame. The encoder is off the hot path entirely — see "the encoder
+  leaves the loop" below.
 - Screen recognition: the dungeon map (floor token, `X/Y`, chests, hazards, stairs), the 3D walking
   view, and the chest QTE bar (199 of 250 recorded frames parsed, the other 51 refused correctly).
   A frame that is on screen but namable by nothing is reported at a low confidence and **escalates**;
@@ -1083,20 +1086,37 @@ key, no network at runtime after the models land). Its two integers are fed back
 parse. Measured on the four committed readouts: 16/4, 13/25, 19/2, 20/14 — all correct, including a
 frame whose OCR boxes came back out of label order. The escalation is off unless the harness sets
 `WVD_OCR_PYTHON` and `WVD_OCR_SCRIPT`, so the loop's behaviour is unchanged without them.
-## The encoder: why jpeg-js is not the default yet (2026-11-07)
+## The encoder leaves the loop (2026-11-07, `feat/vision-module`)
 
-The operator asked for `jpeg-js` as the default because the GDI+ encode's COM vtable call through
-koffi (`seekEnd` after every save) took a napi fatal error at the end of long runs and left the capture
-stale. Measured, before switching: a full 1920x1080 BGRA frame costs **174 ms** at q75 with jpeg-js
-(native ~20 ms), and with it as the default the child's **one-frame variant path** — the QTE band crop
-and the escalation snapshot — stopped being served in `tests/engine-child-snapshot.test.ts` (2 of 3
-cases, deterministic; the directive reached the encoder after the frames had stopped, no reply). A
-broken variant path would break the QTE, so the encoder stays GDI+ by default and jpeg-js is opt-in:
-`WVD_JPEG_JS_ENCODER=1` (the child passes `useJpegJs`).
+The three runs that ended on 2026-11-07 were not the game. The child's GDI+ encoder read a stream's
+COM vtable by hand and called slot 5 (`Seek`) through koffi after every save; at the end of long runs
+that took a napi fatal, no new JPEG arrived, and the World saw only `capture timeout: stale-frame`.
+The encoder was the failing part, so it leaves the hot path (spec
+`docs/specs/2026-11-07-vision-module-design.md`, plan `docs/plans/2026-11-07-vision-module-plan.md`):
 
-Next step is not 'restart on crash': the right fix removes the native bridge from the hot path
-altogether — capture raw BGRA to the protocol thread (transferable buffers, no encode at all) and
-encode only the escalation snapshots — which also makes a 30 fps capture affordable in JS.
+- **Frames travel through a versioned shared-memory channel** (`src/engine/vision/`): a 64-byte header
+  and two 1920x1080 slots with a seqlock, named `wvd-frame-<pid>-<n>`. The child opens it with
+  `--channel`/`--channel-bytes` and publishes raw BGRA; the `capture` reply carries
+  `{ seq, width, height, ageMs }` only. The World copies the newest slot (~2 ms) and `toRgba()` swaps
+  BGRA to RGBA — **no decode in the loop**, and the native decoder fallback is gone with it.
+- **The QTE band is a raw rectangle**: the World crops it out of the copied slot with `cropBgra`; the
+  sampler is unchanged. The 27.5 ms band decode recorded above is therefore an artifact-path number
+  now, not a per-sample cost.
+- **JPEG exists only for escalation snapshots**, encoded in the World with jpeg-js (downscaled with
+  `scaleBgra` to `escalationImageWidth`): the one path that needs bytes to leave the machine.
+- **The child is supervised** (`src/engine/vision/capture-host.ts`): an exit, or a channel heartbeat
+  older than 1 s, restarts it once per session and reports `engineProblem: capture-restarted`
+  (`capture-unavailable` past the cap). A capture is held through the restart until the new child
+  publishes a frame newer than the dead child's last one, so a restart costs frames, not the session.
+- **Deleted**: `src/engine/jpeg-worker.mjs`, the GDI+ encoder (the decoder stays for recorded
+  artifacts and the native test), `src/engine/snapshot.mjs` (the child's one-frame variant queue),
+  the `--quality` option, and the protocol's `jpeg`/`crop`/`maxWidth`. The child's input commands are
+  unchanged.
+
+Not proved yet, and left to Task 8: the live acceptance (a three-cycle farm with no encoder in the
+loop, and a live kill of the child with the restart observed), the full suite after the deletions, and
+the one-off probes under `scripts/`, which still call `startEngine({ jpegQuality })` and
+`captureJpeg(engine)` — they need a session channel to run again.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

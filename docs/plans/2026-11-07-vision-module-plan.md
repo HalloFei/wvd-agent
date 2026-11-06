@@ -81,6 +81,10 @@ is a branch, fast-forwarded to `main` at the end. Commit at every task, staged b
 > commit) with the TDD loop: each test was watched red (missing module) before the module was written.
 > The channel now runs over a byte adapter (`ChannelMemory`), so the same logic is proven on a Buffer
 > and on the real Win32 mapping.
+>
+> Tasks 3–7 are done on the same branch (the contract change and the World side landed together
+> because `contracts.ts` §5 cannot be green on one side alone; the supervisor followed, and Task 8's
+> deletions are done while its live acceptance is left for the lead).
 
 ### Task 1 — The channel's layout and seqlock (pure)
 
