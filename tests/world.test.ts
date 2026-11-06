@@ -749,6 +749,26 @@ describe('the chest QTE', () => {
     expect(world.isRunning()).toBe(true);
   });
 
+  it('names the drop it claims, when the line was recorded', async () => {
+    // The reader carries the drop's own name (operator, 2026-11-06: a drop the World has not seen is
+    // named after the game's line and recorded), so the run's log says what it claimed.
+    const loot: Observation = {
+      screen: 'drop-item-claim',
+      atMs: 120,
+      confidence: 0.6,
+      item: '10,000拜恩纸币',
+    };
+    const { world, host, actuator } = makeWorld({ observation: loot });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['tap 960,510']);
+    expect(
+      host.logRecords.some((record) => record.message.includes('collected the loot card (10,000拜恩纸币)')),
+    ).toBe(true);
+  });
+
   it('logs the routine end of a bar at info, never warn', async () => {
     // The bar outlives the press by ~3 s; a dimmed 解除 still clears the perceiver floor, so every
     // tick after our own press re-enters and refuses with `resolved`. That is the normal end of a
