@@ -25,8 +25,12 @@ export interface EngineOptions {
   title: string;
   /** Global stop hotkey, e.g. `Ctrl+Alt+W`; an empty string disables registration. */
   hotkey?: string;
-  /** JPEG quality, `jpegQuality`. */
-  jpegQuality?: number;
+  /**
+   * The shared frame channel the child publishes into: the region's name and its byte size. The
+   * World creates the mapping before spawning (the child opens it), and the layout's header is the
+   * contract between them. Absent, the child captures nothing — there is no other frame transport.
+   */
+  channel?: { readonly name: string; readonly bytes: number };
 }
 
 export interface EngineClientOptions {
@@ -57,7 +61,9 @@ const MAX_BUFFERED_EVENTS = 32;
 export function startEngine(options: EngineOptions): ChildProcess {
   const args = [CHILD, `--title=${options.title}`];
   if (options.hotkey !== undefined) args.push(`--hotkey=${options.hotkey}`);
-  if (options.jpegQuality !== undefined) args.push(`--quality=${options.jpegQuality}`);
+  if (options.channel !== undefined) {
+    args.push(`--channel=${options.channel.name}`, `--channel-bytes=${options.channel.bytes}`);
+  }
   return spawn(process.execPath, args, {
     // Electron's binary runs as Node only with this set; plain Node ignores the variable.
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },

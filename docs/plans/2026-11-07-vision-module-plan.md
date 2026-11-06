@@ -106,23 +106,24 @@ is a branch, fast-forwarded to `main` at the end. Commit at every task, staged b
 
 ### Task 3 — The child publishes; the contract's capture reply loses its JPEG
 
-- [ ] Change `src/contracts.ts` + `docs/specs/2026-10-24-contracts.md` §5: the `capture` reply carries
+- [x] Change `src/contracts.ts` + `docs/specs/2026-10-24-contracts.md` §5: the `capture` reply carries
       `{ seq, capturedAt, width, height }` and no `jpeg`; the channel carries the pixels.
-- [ ] `src/engine/child.mjs`: the capture worker writes each frame to the mapping (opened from the
+- [x] `src/engine/child.mjs`: the capture worker writes each frame to the mapping (opened from the
       channel name in its argv, created by the host) and the protocol replies the metadata; delete the
       encoder worker and the JPEG payload. Input commands unchanged.
-- [ ] Update `tests/engine-child-snapshot.test.ts` and the warm-up test to the new reply; the fake
+- [x] Update `tests/engine-child-snapshot.test.ts` and the warm-up test to the new reply; the fake
       Win32 loader keeps producing its 192×108 frame, which the test reads from the channel.
-- [ ] Commit: `feat(vision): the child publishes frames, not JPEGs`.
+- [x] Commit: `feat(vision): the child publishes frames, not JPEGs`.
 
 ### Task 4 — The World's FrameSource over the channel
 
-- [ ] `tests/vision-frame-source.test.ts`: a channel-backed source returns a `Frame` whose
+- [x] `tests/vision-frame-source.test.ts`: a channel-backed source returns a `Frame` whose
       `toRgba()` matches the written BGRA; `captureBand(rect)` matches the rectangle; a stale slot
       refuses as `stale-frame`.
-- [ ] Implement `src/engine/vision/frame-source.ts`; point `main.ts` at it. `win32.ts`'s decode path
-      and `decodeJpeg` fallback are removed from this path.
-- [ ] Commit: `feat(vision): the World reads frames from the channel`.
+- [x] Implement the FrameSource over the channel in `src/engine/win32.ts` (`Win32Capture`, the file
+      the task's brief names); point `main.ts` at it. `win32.ts`'s decode path and `decodeJpeg`
+      fallback are removed from this path.
+- [x] Commit: `feat(vision): the World reads frames from the channel`.
 
 ### Task 5 — Snapshots encoded in the World
 
@@ -143,9 +144,9 @@ is a branch, fast-forwarded to `main` at the end. Commit at every task, staged b
 
 ### Task 7 — The QTE band read without a decoder
 
-- [ ] Extend `actions/qte.ts`'s sampler to `captureBand` from the channel; the test drives the
+- [x] Extend `actions/qte.ts`'s sampler to `captureBand` from the channel; the test drives the
       sampler with a channel-backed fake and asserts the band pixels are the cropped BGRA.
-- [ ] Commit: `feat(vision): the QTE band is a raw rectangle`.
+- [x] Commit: `feat(vision): the QTE band is a raw rectangle`.
 
 ### Task 8 — Delete the old path, prove it live
 

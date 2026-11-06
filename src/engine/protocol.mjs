@@ -27,9 +27,11 @@ const FAILURES = new Set(['unavailable', 'rejected', 'timeout']);
 export const FRAME_MAX_AGE_MS = 300;
 
 /**
- * The bounds on `capture.maxWidth`, in device pixels (contracts §5). Below the floor a snapshot is
- * too small to read; above the ceiling the number is a client bug, not a request for a huge image.
- * A value outside these is a malformed request, not something to clamp: guessing would hide the bug.
+ * The bounds on the World-side snapshot downscale, in device pixels (contracts §5, `maxWidth` on the
+ * escalation snapshot). Below the floor a snapshot is too small to read; above the ceiling the number
+ * is a client bug, not a request for a huge image. A value outside these is a refused request, not
+ * something to clamp: guessing would hide the bug. The wire no longer carries the field — the World
+ * scales the frame it already holds — but the bounds are the same fact and one copy of them.
  */
 export const MIN_CAPTURE_WIDTH = 64;
 export const MAX_CAPTURE_WIDTH = 16384;
@@ -84,22 +86,11 @@ export function decodeLine(line) {
 function decodeRequest(request) {
   if (!isObject(request) || typeof request.op !== 'string' || !OPS.has(request.op)) return null;
   switch (request.op) {
-    case 'capture': {
-      // absent maxWidth is native size, which is what perception needs; present must be a sane integer
-      if (request.maxWidth !== undefined
-        && (!isInteger(request.maxWidth) || request.maxWidth < MIN_CAPTURE_WIDTH || request.maxWidth > MAX_CAPTURE_WIDTH)) {
-        return null;
-      }
-      const crop = request.crop === undefined ? undefined : decodeCrop(request.crop);
-      if (request.crop !== undefined && crop === null) return null;
-      // a crop asks for the QTE bar's own rectangle and a maxWidth for a downscale; they size the
-      // output differently, so a caller sending both is a bug the codec names by dropping the line
-      if (crop && request.maxWidth !== undefined) return null;
-      const capture = { op: 'capture' };
-      if (request.maxWidth !== undefined) capture.maxWidth = request.maxWidth;
-      if (crop) capture.crop = crop;
-      return capture;
-    }
+    case 'capture':
+      // The reply is metadata and the pixels travel on the channel, so the request is its op alone.
+      // The JPEG era's `maxWidth`/`crop` are dropped like any other field the contract does not
+      // declare: a stale caller must not be able to make the child do work nobody promises.
+      return { op: 'capture' };
     case 'foreground':
       return { op: 'foreground' };
     case 'focus':
@@ -133,24 +124,6 @@ function decodeRequest(request) {
     default:
       return null;
   }
-}
-
-/**
- * The `capture.crop` rectangle, or `null` when it is not one. The bounds are the crop's own, in
- * device pixels (contracts §5): a non-negative integer origin and a positive integer size — not
- * `MIN_CAPTURE_WIDTH`'s floor, because a band-only crop is legitimately 631 wide by 47 tall. Whether
- * the rectangle fits the frame is **not** checkable here: the codec does not know the frame, so
- * `x + width <= frameWidth` and `y + height <= frameHeight` are the child's check. Nothing is
- * clamped: a nonsense rectangle is a caller bug, not something to guess at.
- */
-function decodeCrop(crop) {
-  if (!isObject(crop)) return null;
-  const { x, y, width, height } = crop;
-  if (!isInteger(x) || x < 0) return null;
-  if (!isInteger(y) || y < 0) return null;
-  if (!isInteger(width) || width < 1) return null;
-  if (!isInteger(height) || height < 1) return null;
-  return { x, y, width, height };
 }
 
 function decodeReply(reply) {

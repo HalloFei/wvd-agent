@@ -285,27 +285,22 @@ export interface PixelRect {
 }
 
 /** The value of a successful `capture` reply. The child captures on its own cadence and serves its
- *  newest frame; `ageMs` is the duration from capture start to reply on the child's clock. */
+ *  newest frame; the reply is **metadata only** — the pixels travel through the shared frame channel
+ *  (`src/engine/vision/frame-channel.ts`), and `seq` names the slot the reply describes. `ageMs` is
+ *  the duration from capture start to reply on the child's clock. */
 export interface EngineCapture {
-  readonly jpeg: string;   // base64, encoded in the child
-  /** The size of the JPEG returned, not of the window: the frame's client size for a plain capture,
-   *  and `crop.width`×`crop.height` for a cropped reply. */
+  /** The published frame's sequence in the channel: which slot this reply describes. */
+  readonly seq: number;
+  /** The frame's client size in device pixels — the window's, never a crop's or a downscale's. */
   readonly width: number;
   readonly height: number;
   readonly ageMs: number;  // capture start → reply, on the child's clock
-  /** The rectangle the child actually cropped, absent when it sent the whole frame. It is what lets
-   *  the World detect a child that ignored the request and answered with the native frame: a caller
-   *  that asked for a band must never parse a full frame as one. */
-  readonly crop?: PixelRect;
 }
 
 export type EngineRequest =
-  /** `maxWidth` asks for a downscaled JPEG (the escalation snapshot); absent means native size, which
-   *  is what perception needs. `crop` asks for one rectangle of the frame, copied before the encode:
-   *  a QTE sample is the bar's own rectangle, and cropping before the encode is what makes the sample
-   *  cheap enough to take three times a pass. `crop` and `maxWidth` together is malformed, because
-   *  they ask for different output sizes. */
-  | { op: 'capture'; maxWidth?: number; crop?: PixelRect }
+  /** Ask the child for its newest frame. The reply carries the frame's metadata; the pixels are read
+   *  from the channel. Cropping and downscaling are the World's own work, below the frame. */
+  | { op: 'capture' }
   | { op: 'foreground' }
   /** Restore and raise the game window, then report whether it holds the foreground. The child taps
    *  Alt first: Windows only lets the foreground process hand focus away (§4). */
@@ -322,9 +317,8 @@ export type EngineReply =
 // A successful `tap` or `key` reply's `value` is `{ inputMs: number }`: the duration from request
 // receipt to the `SendInput` completing, on the child's clock. `doubleTap` is one request.
 // Unsolicited child → World messages: an unregistered stop hotkey is
-// `{ kind:'engineProblem', detail:'stop-hotkey-unregistered' }`; a JPEG encoder that fell back to
-// `jpeg-js` is `detail:'native-encoder-unavailable'`, and a World-side decoder fallback reports the
-// same way locally with `detail:'native-decoder-unavailable'`.
+// `{ kind:'engineProblem', detail:'stop-hotkey-unregistered' }`. The capture host reports a child it
+// restarted, and a capture it gave up on, the same way (vision module).
 export type EngineEvent =
   | { kind: 'stopHotkey' }
   | { kind: 'engineProblem'; detail: string };

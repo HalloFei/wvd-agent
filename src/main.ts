@@ -43,6 +43,8 @@ import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
 import { connectEngine, startEngine, type EngineClient } from './engine/child.ts';
 import { writeFile } from 'node:fs/promises';
+import { openMapping } from './engine/vision/channel-mapping.ts';
+import { createChannel, layoutChannel, type FrameChannel } from './engine/vision/frame-channel.ts';
 import { captureJpeg, focusGame, sendInput, Win32Capture } from './engine/win32.ts';
 import { takeSnapshot } from './escalation/image.ts';
 import { ChestPerceiver } from './perception/chest.ts';
@@ -92,12 +94,62 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
   /** The package root: `tasks/` sits beside `src/`, and a relative `taskFile` resolves from here. */
   const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
+  /**
+   * The frame channel's fixed layout: the game's client area at 1920×1080 (contracts §0.5, §8). The
+   * child publishes raw BGRA into it and the World reads the newest slot; it is the frame's transport,
+   * so the size is a contract of the vision module, not a per-session guess.
+   */
+  const FRAME_CHANNEL = { width: 1920, height: 1080, slots: 2 } as const;
+
+  interface SessionChannel {
+    readonly name: string;
+    readonly bytes: number;
+    readonly channel: FrameChannel;
+    dispose(): void;
+  }
+
+  /** The one channel a session's child publishes into. Created with the child, disposed with it. */
+  let frameChannel: SessionChannel | null = null;
+  let channelSeq = 0;
+
+  const openFrameChannel = (): SessionChannel => {
+    const layout = layoutChannel(FRAME_CHANNEL);
+    // A per-session name: a region from a previous session is never reused with stale slots in it.
+    const name = `wvd-frame-${process.pid}-${++channelSeq}`;
+    const mapping = openMapping(name, layout.bytes);
+    try {
+      // createChannel writes the header the child reads (and refuses another version's region)
+      return {
+        name,
+        bytes: layout.bytes,
+        channel: createChannel(mapping.memory, layout),
+        dispose: () => mapping.dispose(),
+      };
+    } catch (error) {
+      mapping.dispose();
+      throw error;
+    }
+  };
+
+  const channelOf = (): SessionChannel => {
+    frameChannel ??= openFrameChannel();
+    return frameChannel;
+  };
+
   /** The child, spawned on first use and re-spawned if a session closed it. */
   const connect = (): EngineClient => {
-    engine ??= connectEngine(
-      startEngine({ title: cfg.gameWindowTitle, hotkey: cfg.stopHotkey, jpegQuality: cfg.jpegQuality }),
-      { timeoutMs: cfg.engineTimeoutMs },
-    );
+    if (engine === null) {
+      // The host creates the region before the child opens it: the child's channel is the session's.
+      const channel = channelOf();
+      engine = connectEngine(
+        startEngine({
+          title: cfg.gameWindowTitle,
+          hotkey: cfg.stopHotkey,
+          channel: { name: channel.name, bytes: channel.bytes },
+        }),
+        { timeoutMs: cfg.engineTimeoutMs },
+      );
+    }
     return engine;
   };
 
@@ -206,21 +258,20 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     world?.note(focused
       ? 'wvd: the game is foreground'
       : 'wvd: the game did not come to the foreground; each press will ask again before giving up');
+    // The session's frame source: the child's metadata reply plus the published pixels, read from
+    // the channel this session opened. The snapshot path encodes its JPEG here, in the World.
+    const sessionChannel = channelOf();
+    const source = new Win32Capture(client, sessionChannel.channel);
     const session: WvdSession = {
-      source: new Win32Capture(client, {
-        // A degraded decode is the child's report reaching the loop, not a silent slowdown (R23).
-        onProblem: (event) => {
-          void world?.onEngineEvent(event);
-        },
-      }),
+      source,
       perceiver,
       actuator,
-      // The escalation's second capture: the child's own JPEG, downscaled on request (contracts §5).
-      // A failure is null, not a throw: the question still goes out without an image.
+      // The escalation's snapshot: the newest frame, encoded in the World (contracts §5). A failure
+      // is null, not a throw: the question still goes out without an image.
       snapshot: {
         captureJpeg: async (maxWidth?: number) => {
           try {
-            return await captureJpeg(client, maxWidth);
+            return await captureJpeg(source, sessionChannel.channel, cfg.jpegQuality);
           } catch {
             return null;
           }
@@ -231,6 +282,8 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
         live = null;
         engine?.close();
         engine = null;
+        frameChannel?.dispose();
+        frameChannel = null;
       },
     };
     live = session;

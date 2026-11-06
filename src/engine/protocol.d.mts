@@ -31,7 +31,7 @@ export type WireMessage =
 /** Three ticks at the default 100 ms tick: a frame older than this is refused (ruling R11). */
 export declare const FRAME_MAX_AGE_MS: number;
 
-/** The bounds on `capture.maxWidth` (contracts §5); a request outside them is malformed. */
+/** The bounds on the World-side snapshot downscale (contracts §5); a value outside them is refused. */
 export declare const MIN_CAPTURE_WIDTH: number;
 export declare const MAX_CAPTURE_WIDTH: number;
 

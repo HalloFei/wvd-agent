@@ -8,7 +8,7 @@ const noFrame = (id: number): EngineReply => ({ id, ok: false, error: 'timeout',
 const frame = (id: number): EngineReply => ({
   id,
   ok: true,
-  value: { jpeg: '', width: 192, height: 108, ageMs: 1 },
+  value: { seq: 3, width: 192, height: 108, ageMs: 1 },
 });
 
 /**

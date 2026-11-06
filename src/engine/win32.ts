@@ -1,8 +1,9 @@
 /**
  * The World side of Win32 (contracts §1, §4, §5): capture and input realized through the engine
- * child. Capture, input and the stop hotkey happen in that process; JPEG **decoding** happens here
- * through GDI+ (R19), because `toRgba()` runs on the World thread and jpeg-js needs 179–359 ms for a
- * 2 MP frame — the half-tick budget is 50 ms.
+ * child. Capture, input and the stop hotkey happen in that process; the frame's **pixels** arrive
+ * through the shared frame channel (the child publishes raw BGRA), and the World reads the newest
+ * slot as a copy — there is no decode at all in the loop. JPEG is encoded here, in the World, only
+ * for the escalation snapshot: slow, rare, and never on the tick path (the vision module, 2026-11-07).
  */
 import jpeg from 'jpeg-js';
 import type {
@@ -16,15 +17,14 @@ import type {
   PixelRect,
   RgbaImage,
 } from '../contracts.ts';
-import { decodeJpeg } from './gdiplus.mjs';
+import { cropBgra } from './crop.mjs';
 import {
   isStaleFrame,
-  MAX_CAPTURE_WIDTH,
-  MIN_CAPTURE_WIDTH,
   type EngineCapture,
   type EngineForeground,
   type EngineInputAck,
 } from './protocol.ts';
+import { latest, type FrameChannel, type ServedFrame } from './vision/frame-channel.ts';
 
 /** The part of the engine the World needs; `EngineClient` (./child.ts) satisfies it, tests fake it. */
 export interface EngineRequester {
@@ -121,16 +121,6 @@ export async function sendInput(
     : { ok: true };
 }
 
-/** Decodes the base64 JPEG a capture reply carries into RGBA. */
-export type JpegDecoder = (bytes: Uint8Array) => RgbaImage | Promise<RgbaImage>;
-
-export interface Win32CaptureOptions {
-  /** Defaults to native GDI+ (`decodeJpeg`); tests inject a fake. */
-  decode?: JpegDecoder;
-  /** A degraded decode path is reported here as `engineProblem` (R23), wired to the World. */
-  onProblem?: (event: EngineEvent) => void;
-}
-
 /**
  * A capture that produced no frame. `FrameSource.capture` has no failure channel (contracts §1),
  * so a source rejects and the loop turns that into a stop or an escalate (§0.6).
@@ -142,122 +132,121 @@ export class EngineCaptureError extends Error {
   }
 }
 
-/** `FrameSource` over the engine child: the child ships JPEG bytes, never raw BGRA. */
+/**
+ * `FrameSource` over the engine child and the frame channel (contracts §1, §5).
+ *
+ * `capture()` asks the child for its newest frame, checks the reply's age, and reads the published
+ * slot: the pixels are a copy the channel's seqlock already made (2 ms for 1920×1080), and
+ * `toRgba()` only swaps BGRA to RGBA. There is no decoder here any more — the native JPEG decode
+ * that used to cost 10–20 ms a frame, and its jpeg-js fallback, are gone with the encoder.
+ *
+ * `captureBand(rect)` serves the same frame and crops the rectangle **locally**: the QTE sampler asks
+ * for the bar's own rectangle, and a rectangle of a copied slot costs a row copy instead of a native
+ * decode. `atMs` is the reply instant minus the reply's `ageMs` — the child reports durations, never
+ * timestamps (§0.4) — so a band and a full frame are stamped by the same rule.
+ */
 export class Win32Capture implements FrameSource {
-  private readonly decode: JpegDecoder;
-  private readonly onProblem: (event: EngineEvent) => void;
-  private nativeDecodeBroken = false;
-
-  constructor(private readonly engine: EngineRequester, options: Win32CaptureOptions = {}) {
-    this.decode = options.decode ?? ((bytes) => decodeJpeg(bytes));
-    this.onProblem = options.onProblem
-      ?? ((event) => console.error(`[wvd] ${event.kind}${event.kind === 'engineProblem' ? `: ${event.detail}` : ''}`));
-  }
+  constructor(
+    private readonly engine: EngineRequester,
+    private readonly channel: FrameChannel,
+  ) {}
 
   async capture(): Promise<Frame> {
-    return this.frameFrom(await this.engine.request({ op: 'capture' }));
-  }
-
-  /**
-   * The next frame cropped to `rect` (contracts §1). The request is refused here, before the wire,
-   * when `rect` is not a legal crop: the codec would drop the line, the child would send no reply,
-   * and the World would wait out `engineTimeoutMs` without ever naming the field — the same refusal
-   * `captureJpeg` makes for `maxWidth`. A reply that is not the band asked for is refused by
-   * `frameFrom`, because a full frame parsed as a band is silently wrong rather than merely missing.
-   */
-  async captureBand(rect: PixelRect): Promise<Frame> {
-    if (!isCropRect(rect)) throw new EngineCaptureError('rejected', 'crop-out-of-range');
-    return this.frameFrom(await this.engine.request({ op: 'capture', crop: rect }), rect);
-  }
-
-  /**
-   * The one body `capture()` and `captureBand()` share — the `atMs` stamp, the stale-frame refusal
-   * and the lazy decode — so the two can never drift apart. With a `band` given, the reply must
-   * prove it is that band: no echoed `crop` at all is an older child that ignored the request and
-   * sent the native frame.
-   */
-  private frameFrom(reply: EngineReply, band?: PixelRect): Frame {
-    // stamped at the reply, before the base64 decode: decoding is work after the observation, and
-    // charging it to the frame's age would make every frame older than it is
     const receivedAt = performance.now();
-    if (!reply.ok) throw new EngineCaptureError(reply.error, reply.detail);
-    const value = captureValue(reply.value);
-    if (band !== undefined && !isEchoedBand(value, band)) {
-      throw new EngineCaptureError('unavailable', 'malformed-capture');
-    }
-    const { jpeg: base64, width, height, ageMs } = value;
-    if (isStaleFrame(ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
-    // the child reports a duration, never a timestamp (§0.4): the World stamps the frame from it
-    const atMs = receivedAt - ageMs;
-    const bytes = Uint8Array.from(Buffer.from(base64, 'base64'));
-    let decoded: Promise<RgbaImage> | undefined;
+    const value = captureOf(await this.engine.request({ op: 'capture' }));
+    if (isStaleFrame(value.ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
+    const served = this.serve();
+    let image: RgbaImage | undefined;
     return {
-      atMs,
-      width,
-      height,
+      atMs: receivedAt - value.ageMs,
+      width: value.width,
+      height: value.height,
       // toRgba() is once per frame in practice; the contract allows two calls and the second is free
-      toRgba: (): Promise<RgbaImage> => {
-        decoded ??= this.decodeFrame(bytes);
-        return decoded;
+      toRgba: async (): Promise<RgbaImage> => {
+        image ??= toRgbaImage(served.pixels, served.width, served.height);
+        return image;
       },
     };
   }
 
-  private async decodeFrame(bytes: Uint8Array): Promise<RgbaImage> {
-    if (!this.nativeDecodeBroken) {
-      try {
-        return await this.decode(bytes);
-      } catch {
-        this.nativeDecodeBroken = true;
-        this.onProblem({ kind: 'engineProblem', detail: 'native-decoder-unavailable' });
-      }
+  /**
+   * The next frame cropped to `rect` (contracts §1). The rectangle is refused here, before the wire,
+   * when it is not a legal crop, and again when it does not fit the frame: a caller's bad rectangle
+   * must not become a frame the QTE parser reads at the wrong columns.
+   */
+  async captureBand(rect: PixelRect): Promise<Frame> {
+    if (!isCropRect(rect)) throw new EngineCaptureError('rejected', 'crop-out-of-range');
+    const receivedAt = performance.now();
+    const value = captureOf(await this.engine.request({ op: 'capture' }));
+    if (isStaleFrame(value.ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
+    const served = this.serve();
+    let cropped;
+    try {
+      cropped = cropBgra(served.pixels, served.width, served.height, rect);
+    } catch {
+      throw new EngineCaptureError('rejected', 'crop-out-of-frame');
     }
-    const image = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
-    return { data: image.data, width: image.width, height: image.height };
+    let image: RgbaImage | undefined;
+    return {
+      atMs: receivedAt - value.ageMs,
+      width: cropped.width,
+      height: cropped.height,
+      toRgba: async (): Promise<RgbaImage> => {
+        image ??= toRgbaImage(cropped.pixels, cropped.width, cropped.height);
+        return image;
+      },
+    };
+  }
+
+  /** The newest published frame, or the stale-frame refusal the loop already knows how to take. */
+  private serve(): ServedFrame {
+    const served = latest(this.channel, { nowMs: Date.now() });
+    if (served === null) throw new EngineCaptureError('timeout', 'stale-frame');
+    return served;
   }
 }
 
-/** A JPEG exactly as the child encoded it, with the size it was encoded at. */
+/** A JPEG exactly as the World encoded it, with the size it was encoded at. */
 export interface CapturedJpeg {
   readonly bytes: Uint8Array;
   readonly width: number;
   readonly height: number;
 }
 
+/** The config's own default snapshot quality; `main.ts` passes the live `jpegQuality`. */
+const DEFAULT_SNAPSHOT_QUALITY = 75;
+
 /**
- * The escalation snapshot (contracts §5): the child's newest frame, **re-encoded by nobody**.
+ * The escalation snapshot (contracts §5): the newest frame, encoded **in the World**.
  *
- * The World asks for a second capture rather than re-encoding `Frame.toRgba()` — that would spend
- * ~100 ms undoing the encode the child already paid for, and lose a second generation of JPEG. The
- * request carries `maxWidth` (`escalationImageWidth`), and the child box-filters the next frame
- * *before* encoding it: the bytes arrive at or below that width and the returned `width`/`height`
- * describe the JPEG actually returned, not the window. A request at or above the native width comes
- * back native — the snapshot is never upscaled — and the perception path never scales at all.
+ * This is the only JPEG on the machine now, and it exists because the bytes leave it: the model reads
+ * the image. The loop never pays for it — the encode is 174 ms for a full 1920×1080 frame and the
+ * escalation is a rare, on-demand path (the design measured it; the child's native encoder is gone
+ * with the crash it caused). `source.capture()` proves a fresh frame exists and refuses a stale one
+ * by the loop's own rule; the pixels then come from the channel's newest slot, already a copy.
  *
  * A failure is the same `EngineCaptureError` the plain capture throws: the caller decides whether a
  * question without an image is still worth asking (it is — the text carries the perception line).
- * An out-of-range `maxWidth` is refused here, before the wire: the codec would drop the line as
- * malformed (its convention for `tap`/`key`), the child would send no reply, and the World would
- * wait out `engineTimeoutMs` without ever naming the field.
  */
-export async function captureJpeg(engine: EngineRequester, maxWidth?: number): Promise<CapturedJpeg> {
-  if (
-    maxWidth !== undefined
-    && (!Number.isInteger(maxWidth) || maxWidth < MIN_CAPTURE_WIDTH || maxWidth > MAX_CAPTURE_WIDTH)
-  ) {
-    throw new EngineCaptureError('rejected', 'maxWidth-out-of-range');
-  }
-  const reply = await engine.request(maxWidth === undefined ? { op: 'capture' } : { op: 'capture', maxWidth });
-  if (!reply.ok) throw new EngineCaptureError(reply.error, reply.detail);
-  const { jpeg: base64, width, height, ageMs } = captureValue(reply.value);
-  // the same freshness rule as a perception capture: an old frame that looks new is worse than none
-  if (isStaleFrame(ageMs)) throw new EngineCaptureError('timeout', 'stale-frame');
-  return { bytes: Uint8Array.from(Buffer.from(base64, 'base64')), width, height };
+export async function captureJpeg(
+  source: FrameSource,
+  channel: FrameChannel,
+  quality: number = DEFAULT_SNAPSHOT_QUALITY,
+): Promise<CapturedJpeg> {
+  // A frame stale by the loop's rule is stale for the snapshot too: ask through the source.
+  await source.capture();
+  const served = latest(channel, { nowMs: Date.now() });
+  if (served === null) throw new EngineCaptureError('timeout', 'stale-frame');
+  const encoded = jpeg.encode(
+    { data: toRgba(served.pixels), width: served.width, height: served.height },
+    quality,
+  );
+  return { bytes: Uint8Array.from(encoded.data), width: encoded.width, height: encoded.height };
 }
 
-/** Whether a value is a legal `capture.crop`: four integers, a non-negative origin and a positive
- *  size — exactly what the wire codec accepts, so this is the check that keeps a bad rectangle from
- *  becoming a dropped line nobody answers. */
+/** Whether a value is a legal `captureBand` rectangle: four integers, a non-negative origin and a
+ *  positive size — the same check `cropBgra` makes, made before the wire so a bad rectangle cannot
+ *  become a child request the codec drops. */
 function isCropRect(value: unknown): value is PixelRect {
   if (typeof value !== 'object' || value === null) return false;
   const { x, y, width, height } = value as Record<string, unknown>;
@@ -267,34 +256,35 @@ function isCropRect(value: unknown): value is PixelRect {
     && typeof height === 'number' && Number.isInteger(height) && height >= 1;
 }
 
-/**
- * Whether a reply is exactly the band that was asked for: the echoed `crop` present and equal field
- * for field, with the reply's own `width`/`height` equal to it too. Anything else — no `crop` (an
- * older child that ignored the request and sent the native frame), a different rectangle, mismatched
- * dimensions — must never be parsed as a band: the crop's coordinates are the whole point, and a
- * full frame read as one is silently wrong rather than merely late.
- */
-function isEchoedBand(reply: EngineCapture, rect: PixelRect): boolean {
-  const crop: unknown = reply.crop;
-  if (typeof crop !== 'object' || crop === null) return false;
-  const echoed = crop as Partial<PixelRect>;
-  return echoed.x === rect.x && echoed.y === rect.y
-    && echoed.width === rect.width && echoed.height === rect.height
-    && reply.width === rect.width && reply.height === rect.height;
-}
-
-/** The capture value a well-behaved child sends; anything else is the protocol lying. */
-function captureValue(value: unknown): EngineCapture {
+/** The capture metadata a well-behaved child sends; anything else is the protocol lying. */
+function captureOf(reply: EngineReply): EngineCapture {
+  if (!reply.ok) throw new EngineCaptureError(reply.error, reply.detail);
+  const value: unknown = reply.value;
   if (typeof value !== 'object' || value === null) throw new EngineCaptureError('unavailable', 'malformed-capture');
-  const { jpeg: base64, width, height, ageMs, crop } = value as Partial<EngineCapture>;
+  const { seq, width, height, ageMs } = value as Partial<EngineCapture>;
   if (
-    typeof base64 !== 'string'
+    typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1
     || typeof width !== 'number' || !Number.isInteger(width) || width <= 0
     || typeof height !== 'number' || !Number.isInteger(height) || height <= 0
     || typeof ageMs !== 'number' || !Number.isFinite(ageMs) || ageMs < 0
   ) {
     throw new EngineCaptureError('unavailable', 'malformed-capture');
   }
-  // the echoed crop is judged only by `captureBand`; a plain capture ignores it, as it always has
-  return { jpeg: base64, width, height, ageMs, crop };
+  return { seq, width, height, ageMs };
+}
+
+/** BGRA (the capture's order) to RGBA (the contract's), in one 32-bit pass over a fresh buffer. */
+function toRgba(bgra: Uint8Array): Uint8Array {
+  const out = new Uint8Array(bgra.length);
+  out.set(bgra);
+  const pixels = new Uint32Array(out.buffer, out.byteOffset, out.length >>> 2);
+  for (let index = 0; index < pixels.length; index += 1) {
+    const value = pixels[index]!;
+    pixels[index] = (value & 0xff00ff00) | ((value & 0x00ff0000) >>> 16) | ((value & 0x000000ff) << 16);
+  }
+  return out;
+}
+
+function toRgbaImage(bgra: Uint8Array, width: number, height: number): RgbaImage {
+  return { data: toRgba(bgra), width, height };
 }

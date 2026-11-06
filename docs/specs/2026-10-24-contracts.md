@@ -20,7 +20,10 @@ These hold for every module and are what makes a realization replaceable:
 3. **Config is mapped at the composition root.** The World reads `worlds.wvd` and passes each module
    its own typed options. A module never sees a config key it does not own.
 4. **One clock.** Every `atMs` is `performance.now()` in the World process. The child reports
-   durations, never timestamps.
+   durations, never timestamps. The frame channel is the one exception: the child and the World are
+   separate processes with no shared `performance.now()` origin, so the channel's `capturedAtMs` and
+   heartbeat are `Date.now()` epoch milliseconds (§5, the frame channel). The World still stamps
+   every `atMs` from the reply's `ageMs`.
 5. **Dimensions come from the frame.** No module hardcodes 1920 or 1080; a parser reads
    `frame.width` / `frame.height`, and treats other sizes as unsupported rather than mis-scaling.
 6. **Failure is a value.** No module throws across a boundary. A thrown error inside a module is
@@ -386,27 +389,22 @@ export interface PixelRect {
 }
 
 /** The value of a successful `capture` reply. The child captures on its own cadence and serves its
- *  newest frame; `ageMs` is the duration from capture start to reply on the child's clock. */
+ *  newest frame; the reply is **metadata only** — the pixels travel through the shared frame channel
+ *  (`src/engine/vision/frame-channel.ts`), and `seq` names the slot the reply describes. `ageMs` is
+ *  the duration from capture start to reply on the child's clock. */
 export interface EngineCapture {
-  readonly jpeg: string;   // base64, encoded in the child
-  /** The size of the JPEG returned, not of the window: the frame's client size for a plain capture,
-   *  and `crop.width`×`crop.height` for a cropped reply. */
+  /** The published frame's sequence in the channel: which slot this reply describes. */
+  readonly seq: number;
+  /** The frame's client size in device pixels — the window's, never a crop's or a downscale's. */
   readonly width: number;
   readonly height: number;
   readonly ageMs: number;  // capture start → reply, on the child's clock
-  /** The rectangle the child actually cropped, absent when it sent the whole frame. It is what lets
-   *  the World detect a child that ignored the request and answered with the native frame: a caller
-   *  that asked for a band must never parse a full frame as one. */
-  readonly crop?: PixelRect;
 }
 
 export type EngineRequest =
-  /** `maxWidth` asks for a downscaled JPEG (the escalation snapshot); absent means native size, which
-   *  is what perception needs. `crop` asks for one rectangle of the frame, copied before the encode:
-   *  a QTE sample is the bar's own rectangle, and cropping before the encode is what makes the sample
-   *  cheap enough to take three times a pass. `crop` and `maxWidth` together is malformed, because
-   *  they ask for different output sizes. */
-  | { op: 'capture'; maxWidth?: number; crop?: PixelRect }
+  /** Ask the child for its newest frame. The reply carries the frame's metadata; the pixels are read
+   *  from the channel. Cropping and downscaling are the World's own work, below the frame. */
+  | { op: 'capture' }
   | { op: 'foreground' }
   /** Restore and raise the game window, then report whether it holds the foreground. The child taps
    *  Alt first: Windows only lets the foreground process hand focus away (§4). */
@@ -436,14 +434,21 @@ because a stale frame that looks fresh is how a QTE tap lands in the hazard gap.
 duration from capture start to reply on the child's clock; the World stamps
 `atMs = performance.now() - ageMs`, so §0.4 holds: the child reports durations, never timestamps.
 
+**The frame channel.** The pixels do not travel on the pipe. A child started with `--channel=<name>`
+opens the named shared-memory region the World created (`--channel-bytes=<n>` is its size) and
+publishes each captured BGRA frame into it, with the versioned layout and the seqlock of
+`src/engine/vision/frame-channel.ts`; the World reads the newest slot. The reply's `seq` names the
+published frame, `width`/`height` are the window's, and a slot older than 300 ms is refused by the
+reader as well as by the child's reply. A child without `--channel` captures nothing: the region is
+the frame's transport, not an optimisation.
+
 Input is not free: the child answers `tap`, `key` and `drag` with `{ inputMs }`, the duration from
 request receipt to the `SendInput` call completing, so a planner adds a measured leg instead of
 assuming one. `doubleTap` is one request, so its two clicks are timed inside the child.
 
 The child also sends events unsolicited: `stopHotkey` when the global stop key is pressed, and
 `engineProblem` with a `detail` when a capability is not available. An unregistered stop hotkey is
-`detail: 'stop-hotkey-unregistered'`; a slow encoder fallback is `detail: 'native-encoder-unavailable'`.
-A session must not run believing the stop key works, and must not time a QTE on a 5 fps frame path.
+`detail: 'stop-hotkey-unregistered'`. A session must not run believing the stop key works.
 
 **Teardown.** Closing the pipe ends the child gracefully — it finishes the request in flight, calls
 `releaseHeld()` and exits — and the parent kills it only after `TEARDOWN_GRACE_MS` (1200 ms). On

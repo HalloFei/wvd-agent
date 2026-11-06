@@ -5,26 +5,25 @@
  * start under both a plain `node` and `ELECTRON_RUN_AS_NODE=1 electron`.
  *
  * This file is the protocol thread only: it speaks contracts §5 over stdin/stdout, pumps the global
- * stop hotkey, and sends input. Rendering runs on two workers — a capture thread (PrintWindow and
- * the client-area DIB) feeding a JPEG encoder thread over a MessagePort (R20a) — so a tap never
- * queues behind a render. The newest encoded frame is all this thread keeps; `capture` answers from
- * it with `ageMs`, and a frame older than three ticks is `timeout` (R11).
+ * stop hotkey, and sends input. Rendering runs on one worker (PrintWindow and the client-area DIB)
+ * that publishes each frame into the shared frame channel named by `--channel`, so a tap never
+ * queues behind a render. The protocol thread keeps the newest frame's **metadata** — `{ seq,
+ * capturedAtMs, width, height }` — and `capture` answers with it plus `ageMs`; the pixels never
+ * travel on the pipe, and there is no encoder in this process (the vision module, 2026-11-07).
  *
- * `capture { maxWidth }` is served differently: the encoder thread downscales the next frame before
- * encoding it and reports the size it actually encoded, so the perception path never pays for it and
- * the reply's `width`/`height` describe the JPEG returned rather than the window. `capture { crop }`
- * takes the same one-frame path to copy the caller's rectangle before the encode, so a QTE sample
- * decodes a band instead of a whole frame; unlike the scaling branch it never falls back to the
- * native frame, because a caller that asked for a band cannot parse a whole frame as one.
+ * A frame older than three ticks is `timeout` (R11), and a `capture` request wakes the render
+ * thread, which stops on its own after three idle ticks. The protocol thread touches the channel's
+ * heartbeat on a short timer so the supervisor can tell "idle" from "dead": the render loop stopping
+ * is not a dead child.
  *
  * Input is measured, not guessed: `tap`/`key` replies carry `{ inputMs }`, request receipt to the
- * final `SendInput` (R20b). A failed stop-hotkey registration and a JPEG fallback are `engineProblem`
- * events, never silent (R13, R23).
+ * final `SendInput` (R20b). A failed stop-hotkey registration is an `engineProblem` event, never
+ * silent (R13).
  */
-import { MessageChannel, Worker } from 'node:worker_threads';
+import { Worker } from 'node:worker_threads';
 import { inputAcknowledgement } from './gestures.mjs';
 import { decodeLine, encodeEvent, encodeReply, isStaleFrame, LineDecoder } from './protocol.mjs';
-import { createSnapshotRequests, SnapshotFailed } from './snapshot.mjs';
+import { openChannel } from './vision/channel.mjs';
 import * as win32 from './win32-native.mjs';
 
 /** A failure the child can name; anything else becomes `unavailable` with its message. */
@@ -45,7 +44,8 @@ function option(name, fallback) {
 
 const title = option('title', 'WizardryVariantsDaphne');
 const hotkey = option('hotkey', 'Ctrl+Alt+W');
-const quality = Math.min(95, Math.max(30, Number(option('quality', '75')) || 75));
+const channelName = option('channel', '');
+const channelBytes = Number(option('channel-bytes', '0')) || 0;
 
 const log = (message) => process.stderr.write(`[wvd-engine] ${message}\n`);
 const write = (line) => {
@@ -57,14 +57,8 @@ const write = (line) => {
 };
 
 let stopping = false;
-let latest = null; // { jpeg: Buffer, width, height, capturedAt }
-
-/**
- * How long one `capture { maxWidth }` or `capture { crop }` may wait for the encoder's frame. The
- * World's own request timeout (5 s) is longer, so a render that stops delivering is this child's
- * named `timeout` rather than a reply that never comes.
- */
-const SNAPSHOT_WAIT_MS = 1000;
+/** The newest published frame's metadata: `{ seq, capturedAtMs, width, height }`. No pixels. */
+let latest = null;
 
 /**
  * How long the child looks again after `SetForegroundWindow` did not take on the first check. The
@@ -73,7 +67,14 @@ const SNAPSHOT_WAIT_MS = 1000;
  */
 const FOCUS_RECHECK_MS = 120;
 
-// The first capture request ever waits for the render threads to produce a frame (bounded), so
+/**
+ * How often the protocol thread proves it is alive in the channel. `capturedAtMs` doubles as the
+ * heartbeat on every publish; the render thread stops when nothing demands frames, so an idle child
+ * must still move the clock or the World's supervisor would restart a healthy process.
+ */
+const HEARTBEAT_MS = 250;
+
+// The first capture request ever waits for the render thread to produce a frame (bounded), so
 // startup is not a spurious `timeout`. The timer is cleared when the frame wins, and later requests
 // never wait: a render-hung child must not charge 500 ms to every serialized request.
 let firstFrameSeen = false;
@@ -88,35 +89,30 @@ const warmup = new Promise((resolve) => {
 });
 let firstCaptureRequested = false;
 
-// Two render threads, connected to each other: the capture worker sends pixels on this channel and
-// the encoder worker returns the spent buffers on it. Only JPEGs reach this thread.
-const channel = new MessageChannel();
-const captureWorker = new Worker(new URL('./capture-worker.mjs', import.meta.url), {
-  workerData: { title, port: channel.port1 },
-  transferList: [channel.port1],
-});
-const encoderWorker = new Worker(new URL('./jpeg-worker.mjs', import.meta.url), {
-  // GDI+ unless the run asks for the JS encoder (operator, 2026-11-07: jpeg-js as the default broke the
-  // one-frame variant path in the child and costs 174 ms a full frame at q75 — see jpeg-worker.mjs).
-  workerData: { quality, port: channel.port2, useJpegJs: process.env.WVD_JPEG_JS_ENCODER === '1' },
-  transferList: [channel.port2],
-});
+// The protocol thread's own handle on the channel: it writes the heartbeat and nothing else. The
+// writer that publishes pixels is the render worker's handle (each thread opens the region itself).
+let channel = null;
+if (channelName && channelBytes > 0) {
+  try {
+    channel = openChannel(channelName, channelBytes);
+  } catch (error) {
+    log(`channel unusable: ${error?.message ?? error}`);
+  }
+}
 
-/** The waiters for one-frame variants; the encoder's snapshot replies settle them by id. */
-const snapshots = createSnapshotRequests({
-  send: (message) => encoderWorker.postMessage(message),
-  timeoutMs: SNAPSHOT_WAIT_MS,
+const captureWorker = new Worker(new URL('./capture-worker.mjs', import.meta.url), {
+  workerData: { title, channelName, channelBytes },
 });
 
 function onWorkerMessage(message) {
   if (!message) return;
   switch (message.kind) {
-    case 'frame':
+    case 'published':
       latest = {
-        jpeg: Buffer.from(message.jpeg),
+        seq: message.seq,
+        capturedAtMs: message.capturedAtMs,
         width: message.width,
         height: message.height,
-        capturedAt: message.capturedAt,
       };
       if (!firstFrameSeen) {
         firstFrameSeen = true;
@@ -126,36 +122,26 @@ function onWorkerMessage(message) {
     case 'problem':
       write(encodeEvent({ kind: 'engineProblem', detail: message.detail }));
       return;
-    case 'snapshot':
-      // the worker's Buffer arrives as a Uint8Array after the structured clone; the reply needs a Buffer
-      snapshots.settle({ ...message, jpeg: Buffer.from(message.jpeg) });
-      return;
-    case 'snapshot-problem':
-      snapshots.fail(message);
-      return;
     case 'log':
       log(message.message);
       return;
     case 'ready':
-      log(`worker ${message.role} ready (node=${message.node ?? process.version}${message.role === 'encoder' ? `, gdiplus=${message.gdiplus}` : ''})`);
+      log(`worker ${message.role} ready (node=${message.node ?? process.version})`);
       return;
     default:
   }
 }
 
 captureWorker.on('message', onWorkerMessage);
-encoderWorker.on('message', onWorkerMessage);
-for (const [name, worker] of [['capture', captureWorker], ['encoder', encoderWorker]]) {
-  worker.on('error', (error) => {
-    log(`${name} worker failed: ${error?.stack ?? error}`);
-    shutdown(1);
-  });
-  worker.on('exit', (code) => {
-    if (stopping) return;
-    log(`${name} worker exited (${code})`);
-    shutdown(1);
-  });
-}
+captureWorker.on('error', (error) => {
+  log(`capture worker failed: ${error?.stack ?? error}`);
+  shutdown(1);
+});
+captureWorker.on('exit', (code) => {
+  if (stopping) return;
+  log(`capture worker exited (${code})`);
+  shutdown(1);
+});
 
 // A hotkey that cannot be registered must not take the engine down with it, but the World must know
 // the emergency stop does not exist (R13): it reports `engineProblem` and Task 10 stops the session.
@@ -169,7 +155,7 @@ if (hotkey) {
   }
 }
 
-log(`ready node=${process.version} title="${title}" hotkey=${hotkeyState} quality=${quality}`);
+log(`ready node=${process.version} title="${title}" hotkey=${hotkeyState} channel=${channel === null ? 'none' : channelName}`);
 
 // ---------------------------------------------------------------------------------------------
 // Protocol loop
@@ -204,7 +190,7 @@ async function dispatch(request, receivedAt) {
       return { foreground: win32.isForeground(hwnd) };
     }
     case 'capture': {
-      // demand wakes the render threads; the reply still comes from the newest frame
+      // demand wakes the render thread; the reply still comes from the newest published frame
       captureWorker.postMessage({ op: 'demand' });
       if (!win32.findWindow(title)) throw new EngineFailure('unavailable', 'window-not-found');
       if (!latest && !firstCaptureRequested) {
@@ -212,41 +198,11 @@ async function dispatch(request, receivedAt) {
         await warmup;
       }
       if (!latest) throw new EngineFailure('timeout', 'no-frame');
-      let frame = latest;
-      if (request.crop !== undefined) {
-        // Only this thread knows the frame's size, so the fit is checked here: a rectangle that
-        // reaches past the frame is refused rather than clamped into a smaller one nobody asked for.
-        const { x, y, width, height } = request.crop;
-        if (x + width > latest.width || y + height > latest.height) {
-          throw new EngineFailure('rejected', 'crop-out-of-frame');
-        }
-        try {
-          frame = await snapshots.requestVariant({ crop: request.crop });
-        } catch (error) {
-          // A crop has no fallback. The maxWidth branch below may send the native frame it already
-          // holds, because a full frame still parses as one; a caller that asked for a band cannot
-          // parse a full frame as a band, so a plausible wrong frame is worse than a refusal.
-          if (error instanceof SnapshotFailed) throw new EngineFailure('rejected', error.detail);
-          throw new EngineFailure('timeout', 'snapshot-timeout');
-        }
-      } else if (request.maxWidth !== undefined && request.maxWidth < latest.width) {
-        // a request at or above the native width is already satisfied by the newest frame; only a
-        // genuinely smaller snapshot asks the encoder to scale (the perception path never does)
-        try {
-          frame = await snapshots.request(request.maxWidth);
-        } catch (error) {
-          // the encoder could not scale it: the native frame already held is still worth sending,
-          // and its size describes its own JPEG. A timeout still fails: the render is not delivering.
-          if (!(error instanceof SnapshotFailed)) throw new EngineFailure('timeout', 'snapshot-timeout');
-          frame = latest;
-        }
-      }
-      const ageMs = performance.now() - frame.capturedAt;
+      // The channel's own clock is Date.now(): the child and the World do not share a monotonic one.
+      const ageMs = Date.now() - latest.capturedAtMs;
       if (isStaleFrame(ageMs)) throw new EngineFailure('timeout', 'stale-frame');
-      const value = { jpeg: frame.jpeg.toString('base64'), width: frame.width, height: frame.height, ageMs };
-      // only a reply the encoder actually cropped states the rectangle; the native frame has none
-      if (frame.crop !== undefined) value.crop = frame.crop;
-      return value;
+      // metadata only: the World reads the pixels from the slot `seq` names
+      return { seq: latest.seq, width: latest.width, height: latest.height, ageMs };
     }
     case 'tap': {
       await win32.tap(requireWindow(), request.x, request.y, request.count);
@@ -301,34 +257,48 @@ const pump = setInterval(() => {
 }, 16);
 pump.unref();
 
+// The supervisor's liveness signal: an idle render loop (no demand) must not look like a dead child.
+const heartbeat = channel === null ? null : setInterval(() => {
+  try {
+    channel.heartbeat(Date.now());
+  } catch (error) {
+    log(`heartbeat: ${error?.message ?? error}`);
+  }
+}, HEARTBEAT_MS);
+heartbeat?.unref?.();
+
 function shutdown(code) {
   if (stopping) return;
   stopping = true;
   clearInterval(pump);
-  // a capture waiting on a downscaled frame must not eat the teardown grace: settle it now
-  snapshots.cancelAll();
+  if (heartbeat !== null) clearInterval(heartbeat);
   try {
     // holdKey cancellation: a key or button still down is released before the process goes away
     win32.releaseHeld();
   } catch {
     // nothing is held, or the device is already gone
   }
-  for (const worker of [captureWorker, encoderWorker]) {
-    try {
-      worker.postMessage({ op: 'stop' });
-    } catch {
-      // worker already gone
-    }
-    try {
-      worker.terminate();
-    } catch {
-      // already gone
-    }
+  try {
+    captureWorker.postMessage({ op: 'stop' });
+  } catch {
+    // worker already gone
+  }
+  try {
+    captureWorker.terminate();
+  } catch {
+    // already gone
   }
   try {
     win32.unregisterStopHotkey();
   } catch {
     // the process is going away; the OS releases the hotkey with it
+  }
+  if (channel !== null) {
+    try {
+      channel.dispose();
+    } catch {
+      // the OS drops the view with the process
+    }
   }
   process.exitCode = code;
   process.stdin.pause();

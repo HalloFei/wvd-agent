@@ -1,15 +1,11 @@
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
-import jpeg from 'jpeg-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineEvent, EngineReply, EngineRequest } from '../src/contracts.ts';
 import { MAX_DRAG_MS, MAX_PRESS_HOLD_MS, TEARDOWN_GRACE_MS } from '../src/contracts.ts';
 import {
-  FRAME_MAX_AGE_MS,
   LineDecoder,
-  MAX_CAPTURE_WIDTH,
   MAX_DRAG_MS as PROTOCOL_MAX_DRAG_MS,
-  MIN_CAPTURE_WIDTH,
   decodeLine,
   encodeEvent,
   encodeReply,
@@ -17,7 +13,7 @@ import {
 } from '../src/engine/protocol.ts';
 import { connectEngine, startEngine } from '../src/engine/child.ts';
 import { parseHotkey } from '../src/engine/hotkey.mjs';
-import { captureJpeg, focusGame, sendInput, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
+import { focusGame, sendInput, type EngineRequester } from '../src/engine/win32.ts';
 
 /** An engine that records what it was asked and answers from a script. */
 class FakeEngine implements EngineRequester {
@@ -147,54 +143,22 @@ describe('engine protocol', () => {
     }
   });
 
-  it('keeps maxWidth on a capture request (contracts §5)', () => {
-    const line = encodeRequest(8, { op: 'capture', maxWidth: 1280 });
-    expect(decodeLine(line)).toEqual({ request: { id: 8, request: { op: 'capture', maxWidth: 1280 } } });
+  it('sends a capture request as its op alone: the pixels travel on the channel (contracts §5)', () => {
+    expect(decodeLine(encodeRequest(8, { op: 'capture' })))
+      .toEqual({ request: { id: 8, request: { op: 'capture' } } });
   });
 
-  it('drops a capture request whose maxWidth is not a sane integer, rather than guessing', () => {
-    for (const maxWidth of [1280.5, '1280', 0, -640, MIN_CAPTURE_WIDTH - 1, MAX_CAPTURE_WIDTH + 1, null, true]) {
-      const line = JSON.stringify({ id: 1, request: { op: 'capture', maxWidth } });
-      expect(decodeLine(line), `maxWidth ${JSON.stringify(maxWidth)}`).toBeNull();
+  it('drops the JPEG-era capture fields instead of carrying them to a child that cannot read them', () => {
+    // The crop and the downscale were the JPEG path's; they are World-side now, and a stale caller
+    // must not be able to make the child do something the contract no longer promises.
+    for (const legacy of [
+      { maxWidth: 1280 },
+      { crop: { x: 645, y: 36, width: 631, height: 699 } },
+      { maxWidth: 1280, crop: { x: 0, y: 0, width: 10, height: 10 } },
+    ]) {
+      expect(decodeLine(JSON.stringify({ id: 1, request: { op: 'capture', ...legacy } })), JSON.stringify(legacy))
+        .toEqual({ request: { id: 1, request: { op: 'capture' } } });
     }
-  });
-
-  it('accepts a capture request at both declared maxWidth bounds', () => {
-    for (const maxWidth of [MIN_CAPTURE_WIDTH, MAX_CAPTURE_WIDTH]) {
-      expect(decodeLine(JSON.stringify({ id: 2, request: { op: 'capture', maxWidth } })))
-        .toEqual({ request: { id: 2, request: { op: 'capture', maxWidth } } });
-    }
-  });
-
-  it('carries a crop rectangle on capture and drops a malformed one', () => {
-    const line = encodeRequest(9, { op: 'capture', crop: { x: 645, y: 36, width: 631, height: 699 } });
-    expect(decodeLine(line)).toEqual({
-      request: { id: 9, request: { op: 'capture', crop: { x: 645, y: 36, width: 631, height: 699 } } },
-    });
-  });
-
-  it.each([
-    ['a missing field', { x: 0, y: 0, width: 10 }],
-    ['a fractional value', { x: 0, y: 0, width: 10.5, height: 10 }],
-    ['a negative origin', { x: -1, y: 0, width: 10, height: 10 }],
-    ['a zero size', { x: 0, y: 0, width: 0, height: 10 }],
-    ['a non-object', 42],
-  ])('refuses a crop with %s', (_label, crop) => {
-    expect(decodeLine(JSON.stringify({ id: 3, request: { op: 'capture', crop } }))).toBeNull();
-  });
-
-  it('accepts a band-only crop well under the maxWidth floor, since a crop has bounds of its own', () => {
-    const crop = { x: 645, y: 36, width: 10, height: 47 };
-    expect(decodeLine(JSON.stringify({ id: 5, request: { op: 'capture', crop } })))
-      .toEqual({ request: { id: 5, request: { op: 'capture', crop } } });
-  });
-
-  it('drops a capture that asks for both a crop and a maxWidth, since they size the output differently', () => {
-    const line = JSON.stringify({
-      id: 4,
-      request: { op: 'capture', maxWidth: 1280, crop: { x: 0, y: 0, width: 10, height: 10 } },
-    });
-    expect(decodeLine(line)).toBeNull();
   });
 
   it('splits a byte stream into lines across chunk boundaries', () => {
@@ -206,39 +170,6 @@ describe('engine protocol', () => {
     expect(decoder.push(wire.slice(cut)).map((line) => decodeLine(line))).toEqual([
       { request: { id: 1, request: { op: 'capture' } } },
       { request: { id: 2, request: { op: 'foreground' } } },
-    ]);
-  });
-});
-
-describe('escalation snapshot width', () => {
-  const CAPTURE = { jpeg: 'AA==', width: 2, height: 1, ageMs: 0 } as const;
-
-  it('rejects an out-of-range maxWidth before the wire, naming the field', async () => {
-    const engine = new FakeEngine({ id: 1, ok: true, value: CAPTURE });
-
-    for (const maxWidth of [MIN_CAPTURE_WIDTH - 1, MAX_CAPTURE_WIDTH + 1, 0, -640, 1280.5, Number.NaN]) {
-      await expect(captureJpeg(engine, maxWidth), String(maxWidth)).rejects.toMatchObject({
-        name: 'EngineCaptureError',
-        reason: 'rejected',
-        detail: 'maxWidth-out-of-range',
-      });
-    }
-    // a bad value never reaches the child, where the codec would drop the line and the reply would
-    // never come: the World would wait out engineTimeoutMs and never learn why
-    expect(engine.seen).toEqual([]);
-  });
-
-  it('sends the bounds and the absent/native request unchanged', async () => {
-    const engine = new FakeEngine({ id: 1, ok: true, value: CAPTURE });
-
-    await captureJpeg(engine, MIN_CAPTURE_WIDTH);
-    await captureJpeg(engine, MAX_CAPTURE_WIDTH);
-    await captureJpeg(engine);
-
-    expect(engine.seen).toEqual([
-      { op: 'capture', maxWidth: MIN_CAPTURE_WIDTH },
-      { op: 'capture', maxWidth: MAX_CAPTURE_WIDTH },
-      { op: 'capture' },
     ]);
   });
 });
@@ -315,206 +246,6 @@ describe('engine input guard', () => {
 
     expect(await sendInput(engine, { op: 'key', scan: 0x1e, holdMs: 60 }))
       .toEqual({ ok: true, inputMs: 73.5 });
-  });
-});
-
-describe('Win32Capture', () => {
-  const WIDTH = 4;
-  const HEIGHT = 3;
-  // a colour the JPEG round trip keeps: black/white edges would hide a channel swap
-  const RGBA = new Uint8Array(Array.from({ length: WIDTH * HEIGHT }, () => [40, 120, 200, 255]).flat());
-  const JPEG = jpeg.encode({ data: RGBA, width: WIDTH, height: HEIGHT }, 95).data;
-  const captureReply = (ageMs = 0): EngineReply => ({
-    id: 2,
-    ok: true,
-    value: { jpeg: Buffer.from(JPEG).toString('base64'), width: WIDTH, height: HEIGHT, ageMs },
-  });
-
-  it('returns a frame whose atMs precedes the capture and whose size the engine reports', async () => {
-    // the frame is 50 ms old when the reply arrives, so its capture instant is before the request
-    const engine = new FakeEngine((request) => (request.op === 'capture' ? captureReply(50) : { id: 1, ok: false, error: 'unavailable' }));
-
-    const frame = await new Win32Capture(engine).capture();
-
-    expect(frame.width).toBe(WIDTH);
-    expect(frame.height).toBe(HEIGHT);
-    expect(frame.atMs).toBeLessThanOrEqual(engine.atRequest);
-    expect(engine.seen).toEqual([{ op: 'capture' }]);
-  });
-
-  it('decodes the JPEG into RGBA pixels inside the source', async () => {
-    const engine = new FakeEngine(captureReply());
-
-    const rgba = await new Win32Capture(engine).capture().then((frame) => frame.toRgba());
-
-    expect(rgba.width).toBe(WIDTH);
-    expect(rgba.height).toBe(HEIGHT);
-    expect(rgba.data).toBeInstanceOf(Uint8Array);
-    expect(rgba.data.length).toBe(WIDTH * HEIGHT * 4);
-    // the encoder is lossy, the channel order is not
-    expect(Math.abs(rgba.data[0]! - 40)).toBeLessThanOrEqual(6);
-    expect(Math.abs(rgba.data[1]! - 120)).toBeLessThanOrEqual(6);
-    expect(Math.abs(rgba.data[2]! - 200)).toBeLessThanOrEqual(6);
-  });
-
-  it('rejects with the engine failure when the child has no frame', async () => {
-    const engine = new FakeEngine({ id: 1, ok: false, error: 'unavailable', detail: 'window-not-found' });
-
-    await expect(new Win32Capture(engine).capture())
-      .rejects.toMatchObject({ reason: 'unavailable', detail: 'window-not-found' });
-  });
-
-  it('stamps atMs from the reported age at reply time, not from the request time', async () => {
-    const AGE_MS = 120;
-    const DELAY_MS = 25;
-    const before = performance.now();
-    const engine: EngineRequester = {
-      async request() {
-        await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
-        return captureReply(AGE_MS);
-      },
-    };
-
-    const frame = await new Win32Capture(engine).capture();
-    const after = performance.now();
-
-    // atMs = the reply instant minus ageMs, which cannot be the request instant 25 ms earlier
-    // (5 ms of slack for timer rounding; request-time semantics would be 25 ms below the bound)
-    expect(frame.atMs).toBeGreaterThanOrEqual(before + DELAY_MS - AGE_MS - 5);
-    expect(frame.atMs).toBeLessThanOrEqual(after - AGE_MS);
-  });
-
-  it('refuses a frame older than three ticks', async () => {
-    const engine = new FakeEngine(captureReply(FRAME_MAX_AGE_MS + 1));
-
-    await expect(new Win32Capture(engine).capture())
-      .rejects.toMatchObject({ reason: 'timeout', detail: 'stale-frame' });
-  });
-
-  it('serves a frame exactly at the three-tick boundary', async () => {
-    const engine = new FakeEngine(captureReply(FRAME_MAX_AGE_MS));
-
-    const frame = await new Win32Capture(engine).capture();
-
-    expect(frame.width).toBe(WIDTH);
-  });
-
-  it('refuses a capture value that carries no ageMs', async () => {
-    const engine = new FakeEngine({
-      id: 1,
-      ok: true,
-      value: { jpeg: Buffer.from(JPEG).toString('base64'), width: WIDTH, height: HEIGHT },
-    });
-
-    await expect(new Win32Capture(engine).capture())
-      .rejects.toMatchObject({ reason: 'unavailable', detail: 'malformed-capture' });
-  });
-
-  it('decodes each frame once even when toRgba is called twice', async () => {
-    let calls = 0;
-    const decode = () => {
-      calls++;
-      return { data: new Uint8Array(4), width: 1, height: 1 };
-    };
-    const frame = await new Win32Capture(new FakeEngine(captureReply()), { decode }).capture();
-
-    const [first, second] = await Promise.all([frame.toRgba(), frame.toRgba()]);
-
-    expect(calls).toBe(1);
-    expect(first).toBe(second);
-  });
-
-  it('falls back to jpeg-js and reports native-decoder-unavailable once (R23)', async () => {
-    const problems: EngineEvent[] = [];
-    const capture = new Win32Capture(new FakeEngine(captureReply()), {
-      decode: () => {
-        throw new Error('no gdiplus here');
-      },
-      onProblem: (event) => problems.push(event),
-    });
-
-    const first = await (await capture.capture()).toRgba();
-    const second = await (await capture.capture()).toRgba();
-
-    expect(first.width).toBe(WIDTH);
-    expect(second.width).toBe(WIDTH);
-    expect(problems).toEqual([{ kind: 'engineProblem', detail: 'native-decoder-unavailable' }]);
-  });
-
-  it('asks for a band and refuses a reply that is not the band it asked for', async () => {
-    const engine = new FakeEngine({
-      id: 1,
-      ok: true,
-      value: { jpeg: Buffer.from([0xff, 0xd8]).toString('base64'), width: 1920, height: 1080, ageMs: 4 },
-    });
-    const source = new Win32Capture(engine, { decode: () => ({ data: new Uint8Array(4), width: 1, height: 1 }) });
-    await expect(source.captureBand({ x: 645, y: 36, width: 631, height: 699 })).rejects.toMatchObject({
-      reason: 'unavailable',
-      detail: 'malformed-capture',
-    });
-  });
-
-  it('returns the band when the child echoes the rectangle', async () => {
-    const engine = new FakeEngine({
-      id: 1,
-      ok: true,
-      value: {
-        jpeg: Buffer.from([0xff, 0xd8]).toString('base64'),
-        width: 631,
-        height: 699,
-        ageMs: 4,
-        crop: { x: 645, y: 36, width: 631, height: 699 },
-      },
-    });
-    const source = new Win32Capture(engine, { decode: () => ({ data: new Uint8Array(4), width: 1, height: 1 }) });
-    const frame = await source.captureBand({ x: 645, y: 36, width: 631, height: 699 });
-    expect(frame.width).toBe(631);
-    expect(frame.height).toBe(699);
-    expect(engine.seen[0]).toEqual({ op: 'capture', crop: { x: 645, y: 36, width: 631, height: 699 } });
-  });
-
-  it('refuses a malformed band rectangle before the wire', async () => {
-    const engine = new FakeEngine({ id: 1, ok: true, value: { jpeg: 'AA==', width: 2, height: 1, ageMs: 0 } });
-    const source = new Win32Capture(engine);
-
-    for (const rect of [
-      { x: -1, y: 0, width: 1, height: 1 },
-      { x: 0, y: -1, width: 1, height: 1 },
-      { x: 0, y: 0, width: 0, height: 1 },
-      { x: 0, y: 0, width: 1, height: 0 },
-      { x: 0.5, y: 0, width: 1, height: 1 },
-      { x: 0, y: 0, width: 1 },
-    ]) {
-      await expect(source.captureBand(rect as never), JSON.stringify(rect)).rejects.toMatchObject({
-        reason: 'rejected',
-        detail: 'crop-out-of-range',
-      });
-    }
-    // a bad rectangle never reaches the child, where the codec would drop the line and no reply
-    // would come: the World would wait out engineTimeoutMs and never learn why
-    expect(engine.seen).toEqual([]);
-  });
-
-  it('refuses a reply that echoes any part of the rectangle differently', async () => {
-    const rect = { x: 645, y: 36, width: 631, height: 699 };
-    const source = (value: object) => new Win32Capture(
-      new FakeEngine({ id: 1, ok: true, value: { jpeg: 'AA==', ageMs: 4, width: 631, height: 699, crop: rect, ...value } }),
-      { decode: () => ({ data: new Uint8Array(4), width: 1, height: 1 }) },
-    );
-
-    for (const value of [
-      { crop: { ...rect, x: 646 } },
-      { crop: { ...rect, y: 37 } },
-      { crop: { ...rect, width: 630 } },
-      { crop: { ...rect, height: 698 } },
-      { width: 1920 },
-      { height: 1080 },
-    ]) {
-      await expect(source(value).captureBand(rect), JSON.stringify(value)).rejects.toMatchObject({
-        reason: 'unavailable',
-        detail: 'malformed-capture',
-      });
-    }
   });
 });
 
