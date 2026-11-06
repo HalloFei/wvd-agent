@@ -1,8 +1,9 @@
+import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import { bandSampler } from '../src/actions/qte.ts';
 import type { EngineReply, EngineRequest } from '../src/contracts.ts';
-import { FRAME_MAX_AGE_MS } from '../src/engine/protocol.ts';
-import { Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
+import { FRAME_MAX_AGE_MS, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH } from '../src/engine/protocol.ts';
+import { captureJpeg, Win32Capture, type EngineRequester } from '../src/engine/win32.ts';
 import { memoryOverBuffer } from '../src/engine/vision/channel-memory.ts';
 import {
   createChannel, layoutChannel, publish, type FrameChannel,
@@ -197,6 +198,104 @@ describe('Win32Capture.captureBand over the frame channel', () => {
     const channel = channelOf(WIDTH, HEIGHT);
 
     await expect(new Win32Capture(new FakeEngine(captureOk(WIDTH, HEIGHT)), channel).captureBand(RECT))
+      .rejects.toMatchObject({ reason: 'timeout', detail: 'stale-frame' });
+  });
+});
+
+
+describe('the escalation snapshot (plan Task 5)', () => {
+  /** Four BGRA quadrants, so a scaled frame's decoded corners still say which source quadrant they came from. */
+  function quadrants(width: number, height: number): Uint8Array {
+    const colours = [[255, 0, 0], [0, 0, 255], [0, 255, 0], [0, 255, 255]];
+    const pixels = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const colour = colours[(y < height / 2 ? 0 : 2) + (x < width / 2 ? 0 : 1)]!;
+        pixels.set([...colour, 255], (y * width + x) * 4);
+      }
+    }
+    return pixels;
+  }
+
+  const SNAPSHOT_WIDTH = 192;
+  const SNAPSHOT_HEIGHT = 108;
+
+  function snapshotSource(reply: EngineReply = captureOk(SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT)) {
+    const channel = channelOf(SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT);
+    publish(channel, quadrants(SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT), { capturedAtMs: Date.now() });
+    const engine = new FakeEngine(reply);
+    return { source: new Win32Capture(engine, channel), channel, engine };
+  }
+
+  /** The decoded RGBA centre of one quadrant. */
+  function centre(decoded: { width: number; height: number; data: Uint8Array }, quadrant: number): number[] {
+    const x = Math.floor(decoded.width / 4) + (quadrant % 2) * Math.floor(decoded.width / 2);
+    const y = Math.floor(decoded.height / 4) + Math.floor(quadrant / 2) * Math.floor(decoded.height / 2);
+    const at = (y * decoded.width + x) * 4;
+    return [...decoded.data.subarray(at, at + 4)];
+  }
+
+  it('crops nothing from perception: a native request encodes the frame at its own size', async () => {
+    const { source, channel } = snapshotSource();
+
+    const snapshot = await captureJpeg(source, channel);
+
+    expect(snapshot.width).toBe(SNAPSHOT_WIDTH);
+    expect(snapshot.height).toBe(SNAPSHOT_HEIGHT);
+    expect([...snapshot.bytes.subarray(0, 2)]).toEqual([0xff, 0xd8]);
+    const decoded = jpeg.decode(snapshot.bytes, { useTArray: true, formatAsRGBA: true });
+    expect([decoded.width, decoded.height]).toEqual([SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT]);
+  });
+
+  it('downscales the frame to maxWidth, in the World, and keeps the quadrants', async () => {
+    const { source, channel } = snapshotSource();
+
+    const snapshot = await captureJpeg(source, channel, 96);
+
+    expect(snapshot.width).toBe(96);
+    expect(snapshot.height).toBe(54);
+    const decoded = jpeg.decode(snapshot.bytes, { useTArray: true, formatAsRGBA: true });
+    expect([decoded.width, decoded.height]).toEqual([96, 54]);
+    // The quadrants are written as BGRA, so in the decoded RGBA: blue, red, green, yellow. JPEG is
+    // lossy and the box filter averages; the channel order and the quadrant placement are not.
+    const expected = [[0, 0, 255, 255], [255, 0, 0, 255], [0, 255, 0, 255], [255, 255, 0, 255]];
+    for (let quadrant = 0; quadrant < 4; quadrant += 1) {
+      const actual = centre(decoded, quadrant);
+      for (let channelIndex = 0; channelIndex < 3; channelIndex += 1) {
+        expect(Math.abs(actual[channelIndex]! - expected[quadrant]![channelIndex]!)).toBeLessThanOrEqual(12);
+      }
+    }
+  });
+
+  it('never upscales: a maxWidth at or above the frame comes back native', async () => {
+    const { source, channel } = snapshotSource();
+
+    const atNative = await captureJpeg(source, channel, SNAPSHOT_WIDTH);
+    const above = await captureJpeg(source, channel, 1280);
+
+    expect([atNative.width, atNative.height]).toEqual([SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT]);
+    expect([above.width, above.height]).toEqual([SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT]);
+  });
+
+  it('refuses an out-of-range maxWidth before the wire, naming the field', async () => {
+    const { source, channel, engine } = snapshotSource();
+
+    for (const maxWidth of [MIN_CAPTURE_WIDTH - 1, MAX_CAPTURE_WIDTH + 1, 0, -640, 1280.5, Number.NaN]) {
+      await expect(captureJpeg(source, channel, maxWidth), String(maxWidth)).rejects.toMatchObject({
+        name: 'EngineCaptureError',
+        reason: 'rejected',
+        detail: 'maxWidth-out-of-range',
+      });
+    }
+    // a bad value never reaches the child, and never pays for a capture: the loop's rule is the
+    // request's own refusal, not a reply that never comes
+    expect(engine.seen).toEqual([]);
+  });
+
+  it('refuses a snapshot when the channel has no fresh frame', async () => {
+    const channel = channelOf(SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT);
+
+    await expect(captureJpeg(new Win32Capture(new FakeEngine(captureOk(SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT)), channel), channel))
       .rejects.toMatchObject({ reason: 'timeout', detail: 'stale-frame' });
   });
 });

@@ -18,8 +18,11 @@ import type {
   RgbaImage,
 } from '../contracts.ts';
 import { cropBgra } from './crop.mjs';
+import { scaleBgra } from './scale.mjs';
 import {
   isStaleFrame,
+  MAX_CAPTURE_WIDTH,
+  MIN_CAPTURE_WIDTH,
   type EngineCapture,
   type EngineForeground,
   type EngineInputAck,
@@ -217,13 +220,19 @@ export interface CapturedJpeg {
 const DEFAULT_SNAPSHOT_QUALITY = 75;
 
 /**
- * The escalation snapshot (contracts §5): the newest frame, encoded **in the World**.
+ * The escalation snapshot (contracts §5): the newest frame, downscaled and encoded **in the World**.
  *
  * This is the only JPEG on the machine now, and it exists because the bytes leave it: the model reads
  * the image. The loop never pays for it — the encode is 174 ms for a full 1920×1080 frame and the
  * escalation is a rare, on-demand path (the design measured it; the child's native encoder is gone
- * with the crash it caused). `source.capture()` proves a fresh frame exists and refuses a stale one
- * by the loop's own rule; the pixels then come from the channel's newest slot, already a copy.
+ * with the crash it caused). The downscale is the same box filter the child used for `maxWidth`
+ * (`scale.mjs`), now over the copied slot, and a request at or above the frame's width comes back
+ * native: a snapshot is never upscaled.
+ *
+ * `source.capture()` proves a fresh frame exists and refuses a stale one by the loop's own rule; the
+ * pixels then come from the channel's newest slot, already a copy. An out-of-range `maxWidth` is
+ * refused here, before either the request or the capture: it is a caller bug, and a clamped guess
+ * would hand the model a different size than the caller's coordinates assume.
  *
  * A failure is the same `EngineCaptureError` the plain capture throws: the caller decides whether a
  * question without an image is still worth asking (it is — the text carries the perception line).
@@ -231,14 +240,25 @@ const DEFAULT_SNAPSHOT_QUALITY = 75;
 export async function captureJpeg(
   source: FrameSource,
   channel: FrameChannel,
+  maxWidth?: number,
   quality: number = DEFAULT_SNAPSHOT_QUALITY,
 ): Promise<CapturedJpeg> {
+  if (
+    maxWidth !== undefined
+    && (!Number.isInteger(maxWidth) || maxWidth < MIN_CAPTURE_WIDTH || maxWidth > MAX_CAPTURE_WIDTH)
+  ) {
+    throw new EngineCaptureError('rejected', 'maxWidth-out-of-range');
+  }
   // A frame stale by the loop's rule is stale for the snapshot too: ask through the source.
   await source.capture();
   const served = latest(channel, { nowMs: Date.now() });
   if (served === null) throw new EngineCaptureError('timeout', 'stale-frame');
+  // A request at or above the native width needs no scaling; scaleBgra returns the buffer as-is then.
+  const scaled = maxWidth === undefined
+    ? { pixels: served.pixels, width: served.width, height: served.height }
+    : scaleBgra(served.pixels, served.width, served.height, maxWidth);
   const encoded = jpeg.encode(
-    { data: toRgba(served.pixels), width: served.width, height: served.height },
+    { data: toRgba(scaled.pixels), width: scaled.width, height: scaled.height },
     quality,
   );
   return { bytes: Uint8Array.from(encoded.data), width: encoded.width, height: encoded.height };

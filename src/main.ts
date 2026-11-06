@@ -266,12 +266,13 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       source,
       perceiver,
       actuator,
-      // The escalation's snapshot: the newest frame, encoded in the World (contracts §5). A failure
-      // is null, not a throw: the question still goes out without an image.
+      // The escalation's snapshot: the newest frame, downscaled to `escalationImageWidth` and
+      // encoded in the World (contracts §5). A failure is null, not a throw: the question still goes
+      // out without an image.
       snapshot: {
         captureJpeg: async (maxWidth?: number) => {
           try {
-            return await captureJpeg(source, sessionChannel.channel, cfg.jpegQuality);
+            return await captureJpeg(source, sessionChannel.channel, maxWidth, cfg.jpegQuality);
           } catch {
             return null;
           }

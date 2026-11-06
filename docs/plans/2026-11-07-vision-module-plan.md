@@ -127,11 +127,11 @@ is a branch, fast-forwarded to `main` at the end. Commit at every task, staged b
 
 ### Task 5 — Snapshots encoded in the World
 
-- [ ] `tests/vision-frame-source.test.ts` (`snapshot`): a JPEG is produced at `maxWidth`, decodable by
+- [x] `tests/vision-frame-source.test.ts` (`snapshot`): a JPEG is produced at `maxWidth`, decodable by
       jpeg-js, and its size/format match the escalation path's expectations.
-- [ ] Implement `snapshot({ maxWidth })` in `frame-source.ts` with jpeg-js (downscale + encode);
-      the escalation call sites read it unchanged.
-- [ ] Commit: `feat(vision): snapshots are encoded on demand, in the World`.
+- [x] Implement `captureJpeg(source, channel, maxWidth?, quality?)` in `win32.ts` with jpeg-js
+      (scaleBgra downscale + encode); the escalation call sites read it unchanged.
+- [x] Commit: `feat(vision): snapshots are encoded on demand, in the World`.
 
 ### Task 6 — The capture host and its supervisor
 
