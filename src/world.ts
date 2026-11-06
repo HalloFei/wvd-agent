@@ -3003,8 +3003,10 @@ export class WvdWorld implements World {
   async #endSession(reason: string, options: { report?: boolean; failed?: boolean } = {}): Promise<void> {
     // The run's own log, one line at the end (operator, 2026-11-07): the numbers the morning report
     // quotes, written by the loop rather than reconstructed from the frames afterwards.
+    // A mount-and-stop host may carry no logger at all; the numbers are a courtesy to the morning
+    // reader, never a precondition for stopping.
     const summary = this.#stats.summary();
-    this.#host?.log.info(
+    this.#host?.log?.info(
       `wvd: run stats: ${summary.cycles.length} cycles; chests ${formatSpan(summary.chests)}; battles ${formatSpan(summary.battles)}`,
     );
     const wasRunning = this.#running;
