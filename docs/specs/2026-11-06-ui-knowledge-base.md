@@ -46,7 +46,8 @@ only kind the graph routes through), **other** spends, claims or destroys — re
 **advisory**: the World sends one command and re-reads the frame, so a page that closes onto a
 different parent than the record expected is still handled — the next observation recomputes.
 
-It is a **graph, not a tree**: 祝福之日 was measured opening over the trader and over the town. And it
+It is a **graph, not a tree**: 祝福之日 was measured opening over the trader, and a page can be entered
+from more than one parent in principle. And it
 is **not exhaustive**: an `enter` row without a `child` is a button found and placed whose destination
 has not been probed. The validator allows that and refuses a guessed edge anywhere else.
 
@@ -75,9 +76,10 @@ with eight named rows and a measured close. It no longer needs a dedicated fix.
 - **Incomplete coverage.** 打铁铺 and 酒馆 were located but never opened; the options' and records'
   children are placed, not probed; the four outer HUD icons were not pressed at all.
 - **Client pixels only.** Every point is 1920x1080, like `heal.ts`; the World runs at that client size.
-- **The popup risk.** 祝福之日 reappeared over the town after leaving a shop (three times in one
-  session). If it does that on a farm cycle, the rest tap lands on the popup. The catalog names it and
-  its close, so the World branch above is the fix.
+- **The popup risk.** 祝福之日 opens over the trader (measured). Whether it also opens over the town
+  uninvited is unproven: the blurred host behind it looked like both, and the one session could not
+  tell them apart. If it does, the rest tap lands on it; the catalog names the page and its close, so
+  the World branch above is the fix.
 
 ## Provenance
 

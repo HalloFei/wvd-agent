@@ -153,10 +153,11 @@ export const UI_CATALOG: UiCatalog = {
       id: 'trader',
       title: '交易商 (trade)',
       section: 'town',
-      measured: '2026-11-06: opened from the town icon (1 029, 530); 兑换所 (1 162, 585) opened 祝福之日, 离开 (1 162, 723) returned to the town',
+      measured: '2026-11-06: opened from the town icon (1 029, 530); 兑换所 (1 162, 585) opened 祝福之日, 离开 (1 162, 675) returned to the town (0.944)',
+      note: 'The two rows sit where a four-row dialog draws its last pair, not at the shop row ys: a tap at 1 162,723 does nothing, which is how this point was found.',
       rows: [
         { label: '兑换所', kind: 'enter', at: { x: 1_162, y: 585 }, child: 'blessed-day' },
-        { label: '离开', kind: 'exit', at: { x: 1_162, y: 723 }, child: 'town' },
+        { label: '离开', kind: 'exit', at: { x: 1_162, y: 675 }, child: 'town' },
       ],
     },
     {
@@ -164,7 +165,7 @@ export const UI_CATALOG: UiCatalog = {
       title: '祝福之日 (event notice)',
       section: 'town',
       measured: '2026-11-06: opened over the trader from 兑换所; X 关闭 (960, 866) closed it back onto the trader',
-      note: 'It also appeared over the town after leaving the trader, so it is a page of the town as much as of the trader; 关闭 closes the page whichever one it covers. 移动 leaves for a shop: other.',
+      note: 'Measured over the trader only: the blurred scene behind it is the trader shop, not the town. 移动 leaves for a shop: other.',
       rows: [
         { label: '移动', kind: 'other', at: { x: 1_134, y: 474 } },
         { label: '移动', kind: 'other', at: { x: 1_134, y: 716 } },
