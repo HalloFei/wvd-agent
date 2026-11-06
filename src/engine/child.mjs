@@ -59,6 +59,8 @@ const write = (line) => {
 let stopping = false;
 /** The newest published frame's metadata: `{ seq, capturedAtMs, width, height }`. No pixels. */
 let latest = null;
+/** Capture requests waiting for a publish stamped at or after their own request. */
+const publishWaiters = new Set();
 
 /**
  * How long the child looks again after `SetForegroundWindow` did not take on the first check. The
@@ -73,6 +75,13 @@ const FOCUS_RECHECK_MS = 120;
  * must still move the clock or the World's supervisor would restart a healthy process.
  */
 const HEARTBEAT_MS = 250;
+
+/**
+ * How long one `capture` may wait for the frame its own demand produced. The render loop wakes in a
+ * frame or two of a demand and publishes within ~30 ms; a second is the hold the World's stale rule
+ * never sees, because the World stamps the reply it gets and a hung render is `stale-frame`.
+ */
+const CAPTURE_WAIT_MS = 1_000;
 
 // The first capture request ever waits for the render thread to produce a frame (bounded), so
 // startup is not a spurious `timeout`. The timer is cleared when the frame wins, and later requests
@@ -117,6 +126,15 @@ function onWorkerMessage(message) {
       if (!firstFrameSeen) {
         firstFrameSeen = true;
         resolveFirstFrame();
+      }
+      // A capture request is answered with the frame its own demand produced, never with the frame
+      // the previous demand left behind (live 2026-11-07: that frame was stale by the time it arrived).
+      for (const waiter of publishWaiters) {
+        if (message.capturedAtMs >= waiter.sinceMs) {
+          publishWaiters.delete(waiter);
+          clearTimeout(waiter.timer);
+          waiter.resolve(latest);
+        }
       }
       return;
     case 'problem':
@@ -198,11 +216,30 @@ async function dispatch(request, receivedAt) {
         await warmup;
       }
       if (!latest) throw new EngineFailure('timeout', 'no-frame');
+      // The frame this request woke, not the one the previous demand left: the render loop stops
+      // 300 ms after the last demand, and the old frame is stale by the time the next tick asks.
+      const sinceMs = Date.now();
+      const frame = await new Promise((resolve, reject) => {
+        const waiter = {
+          sinceMs,
+          resolve,
+          timer: setTimeout(() => {
+            publishWaiters.delete(waiter);
+            reject(new EngineFailure('timeout', 'stale-frame'));
+          }, CAPTURE_WAIT_MS),
+        };
+        publishWaiters.add(waiter);
+        if (latest.capturedAtMs >= sinceMs) {
+          publishWaiters.delete(waiter);
+          clearTimeout(waiter.timer);
+          resolve(latest);
+        }
+      });
       // The channel's own clock is Date.now(): the child and the World do not share a monotonic one.
-      const ageMs = Date.now() - latest.capturedAtMs;
+      const ageMs = Date.now() - frame.capturedAtMs;
       if (isStaleFrame(ageMs)) throw new EngineFailure('timeout', 'stale-frame');
       // metadata only: the World reads the pixels from the slot `seq` names
-      return { seq: latest.seq, width: latest.width, height: latest.height, ageMs };
+      return { seq: frame.seq, width: frame.width, height: frame.height, ageMs };
     }
     case 'tap': {
       await win32.tap(requireWindow(), request.x, request.y, request.count);

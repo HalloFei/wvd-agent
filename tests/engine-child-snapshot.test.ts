@@ -89,6 +89,26 @@ function sleep(ms: number): Promise<void> {
  * `frame-channel.ts` is caught here rather than on a live run.
  */
 describe('engine child capture over the frame channel (no window)', () => {
+  it('serves a frame published after the request, once the render loop has gone idle', async () => {
+    // Live 2026-11-07: the render loop stops 300 ms after the last demand, and the World's next
+    // capture was answered with the previous demand's frame — stale by the time it arrived, so every
+    // tick refused `stale-frame`. A capture must wake the loop and wait for the frame it woke.
+    const testChannel = openTestChannel();
+    const child = spawnChild(testChannel);
+    const log: string[] = [];
+    const engine = connect(child, log);
+    try {
+      const first = expectOk(await captureWarm(engine), log);
+      await new Promise((resolve) => setTimeout(resolve, 450)); // the demand window (300 ms) has passed
+      const second = expectOk(await engine.request({ op: 'capture' }), log);
+      expect((second.value as EngineCapture).seq).toBeGreaterThan((first.value as EngineCapture).seq);
+      expect((second.value as EngineCapture).ageMs).toBeLessThan(200);
+    } finally {
+      engine.close();
+      testChannel.dispose();
+    }
+  });
+
   it.skipIf(process.platform !== 'win32')('publishes the captured frame and replies only its metadata', async () => {
     const log: string[] = [];
     const testChannel = openTestChannel();
@@ -146,17 +166,21 @@ describe('engine child capture over the frame channel (no window)', () => {
     }
   }, 30000);
 
-  it.skipIf(process.platform !== 'win32')('refuses a frame older than the stale window', async () => {
+  it.skipIf(process.platform !== 'win32')('serves a fresh frame after a long idle, not the previous demand\'s', async () => {
     const log: string[] = [];
     const testChannel = openTestChannel();
     const engine = connect(spawnChild(testChannel), log);
     try {
-      expectOk(await captureWarm(engine), log);
-      // rendering is gated on demand: 300 ms after the last request it stops, so an idle capture
-      // must find a frame older than the three-tick window rather than a stale one that looks new
+      const warmed = expectOk(await captureWarm(engine), log);
+      const warmedSeq = (warmed.value as EngineCapture).seq;
+      // Rendering is gated on demand: 300 ms after the last request it stops. The next capture must
+      // wake the loop and wait for the frame it woke — never hand back the idle frame (live
+      // 2026-11-07: that frame was stale by the time it crossed the protocol).
       await sleep(750);
-      const reply = await engine.request({ op: 'capture' });
-      expect(reply).toMatchObject({ ok: false, error: 'timeout', detail: 'stale-frame' });
+      const reply = expectOk(await engine.request({ op: 'capture' }), log);
+      const value = reply.value as EngineCapture;
+      expect(value.seq).toBeGreaterThan(warmedSeq);
+      expect(value.ageMs).toBeLessThan(200);
     } finally {
       engine.close();
       testChannel.dispose();
