@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { memoryOverBuffer } from '../src/engine/vision/channel-memory.ts';
 import {
   CHANNEL_STALE_MS, createChannel, layoutChannel, latest, publish, readHeader, slotOffset,
 } from '../src/engine/vision/frame-channel.ts';
@@ -18,12 +19,12 @@ function frame(value: number): Uint8Array {
 
 function channel(slots = 2) {
   const layout = layoutChannel({ width: WIDTH, height: HEIGHT, slots });
-  return createChannel(Buffer.alloc(layout.bytes), layout);
+  return createChannel(memoryOverBuffer(Buffer.alloc(layout.bytes)), layout);
 }
 
 /** Poke a slot's sequence word, as a writer mid-publish does (the layout is the contract). */
 function writeSequence(channel0: ReturnType<typeof channel>, slot: number, sequence: bigint): void {
-  channel0.buffer.writeBigUInt64LE(sequence, slotOffset(channel0.layout, slot));
+  channel0.memory.writeBigUInt64LE(slotOffset(channel0.layout, slot), sequence);
 }
 
 describe('the frame channel', () => {
@@ -63,9 +64,9 @@ describe('the frame channel', () => {
 
   it('refuses a buffer written by another version', () => {
     const layout = layoutChannel({ width: WIDTH, height: HEIGHT, slots: 2 });
-    const buffer = Buffer.alloc(layout.bytes);
-    const channel0 = createChannel(buffer, layout);
-    buffer.writeUInt32LE(999, 4); // version
+    const memory = memoryOverBuffer(Buffer.alloc(layout.bytes));
+    const channel0 = createChannel(memory, layout);
+    memory.writeUInt32LE(4, 999); // version
     expect(() => readHeader(channel0)).toThrow(/version/);
   });
 });

@@ -21,14 +21,15 @@
  * and publishes the header afterwards, so a reader that sees any other number refuses rather than
  * returning a torn frame.
  */
+import type { ChannelMemory } from './channel-memory.ts';
 
 export const CHANNEL_MAGIC = 0x574f5631; // 'WOV1'
 export const CHANNEL_VERSION = 1;
 /** A frame older than this is refused: the capture's own stale window, the same as the engine's. */
 export const CHANNEL_STALE_MS = 300;
 
-const HEADER_BYTES = 64;
-const SLOT_META_BYTES = 32;
+export const HEADER_BYTES = 64;
+export const SLOT_META_BYTES = 32;
 
 export interface ChannelLayout {
   readonly width: number;
@@ -42,8 +43,7 @@ export interface ChannelLayout {
 
 export interface FrameChannel {
   readonly layout: ChannelLayout;
-  /** The mapped view, or a plain Buffer in tests. */
-  readonly buffer: Buffer;
+  readonly memory: ChannelMemory;
 }
 
 export interface Header {
@@ -94,41 +94,49 @@ export function payloadOffset(layout: ChannelLayout, slot: number): number {
 }
 
 /**
- * A channel over `buffer`: a fresh buffer gets its header; a buffer that already carries one is
+ * A channel over a region: a fresh region gets its header; one that already carries a header is
  * validated (a version or size mismatch throws — the refusal must be loud at open time, not a
  * misread later).
  */
-export function createChannel(buffer: Buffer, layout: ChannelLayout): FrameChannel {
-  if (buffer.length < layout.bytes) throw new Error('frame-channel: buffer too small');
-  const channel = { layout, buffer };
-  if (buffer.readUInt32LE(0) !== CHANNEL_MAGIC) writeHeader(channel);
-  readHeader(channel); // validates the version
+export function createChannel(memory: ChannelMemory, layout: ChannelLayout): FrameChannel {
+  if (memory.size < layout.bytes) throw new Error('frame-channel: region too small');
+  const channel = { layout, memory };
+  if (memory.readUInt32LE(0) !== CHANNEL_MAGIC) {
+    writeHeader(channel);
+    return channel;
+  }
+  // The region carries another writer's layout: the World must refuse, never misread a slot.
+  const header = readHeader(channel); // validates the version
+  if (header.width !== layout.width || header.height !== layout.height
+    || header.stride !== layout.stride || header.slots !== layout.slots) {
+    throw new Error(`frame-channel: layout mismatch (${header.width}x${header.height}/${header.slots} slots in the region)`);
+  }
   return channel;
 }
 
 /** The header as it is now. Throws on a version this code does not speak. */
 export function readHeader(channel: FrameChannel): Header {
-  const buffer = channel.buffer;
-  const version = buffer.readUInt32LE(4);
+  const memory = channel.memory;
+  const version = memory.readUInt32LE(4);
   if (version !== CHANNEL_VERSION) {
     throw new Error(`frame-channel: unsupported version ${version} (this World speaks ${CHANNEL_VERSION})`);
   }
   return {
-    magic: buffer.readUInt32LE(0),
+    magic: memory.readUInt32LE(0),
     version,
-    slots: buffer.readUInt32LE(8),
-    width: buffer.readUInt32LE(12),
-    height: buffer.readUInt32LE(16),
-    stride: buffer.readUInt32LE(20),
-    heartbeatMs: buffer.readDoubleLE(24),
-    demandMs: buffer.readDoubleLE(32),
-    latestSeq: buffer.readBigUInt64LE(40),
+    slots: memory.readUInt32LE(8),
+    width: memory.readUInt32LE(12),
+    height: memory.readUInt32LE(16),
+    stride: memory.readUInt32LE(20),
+    heartbeatMs: memory.readDoubleLE(24),
+    demandMs: memory.readDoubleLE(32),
+    latestSeq: memory.readBigUInt64LE(40),
   };
 }
 
 /** Publish one frame: stamp the slot, write it, then advance the header. The writer never blocks. */
 export function publish(channel: FrameChannel, bgra: Uint8Array, meta: { capturedAtMs: number }): void {
-  const { layout, buffer } = channel;
+  const { layout, memory } = channel;
   const expected = layout.stride * layout.height;
   if (bgra.length !== expected) throw new Error('frame-channel: frame is not stride*height bytes');
   const header = readHeader(channel);
@@ -137,39 +145,39 @@ export function publish(channel: FrameChannel, bgra: Uint8Array, meta: { capture
   const base = slotOffset(layout, slot);
   // Stamp first: a reader that lands here after the payload starts sees a number that is not the
   // published one and refuses.
-  buffer.writeBigUInt64LE(sequence, base);
-  buffer.writeUInt32LE(1, base + 8); // state: writing
-  buffer.writeDoubleLE(meta.capturedAtMs, base + 16);
-  buffer.writeUInt32LE(layout.width, base + 24);
-  buffer.writeUInt32LE(layout.height, base + 28);
-  buffer.set(bgra, base + SLOT_META_BYTES);
-  buffer.writeUInt32LE(2, base + 8); // state: complete
-  buffer.writeBigUInt64LE(sequence, 40); // publish: the header names the newest slot
-  buffer.writeDoubleLE(meta.capturedAtMs, 24); // the heartbeat rides the publish clock
+  memory.writeBigUInt64LE(base, sequence);
+  memory.writeUInt32LE(base + 8, 1); // state: writing
+  memory.writeDoubleLE(base + 16, meta.capturedAtMs);
+  memory.writeUInt32LE(base + 24, layout.width);
+  memory.writeUInt32LE(base + 28, layout.height);
+  memory.write(base + SLOT_META_BYTES, bgra);
+  memory.writeUInt32LE(base + 8, 2); // state: complete
+  memory.writeBigUInt64LE(40, sequence); // publish: the header names the newest slot
+  memory.writeDoubleLE(24, meta.capturedAtMs); // the heartbeat rides the publish clock
 }
 
 /**
  * The newest complete frame, or null: nothing published yet, a slot that is being written or is not
- * the published one, a frame older than `CHANNEL_STALE_MS`, or a copy that caught a writer. One retry
+ * the published one, a frame older than CHANNEL_STALE_MS, or a copy that caught a writer. One retry
  * covers a writer landing between the two reads; a second refusal is a refusal.
  */
 export function latest(channel: FrameChannel, clock: { nowMs: number }): ServedFrame | null {
-  const { layout, buffer } = channel;
+  const { layout, memory } = channel;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const header = readHeader(channel);
     if (header.latestSeq === 0n) return null;
     const slot = Number(header.latestSeq % BigInt(layout.slots));
     const base = slotOffset(layout, slot);
-    if (buffer.readBigUInt64LE(base) !== header.latestSeq) continue;
-    const capturedAtMs = buffer.readDoubleLE(base + 16);
+    if (memory.readBigUInt64LE(base) !== header.latestSeq) continue;
+    const capturedAtMs = memory.readDoubleLE(base + 16);
     if (!Number.isFinite(capturedAtMs)) return null;
     if (clock.nowMs - capturedAtMs >= CHANNEL_STALE_MS) return null;
-    const width = buffer.readUInt32LE(base + 24);
-    const height = buffer.readUInt32LE(base + 28);
+    const width = memory.readUInt32LE(base + 24);
+    const height = memory.readUInt32LE(base + 28);
     if (width !== layout.width || height !== layout.height) return null;
     const pixels = new Uint8Array(layout.stride * layout.height);
-    pixels.set(buffer.subarray(base + SLOT_META_BYTES, base + SLOT_META_BYTES + pixels.length));
-    if (buffer.readBigUInt64LE(base) !== header.latestSeq) continue;
+    pixels.set(memory.read(base + SLOT_META_BYTES, pixels.length));
+    if (memory.readBigUInt64LE(base) !== header.latestSeq) continue;
     return { seq: Number(header.latestSeq), capturedAtMs, width, height, pixels };
   }
   return null;
@@ -177,24 +185,24 @@ export function latest(channel: FrameChannel, clock: { nowMs: number }): ServedF
 
 /** Mark the writer alive (the supervisor's liveness signal). */
 export function touchHeartbeat(channel: FrameChannel, nowMs: number): void {
-  channel.buffer.writeDoubleLE(nowMs, 24);
+  channel.memory.writeDoubleLE(24, nowMs);
 }
 
-/** The channel's last sign of life, ms; open the channel's own clock. */
+/** The channel's last sign of life, ms. */
 export function heartbeatOf(channel: FrameChannel): number {
-  return channel.buffer.readDoubleLE(24);
+  return channel.memory.readDoubleLE(24);
 }
 
 function writeHeader(channel: FrameChannel): void {
-  const { layout, buffer } = channel;
-  buffer.fill(0);
-  buffer.writeUInt32LE(CHANNEL_MAGIC, 0);
-  buffer.writeUInt32LE(CHANNEL_VERSION, 4);
-  buffer.writeUInt32LE(layout.slots, 8);
-  buffer.writeUInt32LE(layout.width, 12);
-  buffer.writeUInt32LE(layout.height, 16);
-  buffer.writeUInt32LE(layout.stride, 20);
-  buffer.writeDoubleLE(0, 24);
-  buffer.writeDoubleLE(0, 32);
-  buffer.writeBigUInt64LE(0n, 40);
+  const { layout, memory } = channel;
+  memory.fill(0, 0, layout.bytes);
+  memory.writeUInt32LE(0, CHANNEL_MAGIC);
+  memory.writeUInt32LE(4, CHANNEL_VERSION);
+  memory.writeUInt32LE(8, layout.slots);
+  memory.writeUInt32LE(12, layout.width);
+  memory.writeUInt32LE(16, layout.height);
+  memory.writeUInt32LE(20, layout.stride);
+  memory.writeDoubleLE(24, 0);
+  memory.writeDoubleLE(32, 0);
+  memory.writeBigUInt64LE(40, 0n);
 }
