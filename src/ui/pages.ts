@@ -116,12 +116,14 @@ export const UI_CATALOG: UiCatalog = {
       title: '诺森霍洛村 (the rest town, vnh)',
       section: 'town',
       measured: '2026-11-06: reached by the measured exit route (dungeon map, F, Dungeon Select, travel vnh); 寺院, 旅店, 交易商 and 道具店 opened from it',
-      note: 'The two other facilities (打铁铺, 酒馆) were located but not pressed; the 旅店 point is the operator measured one the cycle already uses.',
+      note: 'The two other facilities (打铁铺, 酒馆) were located but not opened: the point beside 打铁铺 opened 祝福之日 twice, so the event notice may be what the forge shows first. The 旅店 point is the operator measured one the cycle already uses.',
       rows: [
         { label: '寺院', kind: 'enter', at: { x: 804, y: 402 }, child: 'temple' },
         { label: '旅店', kind: 'enter', at: { x: 916, y: 488 }, child: 'inn-service' },
         { label: '交易商', kind: 'enter', at: { x: 1_029, y: 530 }, child: 'trader' },
         { label: '道具店', kind: 'enter', at: { x: 1_185, y: 572 }, child: 'shop' },
+        { label: '祝福之日（打铁铺）', kind: 'enter', at: { x: 1_133, y: 402 }, child: 'blessed-day' },
+        { label: '祝福之日（城镇图标）', kind: 'enter', at: { x: 1_092, y: 1_023 }, child: 'blessed-day' },
       ],
     },
     {
@@ -165,7 +167,7 @@ export const UI_CATALOG: UiCatalog = {
       title: '祝福之日 (event notice)',
       section: 'town',
       measured: '2026-11-06: opened over the trader from 兑换所; X 关闭 (960, 866) closed it back onto the trader',
-      note: 'Measured over the trader only: the blurred scene behind it is the trader shop, not the town. 移动 leaves for a shop: other.',
+      note: 'Measured both over the town (2026-11-06 live: the town icon at 1 092,1 023 and the point beside 打铁铺 at 1 133,402, the 1920 live frame named at 0.921) and over the trader (兑换所). 关闭 returns to whatever it covered. 移动 leaves for a shop: other.',
       rows: [
         { label: '移动', kind: 'other', at: { x: 1_134, y: 474 } },
         { label: '移动', kind: 'other', at: { x: 1_134, y: 716 } },

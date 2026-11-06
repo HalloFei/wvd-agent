@@ -1025,9 +1025,22 @@ the rest town's (旅店's three dialogs, 寺院, 道具店, 交易商, 祝福之
 catalog is sound: unique ids, one exit per non-root, every exit chain ending at a section root, every
 page reachable, and no route that would pass through a purchase.
 
-Not yet built: the perceiver that reads the catalog (one `ui-menu` observation, one World branch that
-closes what it names), the remaining town facilities, and the options/records children. The probe
-workflow itself is the `wvd-ui-probe` skill. Design record: `2026-11-06-ui-knowledge-base.md`.
+The knowledge base is read at runtime now (2026-11-06): `src/ui/menu.ts` matches a frame against each
+page's **title band** (`src/ui/library.ts`, sampled from the stills into a fixed grid, so one entry
+reads any 16:9 frame) and answers a new `ui-menu` screen carrying the catalog's exit. The World's
+branch sends exactly that one tap and re-reads the frame; the branch runs before the rest gate, so a
+menu over the town can no longer hold the cycle's rest open. `ui-menu` is a `WORLD_SCREENS` member, so
+a running stage yields to the loop instead of pressing into the page.
+
+Measured: every page answers its own still at 1.000, the closest cross-match (记录 against 选项) is
+0.540, and the floor is 0.800. On the live client, a 1920 frame of 祝福之日 over the town was named at
+0.921 and its close returned `town 0.944`; the town frame itself answers null. 祝福之日 is also what the
+point beside 打铁铺 opens, and the town's bottom-row icon at (1092,1023) opens it too — both recorded
+as town edges.
+
+Still open: 打铁铺 and 酒馆 were never opened, the options/records children are placed but not probed,
+and the reader knows only the pages whose title was recorded. The probe workflow is the `wvd-ui-probe`
+skill. Design record: `2026-11-06-ui-knowledge-base.md`.
 
 ## Open work — the task board is the authority
 

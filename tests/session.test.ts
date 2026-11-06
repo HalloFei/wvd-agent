@@ -62,6 +62,14 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   'revive-qte': screen('revive-qte'),
   inn: { screen: 'inn', atMs: AT, confidence: CONFIDENT, rows: [] },
   message: { screen: 'message', atMs: AT, confidence: CONFIDENT, at: { x: 960, y: 570 } },
+  'ui-menu': {
+    screen: 'ui-menu',
+    atMs: AT,
+    confidence: CONFIDENT,
+    page: 'records',
+    title: '记录 (records menu)',
+    exit: { x: 960, y: 870 },
+  },
   'harken-menu': { screen: 'harken-menu', atMs: AT, confidence: CONFIDENT, rows: [] },
 };
 

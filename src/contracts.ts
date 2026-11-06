@@ -44,7 +44,7 @@ export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
-  | 'inn' | 'message' | 'unknown';
+  | 'inn' | 'message' | 'ui-menu' | 'unknown';
 
 // §3 Perception
 
@@ -150,6 +150,22 @@ export type Observation =
       readonly autoOn?: boolean;
     }
   | {
+      readonly screen: 'ui-menu';
+      readonly atMs: number;
+      readonly confidence: number;
+      /**
+       * A page of the knowledge base (`src/ui/pages.ts`), matched by the title it draws. The World's
+       * one job with it is the close: the payload carries the measured point, so the tick that reads
+       * this observation sends exactly one command (operator rule 2026-11-06: a named page can always
+       * be left). A page the catalog does not know stays `unknown` and escalates as before.
+       */
+      readonly page: string;
+      /** The page's own title, for the log line and the escalation question. */
+      readonly title: string;
+      /** The catalog's exit row: the tap that returns to the page this one opened over. */
+      readonly exit: Point;
+    }
+  | {
       readonly screen: 'message';
       readonly atMs: number;
       readonly confidence: number;
@@ -171,7 +187,7 @@ export type Observation =
        */
       readonly dungeonLike?: boolean;
     }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'message' | 'unknown'>;
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'message' | 'ui-menu' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }

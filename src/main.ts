@@ -31,6 +31,7 @@ import { MainCharacterDeathPerceiver } from './perception/death.ts';
 import { ReviveQtePerceiver } from './perception/revive-qte.ts';
 import { InnPerceiver } from './perception/inn.ts';
 import { MessagePerceiver } from './perception/message.ts';
+import { UiMenuPerceiver } from './ui/menu.ts';
 import { restAtInn } from './actions/inn.ts';
 import { HarkenMenuPerceiver } from './perception/harken.ts';
 import { healParty } from './actions/heal.ts';
@@ -147,6 +148,10 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     // The game's one-off message box (2026-11-06): named before the HUD/town so the panel is answered
     // instead of the screen behind it being steered.
     { perceiver: new MessagePerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    // The knowledge base's other pages (2026-11-06): a page whose title the reader knows, named before
+    // the HUD so the loop closes it instead of steering the scene behind it. Its own perceiver answers
+    // with the catalog's exit, so the World's branch for it is one tap.
+    { perceiver: new UiMenuPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new CombatPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new HudPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The HUD refuses both of these at 0.2; they run last so a dungeon frame never pays for them.

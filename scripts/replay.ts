@@ -971,6 +971,7 @@ function emptyScreens(): Record<ScreenId, number> {
     'revive-qte': 0,
     inn: 0,
     message: 0,
+    'ui-menu': 0,
     'harken-menu': 0,
     unknown: 0,
   };

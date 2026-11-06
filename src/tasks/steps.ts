@@ -251,6 +251,9 @@ async function pollFloor(step: TaskStep, index: number, env: ScriptEnv, floorKey
 export const WORLD_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
   'combat', 'chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'drop-item-claim',
   'main-character-dead', 'revive-qte', 'inn', 'message',
+  // A page the knowledge base named (2026-11-06): the loop closes it by the catalog's exit, so a stage
+  // must yield instead of pressing into it.
+  'ui-menu',
 ]);
 
 /** Where a per-tick stage is: the next step, and the clock its wait / expect is on. */

@@ -70,16 +70,16 @@ with eight named rows and a measured close. It no longer needs a dedicated fix.
 
 ## What this does not yet do
 
-- **No perceiver.** The catalog is knowledge; nothing in the perceiver chain reads it yet. Next
-  milestone: sample each row's label band into a library and match a page by two of its rows, exactly
-  as the inn does — then one `ui-menu` observation and one World branch that closes what it names.
+- **The reader is by title, not by rows.** `src/ui/menu.ts` matches each page's title band
+  (`src/ui/library.ts`, from the committed stills) and answers `ui-menu` with the catalog's exit; the
+  World's branch is one tap. Measured 2026-11-06: self 1.000, closest cross-match 0.540, floor 0.800,
+  and a live 1920 frame of 祝福之日 named at 0.921 while the town frame it left answered null.
 - **Incomplete coverage.** 打铁铺 and 酒馆 were located but never opened; the options' and records'
   children are placed, not probed; the four outer HUD icons were not pressed at all.
 - **Client pixels only.** Every point is 1920x1080, like `heal.ts`; the World runs at that client size.
-- **The popup risk.** 祝福之日 opens over the trader (measured). Whether it also opens over the town
-  uninvited is unproven: the blurred host behind it looked like both, and the one session could not
-  tell them apart. If it does, the rest tap lands on it; the catalog names the page and its close, so
-  the World branch above is the fix.
+- **The town's own popup.** 祝福之日 opens over the town too (measured live 2026-11-06: named at
+  0.921 over the town, and 关闭 returned `town 0.944`). It is the page that would have swallowed the
+  cycle's rest tap; it is now named, so the World closes it on the tick it appears.
 
 ## Provenance
 

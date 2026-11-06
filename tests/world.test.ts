@@ -3254,6 +3254,33 @@ describe("the game's one-off message box", () => {
   });
 });
 
+describe('the knowledge base pages', () => {
+  const records: Observation = {
+    screen: 'ui-menu',
+    atMs: 100,
+    confidence: 0.93,
+    page: 'records',
+    title: '记录 (records menu)',
+    exit: { x: 960, y: 870 },
+  };
+
+  it('closes a named page by the catalog exit, once per pace', async () => {
+    const { world, host, actuator, clock } = makeWorld({ observation: records });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,870']);
+    expect(host.logRecords.some((line) => line.message.includes('记录 (records menu): leaving by its exit'))).toBe(true);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,870']);
+    clock.advance(1_200);
+    await world.tick();
+    expect(actuator.calls).toEqual(['tap 960,870', 'tap 960,870']);
+    expect(world.isRunning()).toBe(true);
+  });
+});
+
 describe("the inn's rest", () => {
   const roomList = [
     { at: { x: 1114, y: 549 }, label: '马房' },

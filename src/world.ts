@@ -1266,6 +1266,24 @@ export class WvdWorld implements World {
     // verdict is still taken — a stalled action has to be able to escalate — but nothing is sent.
     const waiting = await this.#advanceInFlight(observation, frame, now);
 
+    // A page of the knowledge base (operator rule 2026-11-06: a named page can always be left). The
+    // reader named it and the catalog carries the measured tap that leaves it, so the tick sends that
+    // one command and lets the frame answer. It runs before the rest gate on purpose: a menu over the
+    // town is exactly what would otherwise hold the cycle's rest open until the gate timed out.
+    if (!waiting && observation.screen === 'ui-menu') {
+      if (!this.#pacer.ready(now)) return;
+      this.#pacer.act(now);
+      const tapped = await this.#commands.tapPoint(observation.exit);
+      if (tapped.ok) {
+        this.#host?.log.info(
+          `wvd: ${observation.title}: leaving by its exit (${observation.exit.x},${observation.exit.y})`,
+        );
+      } else {
+        this.#host?.log.warn(`wvd: the ${observation.title} exit was refused (${tapped.reason})`);
+      }
+      return;
+    }
+
     // The cycle's rest (operator rule 2026-11-06): while the gate is armed the tick still dispatches
     // the inn and message plug-ins — the gate is what counts the cycle once the party is back in town.
     if (await this.#advanceRestGate(observation, now)) return;
@@ -1675,6 +1693,12 @@ export class WvdWorld implements World {
         // The prompt is here because the game returns to it by itself after a chest's animation: that
         // arrival is the farm alive again, and the loop must be given the tick to press 打开 (live
         // 2026-11-03: the prompt appeared on the very tick the stall clock stopped the session).
+        advanced = this.#lastScreen !== observation.screen;
+        active = advanced;
+        break;
+      case 'ui-menu':
+        // A page the reader named: appearing and leaving are activity, staying on one is not the farm
+        // moving on — the stall clock is what ends a page that never closes.
         advanced = this.#lastScreen !== observation.screen;
         active = advanced;
         break;

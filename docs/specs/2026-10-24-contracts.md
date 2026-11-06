@@ -66,7 +66,7 @@ export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
-  | 'inn' | 'unknown';
+  | 'inn' | 'message' | 'ui-menu' | 'unknown';
 ```
 
 `drop-item-claim` is the chest's item-claim overlay: the contents card with the `获得了…` caption, and
@@ -123,6 +123,19 @@ the farm met, unnamed, so the loop escalated on it every 4 s. Measured on
 continue mark 0.0031–0.0040 of its band against **0.0000 on every other recorded screen**. The
 observation carries the tap point (0.5, 0.529); the World advances the box one tap per pace, and the
 screen behind it is the next tick's business.
+
+`ui-menu` is **any page of the UI knowledge base** (operator, 2026-11-06: *locate a button with its name
+→ tap → locate sub-page buttons → locate exit back to the parent*). The knowledge base
+(`src/ui/pages.ts`) records pages as a directed graph: a page's buttons are `enter`, `exit` or `other`,
+and its `exit` is the measured tap that returns to the page it opened over. The reader
+(`src/ui/menu.ts`) matches a frame against each page's **title band**, sampled from the committed
+stills into a fixed grid (`src/ui/library.ts`), so one entry reads any 16:9 frame. Measured 2026-11-06:
+every page answers its own still at 1.000 and the closest cross-match (记录 against 选项) is 0.540, so
+the floor is 0.800. The observation carries the page id, its title and the catalog's exit point; the
+World sends exactly one command with it, the close, and the next tick re-reads the frame. A page the
+catalog does not know stays `unknown`, so the escalation path is unchanged. The pages that already
+have a stronger recogniser (the inn, the character page, the map, the harken) keep it — `ui-menu` is
+for the pages nothing else names.
 
 `character-page` is the menu a party HUD card opens (2026-11-03): a member's page with its stat block
 and the bottom tab row (关闭 / 强度 / 技能 / 咒文 / 装备 / 背包). Its evidence is the X 关闭 tile at
@@ -220,7 +233,12 @@ export type Observation =
   | { readonly screen: 'harken-menu'; readonly atMs: number; readonly confidence: number;
       /** The menu's rows, top to bottom: where each label sits, and the label the library knows. */
       readonly rows: readonly { readonly at: Point; readonly label: string | null }[] }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'unknown'>;
+  | { readonly screen: 'ui-menu'; readonly atMs: number; readonly confidence: number;
+      /** The knowledge-base page the frame matched (`src/ui/pages.ts`), and its drawn title. */
+      readonly page: string; readonly title: string;
+      /** The catalog's exit row: the tap that returns to the page this one opened over. */
+      readonly exit: Point }
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'ui-menu' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }
