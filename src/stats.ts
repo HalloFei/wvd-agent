@@ -16,6 +16,12 @@
  * Pure: no clock, no I/O, no logging — the World hands it `now` and reads `summary()`.
  */
 import type { GameMode } from './contracts.ts';
+import type { ScreenId } from './contracts.ts';
+
+/** The chest's own screens: the encounter from the prompt to the loot card. */
+const CHEST_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>(['chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'drop-item-claim']);
+/** The screens that mean the chest is over: the loop is back on the map or the 3-D view. */
+const CHEST_DONE_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>(['dungeon', 'dungeonmap', 'town', 'worldmap', 'dungeon-select', 'combat']);
 
 /** One counted thing: how many, and how long they took in total. */
 export interface StatSpan {
@@ -64,11 +70,14 @@ export class RunStats {
   #chestSinceMs: number | null = null;
   #battleSinceMs: number | null = null;
 
-  /** One tick's mode and time. `null` is a frame that named nothing; it holds an open interval. */
-  observe(mode: GameMode | null, now: number): void {
-    const chest = mode === 'chest';
+  /** One tick's screen, mode and time. A `null` mode is a frame that named nothing; it holds an open
+   *  battle. A chest is read from the **screen set**, not the mode: the chest mode leaves and re-enters
+   *  between the loot card's frames (live 2026-11-07 01:05: one chest counted six times), while the
+   *  chest's screens only stop being drawn when the loop is back on the map or the 3-D view. */
+  observe(screen: ScreenId, mode: GameMode | null, now: number): void {
+    const chest = CHEST_SCREENS.has(screen);
     if (chest && this.#chestSinceMs === null) this.#chestSinceMs = now;
-    else if (!chest && this.#chestSinceMs !== null) {
+    else if (!chest && this.#chestSinceMs !== null && CHEST_DONE_SCREENS.has(screen)) {
       this.#chests = add(this.#chests, now - this.#chestSinceMs);
       this.#chestSinceMs = null;
     }
@@ -80,9 +89,24 @@ export class RunStats {
     }
   }
 
+  /**
+   * Close whatever is still open at the end of the session, so a run that stopped inside a battle
+   * reports it (live 2026-11-07: the loop stalled in a battle and the summary said `battles 0`).
+   */
+  finish(now: number): void {
+    if (this.#chestSinceMs !== null) {
+      this.#chests = add(this.#chests, now - this.#chestSinceMs);
+      this.#chestSinceMs = null;
+    }
+    if (this.#battleSinceMs !== null) {
+      this.#battles = add(this.#battles, now - this.#battleSinceMs);
+      this.#battleSinceMs = null;
+    }
+  }
+
   /** Close the cycle at `now` and start the next one's counters. */
   endCycle(now: number): CycleStats {
-    this.observe(null, now);
+    this.finish(now);
     const cycle: CycleStats = { cycle: this.#cycle, chests: this.#chests, battles: this.#battles };
     this.#cycles = [...this.#cycles, cycle];
     this.#totalChests = combine(this.#totalChests, this.#chests);

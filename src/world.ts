@@ -1196,7 +1196,7 @@ export class WvdWorld implements World {
     this.#measureProgress(observation, now);
     // The run's own log (operator, 2026-11-07): one interval per chest and per battle, from the game's
     // mode — which holds a modal mode through the frames that do not name it.
-    this.#stats.observe(this.#mode.mode, now);
+    this.#stats.observe(observation.screen, this.#mode.mode, now);
 
     // A travel or a climb just landed: the game is in its load. A named frame means the load is over
     // and the loop carries on in this same tick; while the frame is nameless the loop only watches.
@@ -3005,6 +3005,7 @@ export class WvdWorld implements World {
     // quotes, written by the loop rather than reconstructed from the frames afterwards.
     // A mount-and-stop host may carry no logger at all; the numbers are a courtesy to the morning
     // reader, never a precondition for stopping.
+    this.#stats.finish(this.#now());
     const summary = this.#stats.summary();
     this.#host?.log?.info(
       `wvd: run stats: ${summary.cycles.length} cycles; chests ${formatSpan(summary.chests)}; battles ${formatSpan(summary.battles)}`,
