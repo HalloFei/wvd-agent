@@ -448,7 +448,10 @@ assuming one. `doubleTap` is one request, so its two clicks are timed inside the
 
 The child also sends events unsolicited: `stopHotkey` when the global stop key is pressed, and
 `engineProblem` with a `detail` when a capability is not available. An unregistered stop hotkey is
-`detail: 'stop-hotkey-unregistered'`. A session must not run believing the stop key works.
+`detail: 'stop-hotkey-unregistered'`. A session must not run believing the stop key works. The capture
+host (the vision module's supervisor) reports itself the same way: `detail: 'capture-restarted'` once
+it has spawned a replacement child, and `detail: 'capture-unavailable'` when its restart budget is
+spent — in neither case does the supervisor end the session; that stays the loop's decision.
 
 **Teardown.** Closing the pipe ends the child gracefully — it finishes the request in flight, calls
 `releaseHeld()` and exits — and the parent kills it only after `TEARDOWN_GRACE_MS` (1200 ms). On

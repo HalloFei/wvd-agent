@@ -41,8 +41,9 @@ import { createQteFileRecorder } from './actions/qte-record.ts';
 import { travelTo } from './actions/worldmap.ts';
 import type { TaskDefinition } from './contracts.ts';
 import type { WvdConfigSection } from './config.ts';
-import { connectEngine, startEngine, type EngineClient } from './engine/child.ts';
+import { connectEngine, startEngine } from './engine/child.ts';
 import { writeFile } from 'node:fs/promises';
+import { CaptureHost } from './engine/vision/capture-host.ts';
 import { openMapping } from './engine/vision/channel-mapping.ts';
 import { createChannel, layoutChannel, type FrameChannel } from './engine/vision/frame-channel.ts';
 import { captureJpeg, focusGame, sendInput, Win32Capture } from './engine/win32.ts';
@@ -82,7 +83,7 @@ export interface WvdComposition {
 export function createWvdWorld(composition: WvdComposition): WvdWorld {
   const { cfg, timezone } = composition;
   let world: WvdWorld | null = null;
-  let engine: EngineClient | null = null;
+  let host: CaptureHost | null = null;
   // The task the running session farms with; the decorator reads it per tick, so a session that
   // loaded no file behaves exactly like the v1 route.
   let task: TaskDefinition | null = null;
@@ -136,21 +137,28 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     return frameChannel;
   };
 
-  /** The child, spawned on first use and re-spawned if a session closed it. */
-  const connect = (): EngineClient => {
-    if (engine === null) {
+  /**
+   * The session's engine: the supervisor over the child, spawned on first use and restarted by the
+   * host if it dies (the vision module, Task 6). Every request the World makes — input, capture,
+   * foreground — goes through it, so a restart is invisible to the loop apart from the report.
+   */
+  const connect = (): CaptureHost => {
+    if (host === null) {
       // The host creates the region before the child opens it: the child's channel is the session's.
       const channel = channelOf();
-      engine = connectEngine(
-        startEngine({
-          title: cfg.gameWindowTitle,
-          hotkey: cfg.stopHotkey,
-          channel: { name: channel.name, bytes: channel.bytes },
-        }),
-        { timeoutMs: cfg.engineTimeoutMs },
-      );
+      host = new CaptureHost({
+        launch: () => connectEngine(
+          startEngine({
+            title: cfg.gameWindowTitle,
+            hotkey: cfg.stopHotkey,
+            channel: { name: channel.name, bytes: channel.bytes },
+          }),
+          { timeoutMs: cfg.engineTimeoutMs },
+        ),
+        channel: channel.channel,
+      });
     }
-    return engine;
+    return host;
   };
 
   /**
@@ -281,8 +289,8 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       onEngineEvent: (listener: (event: EngineEvent) => void) => client.onEvent(listener),
       close: () => {
         live = null;
-        engine?.close();
-        engine = null;
+        host?.close();
+        host = null;
         frameChannel?.dispose();
         frameChannel = null;
       },

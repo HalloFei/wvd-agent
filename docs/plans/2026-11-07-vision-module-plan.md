@@ -135,12 +135,13 @@ is a branch, fast-forwarded to `main` at the end. Commit at every task, staged b
 
 ### Task 6 — The capture host and its supervisor
 
-- [ ] `tests/vision-capture-host.test.ts`: spawn a scripted child, kill it, assert the restart and the
+- [x] `tests/vision-capture-host.test.ts`: spawn a scripted child, kill it, assert the restart and the
       `engineProblem` report; a second death past the cap reports `capture-unavailable` and the
       session keeps running; a heartbeat that stops restarts.
-- [ ] Implement `src/engine/vision/capture-host.ts`; wire it in `main.ts`; the World's loop no longer
-      ends a session on `stale-frame` alone.
-- [ ] Commit: `feat(vision): a supervisor for the capture child`.
+- [x] Implement `src/engine/vision/capture-host.ts`; wire it in `main.ts`; a capture is held through a
+      restart until the new child publishes a newer frame, so the loop's three-tick budget is never spent
+      on a child that is starting and `stale-frame` alone no longer ends a session.
+- [x] Commit: `feat(vision): a supervisor for the capture child`.
 
 ### Task 7 — The QTE band read without a decoder
 
