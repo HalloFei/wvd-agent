@@ -34,6 +34,7 @@ const DIALOG = new URL('../testdata/nav-1024-0213/', import.meta.url);
 const NARROW = new URL('../testdata/chest/2026-10-31-narrow-qte/', import.meta.url);
 const CURRENCY = new URL('../testdata/screens/2026-11-06-loot-currency/', import.meta.url);
 const BATTLE_FRAMES = new URL('../testdata/battle-2026-11-02/', import.meta.url);
+const CHARACTER_PAGE = new URL('../testdata/screens/2026-11-03-character-page/', import.meta.url);
 
 /** A shipped still costs ~0.2 s to decode; several tests read the same one, so decode once. */
 const cache = new Map<string, Promise<RgbaImage>>();
@@ -139,6 +140,10 @@ describe('LootPerceiver', () => {
       ['command-phase.jpg', BATTLE_FRAMES],
       ['slot-panel-opening.jpg', BATTLE_FRAMES],
       ['slot-panel-slow-attack.jpg', BATTLE_FRAMES],
+      // The character page: live 2026-11-07 the banner gate took it for the loot banner (a dark panel,
+      // a line of bright text in the caption band, and a gold mark below), and the loop tapped into it
+      // 96 times. Its caption line spans 0.271 of the width and its mark carries 308 px of ink.
+      ['page-1920.jpg', CHARACTER_PAGE],
     ];
     for (const [name, dir] of cases) {
       const observation = await perceiver.observe(frameOf(await image(name, dir)));

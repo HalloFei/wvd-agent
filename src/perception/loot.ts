@@ -101,8 +101,8 @@ const CAPTION_INK_MIN = 100;
  * | --- | --- | --- |
  * | caption ink, band x 0.30-0.70, y 0.78-0.86 | 395-1 232 | 1 964 (the dungeon map), 4 025+ (a battle) |
  * | caption rows carrying ink | 13-20 | 35 (the battle's slot panel) |
- * | caption x width | 0.130-0.166 | 0.181 (选项), 0.198 (the slot panel) |
- * | yellow continue mark, x 0.55-0.70, y 0.90-0.97 | 23-68 | 10 (one popup), 0 on every other frame |
+ * | caption x width | 0.130-0.166 | 0.181 (选项), 0.198 (the slot panel), 0.271 (角色页) |
+ * | yellow continue mark, x 0.55-0.70, y 0.90-0.97 | 23-68 | 10 (one popup), 0 everywhere else, 308 (角色页) |
  *
  * The mark is the claim's own affordance — the operator's rule is that a tap anywhere claims the drop,
  * and this is what the screen draws to say so — so a caption line above it is a drop. The battle's
@@ -112,7 +112,11 @@ const CAPTION_INK_MIN = 100;
 const BANNER_CAPTION_INK_MIN = 150;
 const BANNER_CAPTION_INK_MAX = 1_600;
 const BANNER_CAPTION_ROWS_MAX = 24;
+/** The caption line is one short line: the drops measure 0.130-0.166 of the width, the character page 0.271. */
+const BANNER_CAPTION_WIDTH_MAX = 0.2;
+/** The mark's own ink: the drops measure 23-68 px, the character page's gold UI 308. */
 const CONTINUE_MARK_MIN = 20;
+const CONTINUE_MARK_MAX = 150;
 const CONTINUE_BOX = { x0: 0.55, x1: 0.70, y0: 0.90, y1: 0.97 } as const;
 
 /**
@@ -275,7 +279,9 @@ function isResultBanner(image: RgbaImage): boolean {
   const line = captionLine(image);
   if (line.ink < BANNER_CAPTION_INK_MIN || line.ink > BANNER_CAPTION_INK_MAX) return false;
   if (line.rows > BANNER_CAPTION_ROWS_MAX) return false;
-  return continueMark(image) >= CONTINUE_MARK_MIN;
+  if (line.width > BANNER_CAPTION_WIDTH_MAX) return false;
+  const mark = continueMark(image);
+  return mark >= CONTINUE_MARK_MIN && mark <= CONTINUE_MARK_MAX;
 }
 
 /** The caption line's ink, its x width and the rows that carry any of it. */
