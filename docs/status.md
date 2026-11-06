@@ -1113,10 +1113,23 @@ The encoder was the failing part, so it leaves the hot path (spec
   the `--quality` option, and the protocol's `jpeg`/`crop`/`maxWidth`. The child's input commands are
   unchanged.
 
-Not proved yet, and left to Task 8: the live acceptance (a three-cycle farm with no encoder in the
-loop, and a live kill of the child with the restart observed), the full suite after the deletions, and
-the one-off probes under `scripts/`, which still call `startEngine({ jpegQuality })` and
-`captureJpeg(engine)` — they need a session channel to run again.
+## The channel, proved live (2026-11-07 04:16)
+
+`.tmp/runs/2026-11-07-3-cycles-10` is the vision module's first live run and its evidence: the farm
+oriented, read the map, walked to a chest and opened it — **chests 1 (avg 51.6 s), zero `stale-frame`
+lines, no encoder anywhere** — which is the channel working end to end. It also caught the module's
+first live defect: the render loop stops 300 ms after the last demand, and the child answered a new
+capture with the frame that demand had left behind (3.5 s old at the reply), so every tick refused
+`stale-frame` despite a healthy channel. `9593ae8` fixes it — a capture posts its demand and waits for
+a publish stamped at or after the request (`CAPTURE_WAIT_MS = 1 s`); the old "refuses a frame older
+than the stale window" test pinned the stale serve and now asserts the fresh one.
+
+The run then stopped on the **opener panel** (`由谁打开?`): the sequence's click never answered and the
+panel stayed unnamed for 46 s (`wvd.stuck`; snapshot
+`testdata/screens/2026-11-07-opener-stuck/opener-panel-1280.jpeg`). That is the battle/opener area, not
+the vision module; the three-cycle live acceptance is still owed, as is the live kill of the child with
+the restart observed.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only
