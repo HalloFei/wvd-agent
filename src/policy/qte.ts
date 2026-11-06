@@ -44,6 +44,17 @@ export const BOUNCE_RIGHT_X = 1261.5;
 const VELOCITY_MIN_BASELINE_MS = 66;
 
 /**
+ * A bar faster than this is pressed as a **probe** when no measured slide is known (operator,
+ * 2026-11-07). Provenance: the corpus the stop model was fitted on ran at 488 and 610 px/s; a live run
+ * on 2026-11-07 measured 880-1280 px/s, where every banded plan was refused and every fallback press
+ * was early (30+ presses, two 6-pass guards). 750 sits in the gap between the corpus and the live
+ * bars, so the model's own recordings still take the banded path. Above the gate the pass is spent
+ * measuring the slide rather than guessing it: the press aims the marker at the zone centre on arrival
+ * (no carry) so the park that follows is the slide at that speed.
+ */
+export const PROBE_SPEED_GATE_PX_PER_S = 750;
+
+/**
  * Below this the marker is easing within ~5 frames of a bounce and v is not meaningful — the
  * research's |dx| < 10 px per 30 fps frame, expressed as a speed so a slower loop keeps the same
  * meaning. **One recording:** a chest that genuinely runs below 300 px/s (the slow chest measured

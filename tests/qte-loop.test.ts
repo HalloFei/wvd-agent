@@ -247,7 +247,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000, carryMeasured: true,
     });
 
     expect(out.ok).toBe(true);
@@ -313,7 +313,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000, carryMeasured: true,
     });
 
     expect(out.ok).toBe(true);
@@ -522,7 +522,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000, carryMeasured: true,
     });
 
     expect(out.ok).toBe(true);
@@ -588,7 +588,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000, carryMeasured: true,
     });
 
     expect(out.ok).toBe(true);
@@ -597,6 +597,40 @@ describe('timeQte', () => {
     expect(out.tapX).toBe(830);
     expect(out.atMs).toBeCloseTo(64.5, 0);
     expect(clock.waits[0]).toBeCloseTo(54.5, 0);
+    expect(presses).toHaveLength(1);
+  });
+
+  it('spends a fast bar on a probe press that measures the slide, when no slide is known', async () => {
+    // Operator, 2026-11-07: a bar above the corpus gate with no measured carry is pressed as a probe —
+    // the press aims the marker at the zone centre **on arrival** (no carry), so the park it produces is
+    // the slide at this speed, and the next plan uses it. Same bar as the test above at 1 242 px/s; with
+    // no carry the plan is 166 ms out instead of 64.5.
+    const clock = virtualClock(0);
+    const sampler = scriptedSampler(
+      [
+        { atMs: 0, markerX: 748 },
+        { atMs: 33, markerX: 789 },
+        { atMs: 66, markerX: 830 },
+        { atMs: 99, markerX: 871 },
+        { atMs: 132, markerX: 912 },
+        { atMs: 165, markerX: 953 },
+        { atMs: 198, markerX: 994 },
+      ],
+      clock,
+    );
+    const { press, presses } = recordingPress(clock);
+
+    const out = await timeQte({
+      sampler, now: clock.now, wait: clock.wait, press,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 0.05,
+    });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.probe).toBe(true);
+    expect(out.target).toBe(1111);
+    expect(out.tapX).toBe(830);
+    expect(out.atMs).toBeCloseTo(166.2, 0);
     expect(presses).toHaveLength(1);
   });
 
@@ -654,7 +688,7 @@ describe('timeQte', () => {
 
     const out = await timeQte({
       sampler, now: clock.now, wait: clock.wait, press,
-      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000,
+      latencyMs: 60, budgetMs: 4000, carryTauS: 610 / 6_000, carryMeasured: true,
     });
 
     expect(out.ok).toBe(true);

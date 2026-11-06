@@ -71,7 +71,7 @@
 import type { ActionResult, Frame, FrameSource, Point, QteZone } from '../contracts.ts';
 import { parseQte, qteWindow, type QteRefusalReason } from '../perception/chest.ts';
 import {
-  BOUNCE_LEFT_X, BOUNCE_RIGHT_X, planTap, predictRest, qteVelocity,
+  BOUNCE_LEFT_X, BOUNCE_RIGHT_X, PROBE_SPEED_GATE_PX_PER_S, planTap, predictRest, qteVelocity,
   type QteSample,
 } from '../policy/qte.ts';
 
@@ -173,6 +173,13 @@ export interface QteTiming {
   readonly restSettled: boolean;
   /** When the press was sent, on the caller's clock (ms). */
   readonly pressAtMs: number;
+  /**
+   * This press was a **probe** (operator, 2026-11-07): the bar ran faster than the corpus the model was
+   * fitted on and no measured slide was known, so the pass was spent pressing the **arrival** onto the
+   * zone centre — no carry — and the rest read is the slide at that speed. One pass buys the fit the
+   * next bar uses.
+   */
+  readonly probe?: boolean;
   /** When the actuator answered, on the caller's clock (ms) — the round trip's end. */
   readonly ackAtMs: number;
   /** From the planning reading's clock to the send: the delay the loop actually waited (ms). */
@@ -203,6 +210,8 @@ export type QteRecordEvent =
     readonly v: number;
     readonly target: number;
     readonly delayMs: number;
+    /** A probe plan (2026-11-07): no carry, aimed at the zone centre on arrival. */
+    readonly probe?: boolean;
   }
   | {
     readonly kind: 'press';
@@ -260,6 +269,12 @@ export interface QteTimingOptions {
    * press (`worlds.wvd.qtePriorCarryTauS`). The plan's one slide term.
    */
   readonly carryTauS?: number | undefined;
+  /**
+   * Whether `carryTauS` is a **measured** slide (an earlier press's park) or only the prior. A bar whose
+   * speed passes `PROBE_SPEED_GATE_PX_PER_S` with no measured slide is pressed as a probe: the model
+   * has never seen that speed, and one pass buys the measurement (operator, 2026-11-07).
+   */
+  readonly carryMeasured?: boolean | undefined;
   /** ± uncertainty of the input leg, ms, for the stop band (operator rule 2026-11-05). */
   readonly latencySpreadMs?: number | undefined;
   /** ± uncertainty of the carry, px, for the stop band. */
@@ -288,7 +303,7 @@ export type QteTimer = (options: QteTimingOptions) => Promise<QteOutcome>;
 export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
   const {
     sampler, press, now, wait, latencyMs, budgetMs, record,
-    carryTauS, latencySpreadMs = 0, carrySpreadPx = 0,
+    carryTauS, carryMeasured = false, latencySpreadMs = 0, carrySpreadPx = 0,
   } = options;
 
   // A mis-typed number must not become a press, and an unbounded loop is the one failure this
@@ -341,9 +356,14 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
     if (v === null) continue;
 
     const remainingMs = Math.max(0, budgetMs - (now() - startedAtMs));
-    // The measured carry for this bar (when an earlier press parked) replaces the fixed model, and
-    // the stop band is only pressed when it is inside a zone to the required share.
-    const carryPx = carryTauS !== undefined && Number.isFinite(carryTauS) ? v * carryTauS : undefined;
+    // A bar faster than the corpus the model was fitted on, with no measured slide for it, is pressed
+    // as a **probe** (operator, 2026-11-07): the pass is spent putting the marker on the zone centre at
+    // arrival — no carry, no band — so the park that follows is the slide at this speed, and the next
+    // bar is planned with it. A bar inside the corpus keeps the measured stop-band plan.
+    const probe = !carryMeasured && Math.abs(v) > PROBE_SPEED_GATE_PX_PER_S;
+    const carryPx = probe
+      ? 0
+      : carryTauS !== undefined && Number.isFinite(carryTauS) ? v * carryTauS : undefined;
     const plan = planTap({
       markerX: reading.markerX,
       v,
@@ -354,13 +374,14 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
       latencySpreadMs,
       carrySpreadPx,
       velocitySpreadPxPerS: Math.abs(v) * VELOCITY_ERROR_RATIO,
-      minOverlap: 0.95,
+      minOverlap: probe ? 0 : 0.95,
     });
     planAttempted = true;
     if (plan !== null) {
       planFound = true;
       record?.({
         kind: 'plan', atMs: reading.atMs, v, target: plan.target, delayMs: plan.atMs,
+        ...(probe ? { probe: true } : {}),
       });
     }
     // No attempt-vs-reroll callback any more (2026-11-06): the operator's "can this pass succeed?"
@@ -437,6 +458,7 @@ export async function timeQte(options: QteTimingOptions): Promise<QteOutcome> {
       delayActualMs,
       inputMs,
       tauS,
+      ...(probe ? { probe: true } : {}),
     };
   }
 }

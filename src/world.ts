@@ -2355,6 +2355,9 @@ export class WvdWorld implements World {
         latencyMs: this.#qteLatencyMs ?? cfg.qteLatencyMs,
         budgetMs: cfg.qteSubLoopMs,
         carryTauS: this.#qteCarryTauS ?? Math.max(0, cfg.qtePriorCarryTauS),
+        // A prior is not a measurement: a bar faster than the corpus is pressed as a probe until this
+        // run has measured a slide (operator, 2026-11-07).
+        carryMeasured: this.#qteCarryTauS !== null,
         latencySpreadMs: QTE_LATENCY_SPREAD_MS,
         // The band is only as honest as the carry's source: the prior before this bar has a park,
         // the bar's own measured value after (operator rule 2026-11-05, calibrated 2026-11-06).
@@ -2436,7 +2439,9 @@ export class WvdWorld implements World {
         + `tapX=${outcome.tapX} restX=${outcome.restX === null ? 'unread' : outcome.restX} `
         + `settled=${outcome.restSettled} delayActualMs=${Math.round(outcome.delayActualMs)} `
         + `roundTripMs=${Math.round(roundTripMs)} inputMs=${outcome.inputMs === null ? 'none' : Math.round(outcome.inputMs)} `
-        + `tau=${outcome.tauS === null ? 'unmeasured' : outcome.tauS.toFixed(4)}s`,
+        + `tau=${outcome.tauS === null ? 'unmeasured' : outcome.tauS.toFixed(4)}s`
+        // The probe is named where it is spent: a fast bar's pass bought the slide at that speed.
+        + (outcome.probe === true ? ' probe' : ''),
     );
   }
 
