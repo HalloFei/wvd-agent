@@ -87,6 +87,39 @@ describe('native JPEG path', () => {
     }
   }, 20000);
 
+  it.skipIf(!WINDOWS)('the encoder worker encodes with jpeg-js when it is asked for, and reports no problem', async () => {
+    // Operator 2026-11-07: jpeg-js was wanted as the default because the GDI+ save path's COM vtable
+    // call through koffi crashed the worker at the end of long runs. It is not the default yet: a full
+    // 1920x1080 frame costs 174 ms at q75 (measured), and the child's one-frame variant path (the QTE
+    // band crop, the escalation snapshot) stopped serving under it in the snapshot fixture.
+    const { port1, port2 } = new MessageChannel();
+    const worker = new Worker(new URL('../src/engine/jpeg-worker.mjs', import.meta.url), {
+      workerData: { quality: 80, useJpegJs: true, port: port2 },
+      transferList: [port2],
+    });
+    try {
+      const messages: Array<Record<string, unknown>> = [];
+      const frame = new Promise((resolve) => worker.on('message', (message) => {
+        messages.push(message);
+        if (message.kind === 'frame') resolve(message);
+      }));
+      const width = 64;
+      const height = 48;
+      const pixels = quadrantFrame(width, height);
+      port1.postMessage({ seq: 1, pixels: pixels.buffer, width, height, capturedAt: 0 }, [pixels.buffer as ArrayBuffer]);
+      const encoded = (await frame) as { width: number; height: number; jpeg: Uint8Array };
+      expect(encoded.width).toBe(width);
+      expect(encoded.height).toBe(height);
+      expect([...new Uint8Array(encoded.jpeg).subarray(0, 2)]).toEqual([0xff, 0xd8]);
+      expect(messages.some((message) => message.kind === 'problem')).toBe(false);
+      const ready = messages.find((message) => message.kind === 'ready');
+      expect(ready).toMatchObject({ kind: 'ready', role: 'encoder', gdiplus: false });
+    } finally {
+      worker.terminate();
+      port1.close();
+    }
+  }, 20000);
+
   it.skipIf(!WINDOWS)('the encoder worker falls back to jpeg-js and reports native-encoder-unavailable (R23)', async () => {
     const { port1, port2 } = new MessageChannel();
     const worker = new Worker(new URL('../src/engine/jpeg-worker.mjs', import.meta.url), {

@@ -96,7 +96,9 @@ const captureWorker = new Worker(new URL('./capture-worker.mjs', import.meta.url
   transferList: [channel.port1],
 });
 const encoderWorker = new Worker(new URL('./jpeg-worker.mjs', import.meta.url), {
-  workerData: { quality, port: channel.port2 },
+  // GDI+ unless the run asks for the JS encoder (operator, 2026-11-07: jpeg-js as the default broke the
+  // one-frame variant path in the child and costs 174 ms a full frame at q75 — see jpeg-worker.mjs).
+  workerData: { quality, port: channel.port2, useJpegJs: process.env.WVD_JPEG_JS_ENCODER === '1' },
   transferList: [channel.port2],
 });
 

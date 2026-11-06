@@ -1,7 +1,7 @@
 /**
  * The engine's JPEG encoder thread. Frames arrive from the capture worker on a MessagePort; encoded
- * frames go to the protocol thread on `parentPort`. GDI+ is the encoder; `jpeg-js` is the fallback,
- * and a fallback is never silent — it posts `native-encoder-unavailable`, which the child forwards
+ * frames go to the protocol thread on `parentPort`. GDI+ is the encoder, and `jpeg-js` the fallback:
+ * a fallback is never silent — it posts `native-encoder-unavailable`, which the child
  * as `engineProblem` so a session cannot time a QTE on a 5 fps path without being told (R23).
  *
  * The perception path is untouched here: a frame with no variant pending is encoded at its native
@@ -22,6 +22,8 @@ import { createJpegEncoder, gdiplusProblem } from './gdiplus.mjs';
 import { scaleBgra } from './scale.mjs';
 
 const quality = Number(workerData?.quality ?? 75);
+/** The operator asked for the JS encoder (WVD_JPEG_JS_ENCODER=1) — see the header for why it is not the default yet. */
+const useJpegJs = workerData?.useJpegJs === true;
 const forceJpegJs = Boolean(workerData?.forceJpegJs);
 /** MessagePort to the capture worker: frames in, spent buffers back. */
 const frames = workerData.port;
@@ -42,8 +44,14 @@ function reportFallback(detail) {
   parentPort.postMessage({ kind: 'log', message: `JPEG encoder fallback: jpeg-js (${detail})` });
 }
 
-if (forceJpegJs) {
-  reportFallback('forced by workerData');
+if (useJpegJs || forceJpegJs) {
+  if (forceJpegJs) {
+    // The operator or a run pinned the native encoder off because it is failing: do not try it again.
+    reportFallback('forced by workerData');
+  } else {
+    // Asked for by name: a JS encoder in this thread, not a fallback, so not a problem.
+    parentPort.postMessage({ kind: 'log', message: 'JPEG encoder: jpeg-js (asked for; WVD_JPEG_JS_ENCODER=1)' });
+  }
 } else {
   try {
     encoder = createJpegEncoder(quality);

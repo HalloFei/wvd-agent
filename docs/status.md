@@ -1083,6 +1083,20 @@ key, no network at runtime after the models land). Its two integers are fed back
 parse. Measured on the four committed readouts: 16/4, 13/25, 19/2, 20/14 — all correct, including a
 frame whose OCR boxes came back out of label order. The escalation is off unless the harness sets
 `WVD_OCR_PYTHON` and `WVD_OCR_SCRIPT`, so the loop's behaviour is unchanged without them.
+## The encoder: why jpeg-js is not the default yet (2026-11-07)
+
+The operator asked for `jpeg-js` as the default because the GDI+ encode's COM vtable call through
+koffi (`seekEnd` after every save) took a napi fatal error at the end of long runs and left the capture
+stale. Measured, before switching: a full 1920x1080 BGRA frame costs **174 ms** at q75 with jpeg-js
+(native ~20 ms), and with it as the default the child's **one-frame variant path** — the QTE band crop
+and the escalation snapshot — stopped being served in `tests/engine-child-snapshot.test.ts` (2 of 3
+cases, deterministic; the directive reached the encoder after the frames had stopped, no reply). A
+broken variant path would break the QTE, so the encoder stays GDI+ by default and jpeg-js is opt-in:
+`WVD_JPEG_JS_ENCODER=1` (the child passes `useJpegJs`).
+
+Next step is not 'restart on crash': the right fix removes the native bridge from the hot path
+altogether — capture raw BGRA to the protocol thread (transferable buffers, no encode at all) and
+encode only the escalation snapshots — which also makes a 30 fps capture affordable in JS.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only
