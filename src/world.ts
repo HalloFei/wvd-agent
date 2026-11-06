@@ -93,6 +93,7 @@ import { nextOrientStep, type OrientCommand } from './policy/orient.ts';
 import { chooseInnRest } from './policy/inn.ts';
 import { restAtInn } from './actions/inn.ts';
 import { WORLD_SCREENS } from './tasks/steps.ts';
+import { RunStats, formatSpan } from './stats.ts';
 import {
   CONSOLE_GET_METHODS,
   CONSOLE_LOG_LIMIT,
@@ -723,6 +724,8 @@ export class WvdWorld implements World {
   /** The loot card's tap clock and count, so a modal that never leaves is bounded (lootTap*). */
   #lootTapAtMs: number | null = null;
   #lootTaps = 0;
+  /** The run's own log: chests and battles, per cycle and in total (operator, 2026-11-07). */
+  #stats = new RunStats();
   /** The map's pointer mode, as last known: null unknown, true on. Reset whenever the map closes. */
   #pointerMode: boolean | null = null;
   /** The result banner's continue arrow was sent for this visit to the item-claim screen. */
@@ -1191,6 +1194,9 @@ export class WvdWorld implements World {
     this.#pacer.observe(observation.screen);
     this.#track(observation);
     this.#measureProgress(observation, now);
+    // The run's own log (operator, 2026-11-07): one interval per chest and per battle, from the game's
+    // mode — which holds a modal mode through the frames that do not name it.
+    this.#stats.observe(this.#mode.mode, now);
 
     // A travel or a climb just landed: the game is in its load. A named frame means the load is over
     // and the loop carries on in this same tick; while the frame is nameless the loop only watches.
@@ -2206,6 +2212,10 @@ export class WvdWorld implements World {
    */
   async #finishCycle(): Promise<void> {
     this.#cyclesDone += 1;
+    const cycleStats = this.#stats.endCycle(this.#now());
+    this.#host?.log.info(
+      `wvd: cycle ${cycleStats.cycle} stats: chests ${formatSpan(cycleStats.chests)}; battles ${formatSpan(cycleStats.battles)}`,
+    );
     if (this.#cyclesDone < Math.max(1, this.#cfg.cycles) && this.#task !== null) {
       this.#resetCycle();
       if (this.#task.orient !== undefined) {
@@ -2991,6 +3001,12 @@ export class WvdWorld implements World {
 
   /** Close the session exactly once: settle the paused tick first, then release the engine. */
   async #endSession(reason: string, options: { report?: boolean; failed?: boolean } = {}): Promise<void> {
+    // The run's own log, one line at the end (operator, 2026-11-07): the numbers the morning report
+    // quotes, written by the loop rather than reconstructed from the frames afterwards.
+    const summary = this.#stats.summary();
+    this.#host?.log.info(
+      `wvd: run stats: ${summary.cycles.length} cycles; chests ${formatSpan(summary.chests)}; battles ${formatSpan(summary.battles)}`,
+    );
     const wasRunning = this.#running;
     // Stop a running script at its next step boundary before anything else is torn down: the task
     // must not keep pressing keys into a closed session.
