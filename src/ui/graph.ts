@@ -124,7 +124,11 @@ export function validateCatalog(catalog: UiCatalog): readonly string[] {
       }
     }
     for (const page of catalog.pages) {
-      if (!reachable.has(page.id)) problems.push(page.id + ' is not reachable from a root');
+      // A page opened by a screen the catalog does not model (the loot card) has no enter edge and is
+      // an entry point in its own right; the page itself says which screen opens it.
+      if (reachable.has(page.id)) continue;
+      if (page.opensFrom !== undefined && page.opensFrom.length > 0) continue;
+      problems.push(page.id + ' is not reachable from a root');
     }
   }
   return problems;

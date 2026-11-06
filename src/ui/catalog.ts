@@ -56,6 +56,12 @@ export interface UiPage {
   readonly measured: string;
   /** A further note: an observed ambiguity, or how a button was verified. */
   readonly note?: string;
+  /**
+   * The **screen** that opens this page when no catalogued page does — a loot card, say, which is a
+   * perceiver screen rather than one of the catalog's pages. Such a page has no enter edge to reach it,
+   * so the validator lets it stand as an entry point instead of calling it unreachable.
+   */
+  readonly opensFrom?: string;
 }
 
 /** The knowledge base. Pages are addressed by id; order is provenance, not meaning. */

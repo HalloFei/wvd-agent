@@ -112,6 +112,17 @@ export const UI_CATALOG: UiCatalog = {
       ],
     },
     {
+      id: 'item-detail',
+      title: '道具详情 (item detail)',
+      section: 'dungeon',
+      measured: '2026-11-07: the frame that stopped the 99-cycle run attempt 2 (00:03:25, 453 ticks unnamed); X 关闭 at (960, 760) is the measured close',
+      note: 'The panel the loot card opens: the item traits (【抗不死】/【力量适应+】) over the blurred 3-D view, with one control. Its content differs per item, so the page is recognised by the close tile, not by a title. 关闭 returns to the loot card; the catalog names the 3-D view behind it, and the loop re-observes after the tap.',
+      opensFrom: 'drop-item-claim',
+      rows: [
+        { label: '关闭', kind: 'exit', at: { x: 960, y: 760 }, child: 'dungeon' },
+      ],
+    },
+    {
       id: 'town',
       title: '诺森霍洛村 (the rest town, vnh)',
       section: 'town',

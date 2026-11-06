@@ -23,6 +23,9 @@ const PAGES: readonly { readonly page: string; readonly file: string }[] = [
   { page: 'temple', file: 'temple-1280.jpg' },
   { page: 'trader', file: 'trader-1280.jpg' },
   { page: 'blessed-day', file: 'blessed-day-1280.jpg' },
+  // A page with no title: recognised by its one control (the item detail panel that stopped the
+  // 99-cycle run's second attempt).
+  { page: 'item-detail', file: '../2026-11-07-item-detail/item-detail-1280.jpeg' },
 ];
 
 describe('the knowledge base reader', () => {

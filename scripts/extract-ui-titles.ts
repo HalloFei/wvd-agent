@@ -30,6 +30,8 @@ const TITLES: readonly { readonly page: string; readonly source: string; readonl
   { page: 'temple', source: DIR + 'temple-1280.jpg', region: { x0: 0.46, y0: 0.035, x1: 0.54, y1: 0.080 } },
   { page: 'trader', source: DIR + 'trader-1280.jpg', region: { x0: 0.455, y0: 0.035, x1: 0.545, y1: 0.080 } },
   { page: 'blessed-day', source: DIR + 'blessed-day-1280.jpg', region: { x0: 0.45, y0: 0.183, x1: 0.55, y1: 0.235 } },
+  // A page with no title: its one control is the evidence (X 关闭 at 960,760 on the 1920 client).
+  { page: 'item-detail', source: 'testdata/screens/2026-11-07-item-detail/item-detail-1280.jpeg', region: { x0: 0.455, y0: 0.665, x1: 0.545, y1: 0.74 } },
 ];
 
 interface RgbaImage { readonly data: Uint8Array; readonly width: number; readonly height: number }
