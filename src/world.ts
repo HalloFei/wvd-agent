@@ -2603,7 +2603,13 @@ export class WvdWorld implements World {
         // 2026-11-07). The panel covers the toggles, so a frame that is not `combat` hands the
         // sequence no evidence about them — and the confirm step does not need any.
         if (sequence === null || seen === undefined) return;
-        if (seen.screen !== 'combat' && this.#mode.mode !== 'battle') return;
+        // Act on a combat frame, or on the unnamed/loading frames *inside* the battle (the skill panel,
+        // a resolution). A **named** screen that is not combat means the battle is over — the mode
+        // holds it a beat longer, and pressing a battle toggle into that beat lands on whatever the
+        // game put there (live 2026-11-07 01:36: the 自動 press opened 每日任务).
+        const inBattle = seen.screen === 'combat'
+          || ((seen.screen === 'unknown' || seen.screen === 'loading') && this.#mode.mode === 'battle');
+        if (!inBattle) return;
         const now = context?.now ?? this.#now();
         // The turn card is read only while the opener is undecided: it says whether there is a cast at
         // all, and the skill panel dims it, so the read belongs to the command phase.

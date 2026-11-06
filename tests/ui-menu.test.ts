@@ -18,6 +18,9 @@ const PAGES: readonly { readonly page: string; readonly file: string }[] = [
   { page: 'options', file: 'options-1280.jpg' },
   { page: 'records', file: 'records-1280.jpg' },
   { page: 'missions', file: 'missions-1280.jpg' },
+  // The panel is as tall as its list, so a four-task frame puts the title higher: the same page, a
+  // different height (measured 2026-11-07: 0.942 here against 1.000 on the three-task still).
+  { page: 'missions', file: 'missions-four-tasks-1280.jpeg' },
   { page: 'inventory', file: 'inventory-1280.jpg' },
   { page: 'shop', file: 'shop-items-1280.jpg' },
   { page: 'temple', file: 'temple-1280.jpg' },

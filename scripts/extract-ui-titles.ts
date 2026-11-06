@@ -24,7 +24,10 @@ const DIR = 'testdata/screens/2026-11-06-ui/';
 const TITLES: readonly { readonly page: string; readonly source: string; readonly region: ReadRegion }[] = [
   { page: 'options', source: DIR + 'options-1280.jpg', region: { x0: 0.455, y0: 0.070, x1: 0.545, y1: 0.120 } },
   { page: 'records', source: DIR + 'records-1280.jpg', region: { x0: 0.4625, y0: 0.111, x1: 0.5375, y1: 0.161 } },
-  { page: 'missions', source: DIR + 'missions-1280.jpg', region: { x0: 0.45, y0: 0.062, x1: 0.55, y1: 0.132 } },
+  // The daily-missions panel is as tall as its list, so its title moves with the task count: the band
+  // is whole-panel-top wide (measured 2026-11-07: 0.564 at the narrow band on a four-task live frame,
+  // 0.942 at this one).
+  { page: 'missions', source: DIR + 'missions-1280.jpg', region: { x0: 0.42, y0: 0.04, x1: 0.58, y1: 0.16 } },
   { page: 'inventory', source: DIR + 'inventory-1280.jpg', region: { x0: 0.452, y0: 0.048, x1: 0.548, y1: 0.098 } },
   { page: 'shop', source: DIR + 'shop-items-1280.jpg', region: { x0: 0.455, y0: 0.025, x1: 0.545, y1: 0.070 } },
   { page: 'temple', source: DIR + 'temple-1280.jpg', region: { x0: 0.46, y0: 0.035, x1: 0.54, y1: 0.080 } },
