@@ -3231,6 +3231,42 @@ describe("the cycle's rest", () => {
     expect(host.logRecords.some((line) => line.message.includes('the rest is over; the cycle ends here'))).toBe(true);
   });
 
+  it('counts the rest scene as the visit and advances it with its own mark', async () => {
+    // Live 2026-11-07 00:44: the rest scene came up ~10 s after the inn tap and the gate never saw it —
+    // the loop named it chest-opening 0.60, waited its full 90 s, called the cycle unrested, and the
+    // scene then blocked the next cycle's orientation for 45 s.
+    const { task, definition } = restTask(90_000);
+    const { world, host, actuator, perceiver, clock } = makeWorld({
+      observation: farmMap,
+      task,
+      policy: createTaskPolicy(() => definition, routePolicy),
+      cfg: { cycles: 1 },
+    });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls.at(-1)).toBe(`tap ${INN_AT.x},${INN_AT.y}`);
+
+    // The rest scene is the visit itself: one tap on its own continue mark advances it. The scene's
+    // first frame is a transition to the pacer; the second may tap.
+    perceiver.observation = { screen: 'inn-rest', atMs: 200, confidence: 0.75, at: { x: 794, y: 672 } };
+    clock.advance(800);
+    await world.tick();
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls.at(-1)).toBe('tap 794,672');
+    expect(host.logRecords.some((line) => line.message.includes('the inn rest scene: advancing it'))).toBe(true);
+    expect(world.isRunning()).toBe(true);
+
+    // The town again: the rest is over and the cycle ends there, not 90 s later.
+    perceiver.observation = village;
+    clock.advance(800);
+    await world.tick();
+    expect(world.isRunning()).toBe(false);
+    expect(host.logRecords.some((line) => line.message.includes('the rest is over; the cycle ends here'))).toBe(true);
+    expect(host.logRecords.some((line) => line.message.includes('did not take the party'))).toBe(false);
+  });
+
   it('ends the cycle unrested, with a warning, when the inn never takes the party', async () => {
     // One missed tap must not wedge an unattended run: the gate gives up after the task's own bound.
     const { task, definition } = restTask(5_000);

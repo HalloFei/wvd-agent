@@ -44,7 +44,7 @@ export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
-  | 'inn' | 'message' | 'ui-menu' | 'unknown';
+  | 'inn' | 'inn-rest' | 'message' | 'ui-menu' | 'unknown';
 
 // §3 Perception
 
@@ -163,6 +163,18 @@ export type Observation =
       readonly item?: string;
     }
   | {
+      readonly screen: 'inn-rest';
+      readonly atMs: number;
+      readonly confidence: number;
+      /**
+       * The inn's rest scene (operator, 2026-11-07): the party has taken the room and the game plays the
+       * rest — a blurred inn interior with the rest caption and the yellow continue mark. The mark's own
+       * centroid is the tap that advances it to the after-rest box; the rest gate counts this screen as
+       * the visit, so the cycle no longer waits 90 s for a dialog that has already happened.
+       */
+      readonly at: Point;
+    }
+  | {
       readonly screen: 'ui-menu';
       readonly atMs: number;
       readonly confidence: number;
@@ -200,7 +212,7 @@ export type Observation =
        */
       readonly dungeonLike?: boolean;
     }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'message' | 'ui-menu' | 'drop-item-claim' | 'unknown'>;
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'inn-rest' | 'message' | 'ui-menu' | 'drop-item-claim' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }

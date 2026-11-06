@@ -1057,6 +1057,21 @@ observation carries the name (floor 0.8: the same currency 0.996–1.000, the ne
 0.594), and the World logs what it claimed. An unfamiliar drop still names the screen — it is the
 claim screen whatever the line says — so a new item costs a recorded frame and a line in the table, not
 a stalled run.
+## The inn's rest scene, and what separates it (2026-11-07)
+
+The three-cycle test stopped because the loop could not tell the inn's rest scene from a chest
+opening. Measured, the dominant separator is **blur**: on a fixed 480×270 grid the rest scene's mean
+edge energy is **2.6**, the eight chest-opening frames are **17.5–18.8**, the loot banner and card
+12.5–13.1 — a 4× gap, and the rest scene is the only full-screen moment the game defocuses. Two more
+facts settle the blurred lookalikes: the caption share (rest 0.034 against the item detail 0.008 and
+the records menu 0.007) and the yellow continue mark (0.0030 against 0).
+
+`perception/inn-rest.ts` now names it `inn-rest` and carries the mark's own centroid as the tap; the
+World advances it with one paced tap, and the rest gate counts the screen as the visit. Before this the
+chest-opening perceiver named the scene `chest-opening` 0.60 (a blurred inn draws no HUD text, and its
+warm interior passes the chest's warm-mass gate), so two cycles each burned 90 s at the inn, called
+themselves unrested, and the scene then blocked the next orientation for 45 s until the stall stopped
+the run. Live: the scene on screen at 00:55 answers `inn-rest` 0.75 with the tap at (1192,1008).
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

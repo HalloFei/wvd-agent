@@ -1370,6 +1370,18 @@ export class WvdWorld implements World {
       return;
     }
 
+    // The inn's rest scene (2026-11-07): the visit itself — a blurred inn interior with the rest caption
+    // and a yellow continue mark. One tap on the mark advances it to the after-rest box; the gate has
+    // already counted the visit by the time this runs.
+    if (!waiting && observation.screen === 'inn-rest') {
+      if (!this.#pacer.ready(now)) return;
+      this.#pacer.act(now);
+      const tapped = await this.#commands.tapPoint(observation.at);
+      if (tapped.ok) this.#host?.log.info('wvd: the inn rest scene: advancing it');
+      else this.#host?.log.warn(`wvd: the rest scene tap was refused (${tapped.reason})`);
+      return;
+    }
+
     // The harken's floor menu (operator rule 2026-11-03): the list is not fixed — a harken offers a
     // floor only once that floor's harken is reconstructed — so the climb reads it. The task names the
     // farm floor's row; when the menu offers it the World taps it (the teleport). When it does not, the
@@ -2230,7 +2242,7 @@ export class WvdWorld implements World {
     // A rest under way is a known pause, not a stall: the visit itself is progress.
     this.#lastProgressAtMs = now;
     // The inn's own screens are the plug-in's, and they are the visit: the gate only watches for it.
-    if (observation.screen === 'inn' || observation.screen === 'message') {
+    if (observation.screen === 'inn' || observation.screen === 'inn-rest' || observation.screen === 'message') {
       gate.seenInn = true;
       return false;
     }

@@ -31,6 +31,7 @@ import { MainCharacterDeathPerceiver } from './perception/death.ts';
 import { ReviveQtePerceiver } from './perception/revive-qte.ts';
 import { InnPerceiver } from './perception/inn.ts';
 import { MessagePerceiver } from './perception/message.ts';
+import { InnRestPerceiver } from './perception/inn-rest.ts';
 import { UiMenuPerceiver } from './ui/menu.ts';
 import { restAtInn } from './actions/inn.ts';
 import { HarkenMenuPerceiver } from './perception/harken.ts';
@@ -132,6 +133,10 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     // also clears the opening's gates — live 2026-11-01 it was named `chest-opening` 0.60 and the
     // loop waited on it — while the loot recogniser's caption + AUTO test separates the two.
     { perceiver: new LootPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    // The inn's rest scene (2026-11-07): a defocused inn with the rest caption and the yellow continue
+    // mark. It must be named before the chest-opening perceiver, whose gates it used to pass (blurred
+    // inn = no HUD text, warm interior = the chest's warm mass), stalling the cycle's rest.
+    { perceiver: new InnRestPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The opening is named after the prompt: both draw no HUD, and only the prompt's own recogniser
     // can tell the 打开 menu from the lid lifting.
     { perceiver: new ChestOpeningPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },

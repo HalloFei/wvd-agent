@@ -972,6 +972,7 @@ function emptyScreens(): Record<ScreenId, number> {
     inn: 0,
     message: 0,
     'ui-menu': 0,
+    'inn-rest': 0,
     'harken-menu': 0,
     unknown: 0,
   };

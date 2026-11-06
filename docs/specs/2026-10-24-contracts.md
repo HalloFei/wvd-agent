@@ -66,7 +66,7 @@ export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
-  | 'inn' | 'message' | 'ui-menu' | 'unknown';
+  | 'inn' | 'inn-rest' | 'message' | 'ui-menu' | 'unknown';
 ```
 
 `drop-item-claim` is the chest's item-claim overlay: the contents card with the `获得了…` caption, and
@@ -126,6 +126,20 @@ known rows are the floor, one is never a dialog. The World takes one row a tick 
 (`worlds.wvd.innRoom`), else 标准房, else the first room the dialog offers, else 住宿 or the way out.
 The rest itself is the game's: the dialog closes, the party is healed, and the town it leaves the party
 in is the orientation's business.
+
+`inn-rest` is the inn's **rest scene** (operator, 2026-11-07): the party has taken the room and the game
+plays the rest — a blurred inn interior, the caption 一行人用旅店准备的热水擦拭了身体后，躺在坚硬的床铺上。,
+and the bottom bar (AUTO / ▶ / 自动选择) with the yellow continue mark. One tap on the mark advances
+it to the after-rest box. Measured on the run's own escalation frame
+(`testdata/screens/2026-11-07-inn-rest/rest-scene-1280.jpeg`) against the corpus: **the dominant
+separator is blur** — the rest scene is the game's only end-to-end defocus, mean |Laplacian| on a fixed
+480×270 grid **2.6**, against **17.5–18.8** on the eight chest-opening frames and 12.5–13.1 on the loot
+banner and card; the other blurred screens are separated by the caption share (rest 0.034 against the
+item detail 0.008 and the records menu 0.007) and the mark (0.0030 against 0). `perception/inn-rest.ts`
+carries the numbers. The screen exists because without it the chest-opening perceiver named this scene
+`chest-opening` 0.60 — a blurred inn draws no HUD text and its warm interior passes the chest's warm-mass
+gate — so the rest gate never counted the visit, waited its 90 s, and the scene then blocked the next
+cycle's orientation until the stall stopped the run.
 
 `message` is the game's **one-off message box** (operator, 2026-11-06): a centred dark panel with a
 caption line and the yellow continue mark below it — the after-rest 背包已补充完毕。 was the first one
@@ -250,7 +264,10 @@ export type Observation =
       readonly page: string; readonly title: string;
       /** The catalog's exit row: the tap that returns to the page this one opened over. */
       readonly exit: Point }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'ui-menu' | 'unknown'>;
+  | { readonly screen: 'inn-rest'; readonly atMs: number; readonly confidence: number;
+      /** The yellow continue mark's centroid: one tap there advances the rest to its after-rest box. */
+      readonly at: Point }
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'ui-menu' | 'inn-rest' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }

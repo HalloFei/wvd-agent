@@ -62,6 +62,7 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   'revive-qte': screen('revive-qte'),
   inn: { screen: 'inn', atMs: AT, confidence: CONFIDENT, rows: [] },
   message: { screen: 'message', atMs: AT, confidence: CONFIDENT, at: { x: 960, y: 570 } },
+  'inn-rest': { screen: 'inn-rest', atMs: AT, confidence: CONFIDENT, at: { x: 1_191, y: 1_008 } },
   'ui-menu': {
     screen: 'ui-menu',
     atMs: AT,
