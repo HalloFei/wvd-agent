@@ -1042,6 +1042,21 @@ Still open: 打铁铺 and 酒馆 were never opened, the options/records children
 and the reader knows only the pages whose title was recorded. The probe workflow is the `wvd-ui-probe`
 skill. Design record: `2026-11-06-ui-knowledge-base.md`.
 
+## Drops are named from the game's own line (2026-11-06)
+
+The chest's result banner was the other unnamed screen of the 03:13 run: `获得了10,000拜恩纸币！！` over
+the opened chest, named `chest-opening` 0.60 for 1 091 ticks because the AUTO box that gated the banner
+read 6.3 % over luma 40 (the opened chest lights the floor) against a 2.5 % bound. The operator's solve
+is the simplest one: **name the drop after the line the game draws, and record it.**
+
+The banner is now read as one caption line (ink 395–1 232, 13–20 ink rows) over the yellow continue
+mark (23–68 px; 10 on one popup, 0 elsewhere) — measured against the battle frames that once fooled
+the loot gate, which carry a screen of text (35+ rows) or no mark at all. `src/perception/drops.ts`
+records the drops by caption, generated from the frames by `scripts/extract-drop-items.ts`; the
+observation carries the name (floor 0.8: the same currency 0.996–1.000, the nearest different drop
+0.594), and the World logs what it claimed. An unfamiliar drop still names the screen — it is the
+claim screen whatever the line says — so a new item costs a recorded frame and a line in the table, not
+a stalled run.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

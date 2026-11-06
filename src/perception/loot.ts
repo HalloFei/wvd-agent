@@ -42,6 +42,8 @@
  * while the frame's own size says nothing about the client it came from.
  */
 import type { Frame, Observation, Perceiver, RgbaImage } from '../contracts.ts';
+import { DROP_ITEMS } from './drops.ts';
+import { correlation, sampleRegion } from './reader.ts';
 
 /** The narrowest frame this geometry is stated for: half the measured capture's width. */
 const MIN_WIDTH = 640;
@@ -89,6 +91,37 @@ const CAPTION_BOX = { x0: 0.30, x1: 0.70, y0: 0.78, y1: 0.86 } as const;
 const CAPTION_BRIGHT = 120;
 const CAPTION_INK_MIN = 100;
 
+/**
+ * The result banner's own gates, re-measured 2026-11-06 on the currency reward that stalled the 02:57
+ * and 03:13 runs (`testdata/screens/2026-11-06-loot-currency/`). The old AUTO-box gate refused it: the
+ * opened chest's glow lights the floor the box sits on, so it measured 6.3 % over luma 40 against a
+ * 2.5 % bound, and the composite named the banner `chest-opening` 0.60 for 1 091 ticks.
+ *
+ * | fact | the drop screens | the nearest other frame |
+ * | --- | --- | --- |
+ * | caption ink, band x 0.30-0.70, y 0.78-0.86 | 395-1 232 | 1 964 (the dungeon map), 4 025+ (a battle) |
+ * | caption rows carrying ink | 13-20 | 35 (the battle's slot panel) |
+ * | caption x width | 0.130-0.166 | 0.181 (选项), 0.198 (the slot panel) |
+ * | yellow continue mark, x 0.55-0.70, y 0.90-0.97 | 23-68 | 10 (one popup), 0 on every other frame |
+ *
+ * The mark is the claim's own affordance — the operator's rule is that a tap anywhere claims the drop,
+ * and this is what the screen draws to say so — so a caption line above it is a drop. The battle's
+ * `slot-panel-opening` is the frame this must not take: its ink (950) sits inside the band and its
+ * width (0.198) nearly does; its 35 ink rows and its absent mark keep it out.
+ */
+const BANNER_CAPTION_INK_MIN = 150;
+const BANNER_CAPTION_INK_MAX = 1_600;
+const BANNER_CAPTION_ROWS_MAX = 24;
+const CONTINUE_MARK_MIN = 20;
+const CONTINUE_BOX = { x0: 0.55, x1: 0.70, y0: 0.90, y1: 0.97 } as const;
+
+/**
+ * How well a recorded drop's caption must match: the same currency answers 1.000 and 0.9999 on the
+ * two banners and 0.996 on the older book frame, the nearest *different* drop 0.594 (rusty old coin),
+ * and an unrelated screen at most 0.026. 0.8 sits between them with room on both sides.
+ */
+const DROP_NAME_FLOOR = 0.8;
+
 /** A flat field is "nothing was drawn", not this screen (contracts §2). */
 const FLAT_STD_DEV = 8;
 
@@ -108,7 +141,15 @@ export class LootPerceiver implements Perceiver {
     }
     if (isFlat(image)) return refusal(frame, 0);
     if (!isLootOverlay(image) && !isResultBanner(image)) return refusal(frame, UNNAMED_CONFIDENCE);
-    return { screen: 'drop-item-claim', atMs: frame.atMs, confidence: LOOT_CONFIDENCE };
+    // The drop's own name, when its caption was recorded: the World logs it, so an unfamiliar drop
+    // still leaves a name in the run's record instead of an anonymous claim.
+    const item = dropName(image);
+    return {
+      screen: 'drop-item-claim',
+      atMs: frame.atMs,
+      confidence: LOOT_CONFIDENCE,
+      ...(item === null ? {} : { item }),
+    };
   }
 }
 
@@ -221,53 +262,82 @@ function itemArtPixels(image: RgbaImage): number {
 
 /**
  * The result banner: the same `获得了…` caption, but the contents card's UI is gone and the opened
- * chest is 3-D art behind the text. Measured live 2026-11-01 (1920x1080): the caption ink is present
- * (407 px at 1280x720 on the card frame, 100+ here) where the card's border rows are not, and the
- * small AUTO label sits at x 0.33-0.42, y 0.91-0.97 — the card's AUTO, over the 3-D view.
+ * chest is 3-D art behind the text — one caption line over the yellow continue mark.
  *
  * Without this branch the composite named the banner `chest-opening` 0.60, the route waited, and the
- * farm stood on a screen that needs exactly one tap at the bottom-right continue arrow.
+ * farm stood on a screen that needs exactly one tap anywhere on the reward (operator, 2026-11-06).
  */
 function isResultBanner(image: RgbaImage): boolean {
-  if (captionInk(image) < CAPTION_INK_MIN) return false;
   // The card is *collected* on this screen, so its frame must be gone. Without this the battle's skill
-  // detail panel — which draws a card-like border pair and a bright line of text — qualified as the
+  // detail panel - which draws a card-like border pair and a bright line of text - qualified as the
   // banner (live 2026-11-03 03:17: the loop tapped the loot card's point ten times into the battle).
   if (hasCardFrame(image)) return false;
-  const box = autoLabel(image);
-  // The banner sits on the dark 3-D floor, so the AUTO box is mostly dark with a dim label in it:
-  // measured 0.93 % of the box over luma 40 on the loot frame against 100 % on an opening frame (the
-  // lit chest fills it) and 36 % on the 3-D view after a QTE cancel. The banner measures 2.00 %, a
-  // battle's skill detail panel 3.08 % (measured 2026-11-03 — that panel is the false positive that put
-  // ten loot taps into a battle), so the bound is 2.5 %. Thin, and temporary - the operator's loot-item
-  // database replaces it: a qualified loot frame carries the item's name and its image (2026-11-03).
-  if (box.over40 > box.count * 0.025) return false;
-  if (box.bright > Math.max(2, Math.round(box.count * 0.02))) return false;
-  return box.ink >= Math.max(12, Math.round(40 * (image.width * image.height) / (1_920 * 1_080)));
+  const line = captionLine(image);
+  if (line.ink < BANNER_CAPTION_INK_MIN || line.ink > BANNER_CAPTION_INK_MAX) return false;
+  if (line.rows > BANNER_CAPTION_ROWS_MAX) return false;
+  return continueMark(image) >= CONTINUE_MARK_MIN;
 }
 
-/** The small AUTO label at the banner's bottom left, measured over luma 40 and against bright ink. */
-function autoLabel(image: RgbaImage): { ink: number; bright: number; over40: number; count: number } {
-  const x0 = Math.round(image.width * 0.33);
-  const x1 = Math.round(image.width * 0.42);
-  const y0 = Math.round(image.height * 0.91);
-  const y1 = Math.round(image.height * 0.97);
+/** The caption line's ink, its x width and the rows that carry any of it. */
+function captionLine(image: RgbaImage): { readonly ink: number; readonly width: number; readonly rows: number } {
+  const x0 = Math.round(image.width * CAPTION_BOX.x0);
+  const x1 = Math.round(image.width * CAPTION_BOX.x1);
+  const y0 = Math.round(image.height * CAPTION_BOX.y0);
+  const y1 = Math.round(image.height * CAPTION_BOX.y1);
+  const rowInk = new Uint32Array(Math.max(1, y1 - y0));
   let ink = 0;
-  let bright = 0;
-  let over40 = 0;
+  let minX = image.width;
+  let maxX = -1;
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
+      const o = (y * image.width + x) * 4;
+      if (image.data[o]! > CAPTION_BRIGHT && image.data[o + 1]! > CAPTION_BRIGHT && image.data[o + 2]! > CAPTION_BRIGHT) {
+        ink += 1;
+        rowInk[y - y0] += 1;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+      }
+    }
+  }
+  let rows = 0;
+  for (const count of rowInk) if (count >= 3) rows += 1;
+  return { ink, width: maxX < 0 ? 0 : (maxX - minX + 1) / image.width, rows };
+}
+
+/** The yellow continue mark under the caption: the claim's own affordance (operator, 2026-11-06). */
+function continueMark(image: RgbaImage): number {
+  const x0 = Math.round(image.width * CONTINUE_BOX.x0);
+  const x1 = Math.round(image.width * CONTINUE_BOX.x1);
+  const y0 = Math.round(image.height * CONTINUE_BOX.y0);
+  const y1 = Math.round(image.height * CONTINUE_BOX.y1);
   let count = 0;
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
       const o = (y * image.width + x) * 4;
       const r = image.data[o]!;
       const g = image.data[o + 1]!;
       const b = image.data[o + 2]!;
-      count += 1;
-      if ((r + g + b) / 3 > 40) { ink += 1; over40 += 1; }
-      if (r > 150 && g > 150 && b > 150) bright += 1;
+      if (r > 150 && g > 110 && b < 90 && r - b > 80) count += 1;
     }
   }
-  return { ink, bright, over40, count };
+  return count;
+}
+
+/**
+ * The drop's own name, when the caption matches a recorded one; null when it does not.
+ *
+ * The floor is measured on the committed frames: the same currency on two banners answers 1.000 and
+ * 0.9999, the same currency on the older book frame 0.996, the nearest *different* drop 0.594
+ * (`loot-00`, 锈迹斑斑的古钱), and an unrelated screen at most 0.026. 0.8 sits between them.
+ */
+function dropName(image: RgbaImage): string | null {
+  let best: { readonly item: string; readonly score: number } | null = null;
+  for (const entry of DROP_ITEMS) {
+    const sample = sampleRegion(image, entry.region, entry.width, entry.height);
+    const score = correlation(sample, entry);
+    if (best === null || score > best.score) best = { item: entry.item, score };
+  }
+  return best !== null && best.score >= DROP_NAME_FLOOR ? best.item : null;
 }
 
 /** One border line: its row as a fraction of the height, its brightness, and its gain over the band's surroundings. */

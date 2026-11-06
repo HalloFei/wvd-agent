@@ -2506,6 +2506,11 @@ export class WvdWorld implements World {
         return;
       }
       case 'loot': {
+        const seen = context?.observation;
+        // The drop's own name, when the reader recorded its caption: it is the run's record of what was
+        // claimed (operator, 2026-11-06), and nothing is decided from it.
+        const item = seen?.screen === 'drop-item-claim' ? seen.item : undefined;
+        const named = item === undefined ? '' : ` (${item})`;
         // The loot card is a modal: one tap at the measured card centre collects it. The claim is a
         // direct operation like any other and the pacer owns the moment (operator rule 2026-11-03):
         // the card tap and the banner's continue arrow wait for a frame that has stopped moving and
@@ -2530,7 +2535,7 @@ export class WvdWorld implements World {
           this.#pacer.act(tappedAt);
           const dismissed = await this.#commands.dismissLoot();
           if (!dismissed.ok) this.#host?.log.warn(`wvd: could not dismiss the loot banner (${dismissed.reason})`);
-          else this.#host?.log.info('wvd: dismissed the loot result banner');
+          else this.#host?.log.info(`wvd: dismissed the loot result banner${named}`);
           return;
         }
         this.#lootTapAtMs = tappedAt;
@@ -2538,7 +2543,7 @@ export class WvdWorld implements World {
         this.#pacer.act(tappedAt);
         const tapped = await this.#commands.tapLoot();
         if (!tapped.ok) this.#host?.log.warn(`wvd: could not collect the loot (${tapped.reason})`);
-        else this.#host?.log.info('wvd: collected the loot card');
+        else this.#host?.log.info(`wvd: collected the loot card${named}`);
         return;
       }
       case 'fight': {

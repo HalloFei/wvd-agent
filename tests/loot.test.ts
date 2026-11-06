@@ -28,9 +28,12 @@ import { LootPerceiver } from '../src/perception/loot.ts';
 const LOOT = new URL('../testdata/chest/2026-10-31-loot/', import.meta.url);
 const CHEST = new URL('../testdata/chest/2026-10-24-live-qte/', import.meta.url);
 const OPENER = new URL('../testdata/chest/2026-10-24-opener/', import.meta.url);
+const LOOT_BOOK = new URL('../testdata/chest/2026-11-03-loot-book/', import.meta.url);
 const VIEW = new URL('../testdata/nav-2026-10-31-cancel/', import.meta.url);
 const DIALOG = new URL('../testdata/nav-1024-0213/', import.meta.url);
 const NARROW = new URL('../testdata/chest/2026-10-31-narrow-qte/', import.meta.url);
+const CURRENCY = new URL('../testdata/screens/2026-11-06-loot-currency/', import.meta.url);
+const BATTLE_FRAMES = new URL('../testdata/battle-2026-11-02/', import.meta.url);
 
 /** A shipped still costs ~0.2 s to decode; several tests read the same one, so decode once. */
 const cache = new Map<string, Promise<RgbaImage>>();
@@ -90,6 +93,34 @@ describe('LootPerceiver', () => {
     expect(observation.confidence).toBeGreaterThanOrEqual(0.5);
   });
 
+  it('names the currency reward banner that stalled the 02:57 and 03:13 runs, with the drop\'s own name', async () => {
+    // The frame that held the loop for 1 091 ticks: `chest-opening` 0.60, 22 escalations, `nothing
+    // changed for 120 s`. Its AUTO box reads 6.3 % over luma 40 (the opened chest lights the floor),
+    // which is what the old gate refused; the caption line and the yellow continue mark name it.
+    for (const file of ['loot-currency-1920.jpeg', 'loot-currency-1920-b.jpeg']) {
+      const observation = await perceiver.observe(frameOf(await image(file, CURRENCY)));
+      expect(observation.screen, file).toBe('drop-item-claim');
+      if (observation.screen !== 'drop-item-claim') throw new Error('not a drop');
+      expect(observation.item, file).toBe('10,000拜恩纸币');
+    }
+  });
+
+  it('names the card frame without claiming a name it did not record', async () => {
+    // The item card's caption scores 0.472 against the recorded banner caption: the card draws a
+    // different line over the same panel, so the screen is named and the name is not.
+    const observation = await perceiver.observe(frameOf(await image('loot-item-card-1920.jpg', CURRENCY)));
+    expect(observation.screen).toBe('drop-item-claim');
+    if (observation.screen !== 'drop-item-claim') throw new Error('not a drop');
+    expect(observation.item).toBeUndefined();
+  });
+
+  it('names an older frame carrying the same currency (the reader matches the line, not the frame)', async () => {
+    const observation = await perceiver.observe(frameOf(await image('loot-book.jpg', LOOT_BOOK)));
+    expect(observation.screen).toBe('drop-item-claim');
+    if (observation.screen !== 'drop-item-claim') throw new Error('not a drop');
+    expect(observation.item).toBe('10,000拜恩纸币');
+  });
+
   it('never takes the screens around the chest', async () => {
     const cases: Array<[string, URL]> = [
       // The 3-D view after a QTE cancel: warm stone, HUD up, no card.
@@ -103,6 +134,11 @@ describe('LootPerceiver', () => {
       // A dungeon map and a dialog: both draw bright horizontal lines, neither has the flat card.
       ['map.jpg', DIALOG],
       ['popup.jpg', DIALOG],
+      // The battle's command phase and slot panels: the false positive that once put ten loot taps
+      // into a battle. Their caption bands carry a screen of text, not one claim line.
+      ['command-phase.jpg', BATTLE_FRAMES],
+      ['slot-panel-opening.jpg', BATTLE_FRAMES],
+      ['slot-panel-slow-attack.jpg', BATTLE_FRAMES],
     ];
     for (const [name, dir] of cases) {
       const observation = await perceiver.observe(frameOf(await image(name, dir)));

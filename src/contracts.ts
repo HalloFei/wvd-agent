@@ -150,6 +150,19 @@ export type Observation =
       readonly autoOn?: boolean;
     }
   | {
+      readonly screen: 'drop-item-claim';
+      readonly atMs: number;
+      readonly confidence: number;
+      /**
+       * The drop's own name, when the caption under the reward matches a recorded drop
+       * (`src/perception/drops.ts`). The game draws 获得了 <item>！！, and the operator's rule (2026-11-06)
+       * is that a drop the World has not seen is named after that line and recorded, so the run's
+       * record says what it claimed. Absent when the line has not been recorded yet: the screen is the
+       * claim screen either way, which is what keeps an unfamiliar drop from stalling the farm.
+       */
+      readonly item?: string;
+    }
+  | {
       readonly screen: 'ui-menu';
       readonly atMs: number;
       readonly confidence: number;
@@ -187,7 +200,7 @@ export type Observation =
        */
       readonly dungeonLike?: boolean;
     }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'message' | 'ui-menu' | 'unknown'>;
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'message' | 'ui-menu' | 'drop-item-claim' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }
