@@ -93,24 +93,14 @@ export interface AutoMoveAim {
    * no way to look, and that is all it has.
    */
   readonly capture?: () => Promise<Frame>;
-  /**
-   * How long the pill may take to appear. Measured: present 120 ms after the tap on a settled map;
-   * a map that has just opened is slower, so the default waits the operator's five frames many times
-   * over (see `ELEMENT_WAIT_MS`).
-   */
-  readonly waitMs?: number;
-  readonly pollMs?: number;
 }
 
 /**
- * How long to look for the element, and how often. The operator's rule (2026-11-03): click the chest
- * icon, then wait five or so frames for the 自动移动 element before calling the cell unreachable. At
- * the contract's 30 fps a frame is ~33 ms and the loop's own tick is 100 ms, so this is twelve polls
- * over 1.2 s — generous enough for a map that is still settling, short enough that a genuinely
- * unreachable cell costs one second, not a stall.
+ * The second look's extra wait. Measured: the pill is present 120 ms after the tap on a settled map;
+ * a map that has just opened draws it later. Two looks are enough because the answer is a frame, not
+ * a race, and the operator's rule (2026-11-03) is about not calling a cell unreachable too early.
  */
-const ELEMENT_WAIT_MS = 1_200;
-const ELEMENT_POLL_MS = 100;
+const POPUP_LATE_MS = 250;
 
 /** Resolve after `ms`. The only timing this module owns; it reads no clock and imports none. */
 function settle(ms: number): Promise<void> {
@@ -145,26 +135,35 @@ export async function openMap(
  * party walks; the game does the pathing, fights what it meets and never leaves the floor.
  *
  * `cell` is the route's own grid cell — the only thing the decision carries. Where that cell is on the
- * screen is the map's answer, not the decision's, so `aim.locate` is asked after the mode toggle and
- * re-asked on the retry. A tile click in the default mode is ignored by the game, so the pointer
- * toggle is not optional and a rejected one ends the chain before anything is clicked.
+ * screen is the map's answer, not the decision's, so `aim.locate` is asked after the mode toggle.
+ * The selection then has to be *verified*: the frame after the tap says whether the game raised the
+ * pill, opened a prompt or did nothing — and a frame nobody could read is never "no path".
+ * A tile click in the default mode is ignored by the game, so the pointer toggle is not optional;
+ * it is also a **toggle**, so the caller says whether it is already on (`pointerOn`) and R is not
+ * pressed blindly (2026-11-07).
  */
 export async function automoveToTile(
   actuator: Actuator,
   cell: Point,
   holdMs: number = DEFAULT_HOLD_MS,
   aim?: AutoMoveAim,
+  pointerOn: boolean | null = null,
 ): Promise<ActionResult> {
   if (aim === undefined) {
     // Without a map reader there is no point to tap, and a walk nobody aimed must not be read as a
     // cell the game refuses (2026-11-06). The wiring always hands one in.
     return unaimed(cell, 'no map reader');
   }
-  const pointer = await press(actuator, SCAN.pointer, holdMs);
-  if (!pointer.ok) return pointer;
-  await settle(POINTER_SETTLE_MS);
+  // Pointer mode is a **toggle**, not a switch: pressing R when it is already on turns it off, and the
+  // tile click then selects nothing (live 2026-11-03 22:04). The caller tracks the state — the World
+  // resets it whenever the map closes — so R is pressed only when it is known off or unknown.
+  if (pointerOn !== true) {
+    const pointer = await press(actuator, SCAN.pointer, holdMs);
+    if (!pointer.ok) return pointer;
+    await settle(POINTER_SETTLE_MS);
+  }
 
-  let at = await aim.locate();
+  const at = await aim.locate();
   if (at === null) return unaimed(cell, 'the map could not be read');
   const tile = await actuator.tap(at);
   if (!tile.ok) return tile;
@@ -173,64 +172,44 @@ export async function automoveToTile(
     await settle(POPUP_SETTLE_MS);
     return actuator.tap({ x: at.x, y: at.y - POPUP_RISE_PX });
   }
-  // The element's own position, not a fixed rise: a cell near the panel's top edge has no room
-  // above it, and a cell the game cannot walk to raises no element at all (live, 2026-11-02). Both
-  // answer the same way — the walk is refused, and the World skips that chest.
-  let seen = await waitForElement(aim, at);
-  if (seen.element === null) {
-    // The pointer mode is a **toggle**, and the map remembers it: our R may have turned it *off* on a
-    // map that was already in pointer mode, and the tap then selects nothing (live 2026-11-03 22:04: the
-    // walk to the 楼梯-门 raised no element, and the same tap had raised one an hour earlier). One
-    // retry in the other mode — **re-located**, never a re-tap of a point the map may have moved under.
-    const again = await press(actuator, SCAN.pointer, holdMs);
-    if (!again.ok) return again;
-    await settle(POINTER_SETTLE_MS);
-    at = await aim.locate();
-    if (at === null) return unaimed(cell, 'the map could not be read again');
-    const tapAgain = await actuator.tap(at);
-    if (!tapAgain.ok) return tapAgain;
-    seen = await waitForElement(aim, at);
+  // The selection's own frames answer, in order: the pill, a prompt the tap opened, or nothing. There
+  // is **no second R** — the old retry toggled pointer mode off behind a tap that had worked, and a
+  // failed capture during its 1.2 s poll was indistinguishable from "the cell has no path" (live
+  // 2026-11-07 00:10: the chest at 11,4 was skipped while the JPEG worker was dying).
+  const first = await lookForElement(aim, at);
+  if (first.kind === 'unreadable') return unreadableAfterTap();
+  if (first.element !== null) return actuator.tap(first.element);
+  await settle(POPUP_LATE_MS);
+  const late = await lookForElement(aim, at);
+  if (late.kind === 'unreadable') return unreadableAfterTap();
+  if (late.element !== null) return actuator.tap(late.element);
+  return { ok: false, reason: 'timeout', detail: 'the selection raised no 自動移動 element' };
+}
+
+/** One look after the tap: the element, or a frame nobody could read — which is not "no element". */
+async function lookForElement(
+  aim: AutoMoveAim,
+  near: Point,
+): Promise<{ readonly kind: 'looked'; readonly element: Point | null } | { readonly kind: 'unreadable' }> {
+  const capture = aim.capture;
+  if (capture === undefined) return { kind: 'looked', element: null };
+  try {
+    const frame = await capture();
+    const element = findAutoMoveElement(await frame.toRgba(), near);
+    return { kind: 'looked', element: element === null ? null : element.at };
+  } catch {
+    return { kind: 'unreadable' };
   }
-  if (seen.element === null) {
-    // Nothing was ever looked at: the walk was blind, and blindness is not "no path" (2026-11-06).
-    if (seen.frames === 0) {
-      return { ok: false, reason: 'unavailable', detail: 'no frame arrived to look for the 自动移動 element' };
-    }
-    return { ok: false, reason: 'timeout', detail: 'the tile raised no 自动移動 element' };
-  }
-  return actuator.tap(seen.element);
+}
+
+/** A tap whose answer could not be read is **unaimed**, never a cell without a path (2026-11-07). */
+function unreadableAfterTap(): ActionResult {
+  return { ok: false, reason: 'unavailable', detail: 'the frame after the tap could not be read' };
 }
 
 /** The typed answer for a walk nobody could aim: never a claim about the cell's path. */
 function unaimed(cell: Point, why: string): ActionResult {
   return { ok: false, reason: 'unavailable', detail: `${why}; the walk to ${cell.x},${cell.y} was not aimed` };
-}
-
-/**
- * The element the tap raised, how many frames were actually looked at, and whether one was drawn
- * before the deadline. `frames === 0` means the look never happened.
- */
-async function waitForElement(
-  aim: AutoMoveAim,
-  near: Point,
-): Promise<{ element: Point | null; frames: number }> {
-  const capture = aim.capture;
-  if (capture === undefined) return { element: null, frames: 0 };
-  const deadline = Date.now() + Math.max(1, aim.waitMs ?? ELEMENT_WAIT_MS);
-  const pollMs = Math.max(1, aim.pollMs ?? ELEMENT_POLL_MS);
-  let frames = 0;
-  for (;;) {
-    try {
-      const frame = await capture();
-      frames += 1;
-      const element = findAutoMoveElement(await frame.toRgba(), near);
-      if (element !== null) return { element: element.at, frames };
-    } catch {
-      // A frame nobody could capture is not "no element": keep looking until the deadline.
-    }
-    if (Date.now() >= deadline) return { element: null, frames };
-    await settle(pollMs);
-  }
 }
 
 /**

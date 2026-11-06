@@ -541,6 +541,10 @@ describe('the tick', () => {
     // the new readout instead of staying silent.
     const moved = { ...dungeonMap, map: { ...mapOf(dungeonMap), player: { x: 12, y: 18 } } };
     perceiver.observation = moved;
+    // The walk is a paced operation now (2026-11-07): the map's first frame is a transition, the
+    // second is stable, and the pace must have passed since the previous operation.
+    clock.advance(800);
+    await world.tick();
     clock.advance(100);
     await world.tick();
     expect(actuator.calls).toEqual([
@@ -2839,7 +2843,9 @@ describe('the orientation', () => {
     const farm = mapWith(FARM, [{ kind: 'chest', at: CHEST }]);
     perceiver.observation = farm;
     await world.tick();
-    // Arrival released the walk and the same tick found the farm floor: the first farm command.
+    // The farm floor's first frame is a transition to the pacer; the next one may walk (2026-11-07).
+    clock.advance(100);
+    await world.tick();
     expect(actuator.calls).toEqual(walkCalls(mapOf(farm), CHEST));
   });
 
@@ -3108,13 +3114,17 @@ describe('a chest the party cannot walk to', () => {
   it('skips the cell at once when the tile raises no 自動移動 element, and then leaves', async () => {
     // The walk refuses as soon as the game raises no element (2026-11-02): no five-second wait, no
     // pressed L, and the farm moves on to the other chest in the next tick.
-    const { world, host, actuator } = makeWorld({
+    const { world, host, actuator, clock } = makeWorld({
       observation: twoChests,
       moveResult: { ok: false, reason: 'timeout', detail: 'the tile raised no 自動移動 element' },
     });
     await started(world, host);
 
-    for (let index = 0; index < 5; index += 1) await world.tick();
+    // Each walk is a paced operation: the pace between two of them is real time (2026-11-07).
+    for (let index = 0; index < 5; index += 1) {
+      await world.tick();
+      clock.advance(800);
+    }
 
     // Each chest is refused twice before it is skipped: the first refusal is often the map's fade,
     // and the operator's rule is to claim every chest that is available. With both skipped, the farm
@@ -3134,7 +3144,7 @@ describe('a chest the party cannot walk to', () => {
     await started(world, host);
 
     await world.tick();
-    clock.advance(100);
+    clock.advance(800);
     await world.tick();
 
     // Two walks were attempted, neither tapped a point, and nothing was skipped or exited.

@@ -122,7 +122,12 @@ export interface RouteCommands {
    * screen is read from a frame captured when the tap is sent (`AutoMoveAim`), because the map's
    * canvas moves and a point converted from an older frame can land on another cell (2026-11-06).
    */
-  automoveToTile(cell: Point): Promise<ActionResult>;
+  /**
+   * Walk to a map cell: the pointer toggle (only when the caller says it is not already on), the
+   * cell's tap, then the 自動移動 element the tap raised. `pointerOn` is the World's pointer-mode
+   * state — R is a toggle, so pressing it blindly turns the mode off half the time (2026-11-07).
+   */
+  automoveToTile(cell: Point, pointerOn: boolean | null): Promise<ActionResult>;
   automoveToExit(): Promise<ActionResult>;
   /** Accept the `打开` prompt of the chest the party stands at. */
   acceptChestPrompt(): Promise<ActionResult>;
@@ -718,6 +723,8 @@ export class WvdWorld implements World {
   /** The loot card's tap clock and count, so a modal that never leaves is bounded (lootTap*). */
   #lootTapAtMs: number | null = null;
   #lootTaps = 0;
+  /** The map's pointer mode, as last known: null unknown, true on. Reset whenever the map closes. */
+  #pointerMode: boolean | null = null;
   /** The result banner's continue arrow was sent for this visit to the item-claim screen. */
   #lootDismissed = false;
   /** Commands sent and waiting for their screen to answer (one at a time). */
@@ -2435,7 +2442,19 @@ export class WvdWorld implements World {
         // The route names a grid cell and nothing else: the pixel is read at tap time, from a frame
         // captured then, by the binding in the composition root. Converting it here — from the frame
         // the decision came from — is what aimed two reachable chests three cells off (2026-11-06).
-        await this.#press('move', fromScreen, () => this.#commands.automoveToTile(intent.target), intent.target);
+        // The walk is a direct operation like every other: the pacer decides when it may be sent,
+        // and the pointer mode it starts from is state the World keeps (R is a toggle).
+        if (!this.#pacer.ready(this.#now())) return;
+        this.#pacer.act(this.#now());
+        const walked = await this.#press(
+          'move',
+          fromScreen,
+          () => this.#commands.automoveToTile(intent.target, this.#pointerMode),
+          intent.target,
+        );
+        // A walk that was sent has the map in pointer mode: it pressed R, or was told it was on.
+        // A refused walk leaves the state as it was.
+        if (walked !== null && walked.ok) this.#pointerMode = true;
         return;
       }
       case 'exit':
@@ -2761,7 +2780,12 @@ export class WvdWorld implements World {
         // the walk (live 2026-11-03 21:45: a bare tap raised the prompt and the screen never changed, so
         // the press looked ignored). The climb therefore goes through the farm's own automove, which
         // locates the cell on a fresh frame and taps that prompt.
-        await this.#press('move', fromScreen, () => this.#commands.automoveToTile(command.at));
+        const climbed = await this.#press(
+          'move',
+          fromScreen,
+          () => this.#commands.automoveToTile(command.at, this.#pointerMode),
+        );
+        if (climbed !== null && climbed.ok) this.#pointerMode = true;
         return;
       }
       case 'climb': {
@@ -2841,10 +2865,10 @@ export class WvdWorld implements World {
     fromScreen: ScreenId | null,
     command: () => Promise<ActionResult>,
     target: Point | null = null,
-  ): Promise<void> {
+  ): Promise<ActionResult | null> {
     if (this.#cfg.dryRun) {
       this.#host?.log.info(`wvd: dry run, would ${kind}`);
-      return;
+      return null;
     }
     const result = await command();
     if (!result.ok) {
@@ -2857,17 +2881,26 @@ export class WvdWorld implements World {
           // map read aimed every tap three cells off, and two reachable chests were called unreachable
           // and skipped). Re-perceive and aim again instead of skipping the chest this cycle.
           this.#host?.log.warn(`wvd: the walk was not aimed: ${result.detail ?? 'the map could not be read'}`);
-          return;
+          return result;
+        }
+        if (result.reason === 'timeout' && this.#pointerMode === true) {
+          // The tap raised no element while the World believed pointer mode was on: the game may drop
+          // the mode between walks. That is evidence the belief is wrong, not that the cell has no path
+          // — flip it and let the route ask once more, which presses R (live 2026-11-07: the chest at
+          // 11,4 was skipped after one such miss).
+          this.#pointerMode = false;
+          this.#host?.log.info('wvd: the walk raised no 自動移動 element with pointer mode believed on; the next attempt presses R');
+          return result;
         }
         const why = result.detail ?? result.reason;
         this.#skip(target, why);
-        return;
+        return result;
       }
       this.#failed.add(kind);
       this.#host?.log.warn(`wvd: could not ${kind}`, { reason: result.reason, detail: result.detail ?? null });
-      return;
+      return result;
     }
-    if (fromScreen === null) return;
+    if (fromScreen === null) return result;
     const now = this.#now();
     this.#inFlight = {
       kind,
@@ -2882,6 +2915,7 @@ export class WvdWorld implements World {
       readAtPress: kind === 'open-map' ? null : this.#lastMapRead,
       target,
     };
+    return result;
   }
 
   // --- stopping ------------------------------------------------------------------------------

@@ -215,8 +215,6 @@ describe('the 自動移動 element', () => {
     const result = await automoveToTile(actuator, CELL, PRESS_MS, {
       locate: async () => tile,
       capture: async () => frame,
-      waitMs: 60,
-      pollMs: 10,
     });
 
     expect(result).toEqual({ ok: true });
@@ -235,8 +233,6 @@ describe('the 自動移動 element', () => {
     const result = await automoveToTile(actuator, CELL, PRESS_MS, {
       locate: async () => tile,
       capture: async () => frame,
-      waitMs: 60,
-      pollMs: 10,
     });
 
     expect(result).toEqual({ ok: true });
@@ -254,16 +250,14 @@ describe('the 自動移動 element', () => {
     const result = await automoveToTile(actuator, CELL, PRESS_MS, {
       locate: async () => tile,
       capture: async () => frame,
-      waitMs: 30,
-      pollMs: 10,
     });
 
     expect(result).toMatchObject({ ok: false, reason: 'timeout' });
-    // The cell is tapped twice — once in each pointer mode, because the mode is a toggle the map
-    // remembers — but the *rise* is never tapped blind: the refusal is real, and the World skips the
-    // cell (live 2026-11-02: a cell 18 rows up the map has no path).
-    expect(actuator.taps).toEqual([tile, tile]);
-    expect(actuator.presses.filter((press) => press.scan === SCAN.pointer)).toHaveLength(2);
+    // One tap, one pointer press, and no second R: the old retry pressed R again — a toggle — behind a
+    // tap that had already been answered, which is how a working walk turned its own mode off
+    // (2026-11-07). The *rise* is never tapped blind when the caller can look.
+    expect(actuator.taps).toEqual([tile]);
+    expect(actuator.presses.filter((press) => press.scan === SCAN.pointer)).toHaveLength(1);
   });
 });
 
@@ -294,23 +288,28 @@ describe('aiming the walk', () => {
     expect(actuator.presses).toEqual([{ scan: SCAN.pointer, holdMs: PRESS_MS }]);
   });
 
-  it('re-locates the point on its one retry instead of re-tapping the stale one', async () => {
-    // The map's canvas moves: the retry is aimed again from a frame read then.
-    const first = { x: 1_000, y: 400 };
-    const second = { x: 1_000, y: 288 };
-    const seen: Point[] = [];
+  it('presses no R when the caller already knows pointer mode is on', async () => {
+    // Pointer mode is a toggle the map remembers: a second R turns it off and the tap selects nothing.
+    // Live 2026-11-07 the World pressed it twice inside one walk and the chest was skipped.
+    const actuator = fakeActuator();
+    const result = await automoveToTile(actuator, CELL, PRESS_MS, aimAt(TILE), true);
+    expect(result).toEqual({ ok: true });
+    expect(actuator.presses).toEqual([]);
+    expect(actuator.taps).toEqual([TILE, { x: TILE.x, y: TILE.y - POPUP_RISE }]);
+  });
+
+  it('aims exactly once: the point it read is the point it taps', async () => {
+    let looks = 0;
     const actuator = fakeActuator();
     const result = await automoveToTile(actuator, CELL, PRESS_MS, {
       locate: async () => {
-        const next = seen.length === 0 ? first : second;
-        seen.push(next);
-        return next;
+        looks += 1;
+        return TILE;
       },
-      // A map with no pill: the first aim is refused, so the retry re-aims.
       capture: async () => { throw new Error('capture timeout: stale-frame'); },
     });
-    expect(seen).toEqual([first, second]);
-    expect(actuator.taps).toEqual([first, second]);
+    expect(looks).toBe(1);
+    expect(actuator.taps).toEqual([TILE]);
     expect(result).toMatchObject({ ok: false, reason: 'unavailable' });
   });
 
@@ -321,12 +320,11 @@ describe('aiming the walk', () => {
     const result = await automoveToTile(actuator, CELL, PRESS_MS, {
       locate: async () => tile,
       capture: async () => { throw new Error('capture timeout: stale-frame'); },
-      waitMs: 30,
-      pollMs: 10,
     });
     expect(result).toMatchObject({ ok: false, reason: 'unavailable' });
-    expect((result as { detail?: string }).detail).toContain('no frame arrived');
-    // Both pointer modes were tried, and no rise was tapped blind.
-    expect(actuator.taps).toEqual([tile, tile]);
+    expect((result as { detail?: string }).detail).toContain('could not be read');
+    // The cell is tapped once; no rise is tapped blind, and no second R is pressed.
+    expect(actuator.taps).toEqual([tile]);
+    expect(actuator.presses.filter((press) => press.scan === SCAN.pointer)).toHaveLength(1);
   });
 });

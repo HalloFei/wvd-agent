@@ -253,9 +253,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       // The walk is aimed where the map itself draws the marker, read from a frame captured at tap
       // time: the World hands the grid cell and the pixel is this binding's business (2026-11-06,
       // `t-mw3veimb-ppbm9u`). A capture that fails is `null`, never a guess.
-      automoveToTile: (cell) => {
+      automoveToTile: (cell, pointerOn) => {
         const session = live;
-        if (session === null) return automoveToTile(actuator, cell, pressHoldMs());
+        if (session === null) return automoveToTile(actuator, cell, pressHoldMs(), undefined, pointerOn);
         return automoveToTile(actuator, cell, pressHoldMs(), {
           locate: async () => {
             try {
@@ -272,7 +272,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
             }
           },
           capture: () => session.source.capture(),
-        });
+        }, pointerOn);
       },
       automoveToExit: () => automoveToExit(actuator, pressHoldMs()),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
