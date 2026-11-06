@@ -2593,11 +2593,18 @@ export class WvdWorld implements World {
         // previous tap's return. The battle's order is speed → opener slot → opener confirm → auto.
         const sequence = this.#battleSequence;
         const seen = context?.observation;
-        if (sequence === null || seen === undefined || seen.screen !== 'combat') return;
+        // The sequence owns the **battle**, not one screen. The skill panel a slot tap opens is an
+        // unnamed frame inside the battle mode, and its 确定 must still be pressed (operator,
+        // 2026-11-07). The panel covers the toggles, so a frame that is not `combat` hands the
+        // sequence no evidence about them — and the confirm step does not need any.
+        if (sequence === null || seen === undefined) return;
+        if (seen.screen !== 'combat' && this.#mode.mode !== 'battle') return;
         const now = context?.now ?? this.#now();
         // The turn card is read only while the opener is undecided: it says whether there is a cast at
         // all, and the skill panel dims it, so the read belongs to the command phase.
-        const phase = { speedOn: seen.speedOn ?? null, autoOn: seen.autoOn ?? null, activeMember: null as string | null };
+        const phase = seen.screen === 'combat'
+          ? { speedOn: seen.speedOn ?? null, autoOn: seen.autoOn ?? null, activeMember: null as string | null }
+          : { speedOn: null, autoOn: null, activeMember: null as string | null };
         // "Until we get a stable frame, then confirm the current state" (operator rule 2026-11-04): the
         // panel redraws as the battle opens, so one readable frame is not a decision. The read runs
         // every frame while the cast is owed, and only the same answer on `BATTLE_STABLE_READS`

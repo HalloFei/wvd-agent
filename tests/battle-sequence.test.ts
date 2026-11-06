@@ -41,6 +41,22 @@ describe('the battle operation sequence', () => {
     expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 5_000)).toEqual({ kind: 'done' });
   });
 
+  it('presses the confirm on a frame that says nothing, because the panel covers the toggles', () => {
+    // Live 2026-11-07 01:05: the slot tap opened the skill panel (拉巴迪奥斯的秘术, 取消 / 确定), the
+    // frame stopped being `combat`, and the build waited for a toggle it could no longer see — 453 ticks
+    // and a stopped run. The operator's rule: a full-team damage skill needs its confirmation after the
+    // selection, whatever the frame says.
+    const s = make();
+    s.enter(0);
+    expect(s.next(speedUp, 1_000)).toEqual({ kind: 'slot', opener: alice });
+    s.completed(1_000);
+    const panel: BattlePhase = { speedOn: null, autoOn: null, activeMember: null };
+    expect(s.next(panel, 2_000)).toEqual({ kind: 'confirm', opener: alice });
+    s.completed(2_000);
+    expect(s.next(panel, 3_000)).toEqual({ kind: 'wait', why: 'no-evidence' });
+    expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 3_100)).toEqual({ kind: 'auto' });
+  });
+
   it('measures the pace from the tap\'s return, not its start', () => {
     // The defect this pins: the old World stamped the pace with the frame the cast STARTED on, so
     // 自動 could follow the confirming tap ~100 ms later, inside the skill's resolution.

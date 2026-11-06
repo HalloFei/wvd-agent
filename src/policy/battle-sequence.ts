@@ -132,6 +132,16 @@ export class BattleSequence {
     const paced = this.#lastTapAtMs === null || nowMs - this.#lastTapAtMs >= this.#options.stepMs;
     if (!paced) return { kind: 'wait', why: 'paced' };
 
+    // The slot tap opens the skill's detail panel, and the skill does not resolve until 确定 is pressed:
+    // the confirmation is owed whatever this frame says about the toggles — the panel covers them
+    // (operator, 2026-11-07: *a full team damage skill needs press confirmation after selection*).
+    // Live 2026-11-07 01:05: the slot tap opened the panel, the frame stopped being `combat`, and the
+    // confirm was never sent — 453 ticks, the run stopped.
+    if (this.#opener !== undefined && this.#opener !== null && this.#slotSent && !this.#confirmSent) {
+      this.#sent = 'confirm';
+      return { kind: 'confirm', opener: this.#opener };
+    }
+
     // 1. 倍速: the battle's clock, and everything after it rides on it.
     if (phase.speedOn === null) return { kind: 'wait', why: 'no-evidence' };
     if (!phase.speedOn) {
