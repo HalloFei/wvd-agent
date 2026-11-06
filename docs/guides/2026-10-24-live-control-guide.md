@@ -212,25 +212,32 @@ The altar teleporter menu was dismissed with `什么也不做` at about **(961, 
 
 The engine child is plain ESM and speaks contracts §5 over stdin/stdout, one JSON object per line.
 
-- `startEngine({ title, hotkey?, jpegQuality? })` spawns `child.mjs` under `process.execPath` with
-  `ELECTRON_RUN_AS_NODE=1`; `connectEngine(child, { timeoutMs, logger })` gives `request`, `onEvent`
-  and `close`.
-- `capture` replies `{ jpeg, width, height, ageMs }`; the frame is served from the child's newest
-  frame and `ageMs` is its age on the child's clock. The World stamps
-  `atMs = performance.now() - ageMs`.
+- The engine child is spawned with `--title=… --channel=<name> --channel-bytes=<n>`; the World
+  creates the named mapping first (one per session) and the child opens the same region. Frames do
+  not travel over the protocol: the capture worker publishes raw BGRA into the channel (two slots,
+  `capturedAtMs` on `Date.now()`), and the World reads the newest slot as pixels. There is **no
+  encoder in the loop** and **no decode in the World**; `connectEngine(child, { timeoutMs, logger })`
+  still gives `request`, `onEvent` and `close` for the commands.
+- `capture` replies `{ seq, width, height, ageMs }`. The World takes the newest slot and stamps
+  `atMs` at the reply; a reply older than the stale window or a slot the seqlock refuses is
+  `timeout/stale-frame`.
+- The escalation snapshot (`captureJpeg(maxWidth?)`) is read from the same channel and encoded by
+  the **World** with jpeg-js at `jpegQuality`; the child encodes nothing. `captureBand(rect)` crops
+  the newest slot locally (the QTE sampler's path).
 - `tap`/`key` replies carry `{ inputMs }`, measured from request receipt to the final `SendInput`.
   A foreground miss is `{ ok:false, error:'rejected', detail:'not-foreground' }` and sends nothing.
-- `Win32Capture` (World side) decodes the JPEG natively through GDI+ and memoises `toRgba()`;
-  `jpeg-js` is the fallback and reports `engineProblem` / `native-decoder-unavailable`.
-- Events: `stopHotkey` (the global stop key, default `Ctrl+Alt+W`) and `engineProblem` with a detail
-  (`stop-hotkey-unregistered`, `native-encoder-unavailable`, startup stderr).
+- `Win32Capture` (World side) copies the newest slot (2 ms for 1920×1080) and memoises `toRgba()`.
+- A dead child or a stale channel heartbeat is restarted by the supervisor (once per session); a
+  `capture` in flight is held through the restart until a newer frame is published, so a restart
+  does not spend the World's failure budget. Events: `stopHotkey` (the global stop key, default
+  `Ctrl+Alt+W`) and `engineProblem` with a detail (`stop-hotkey-unregistered`, `capture-restarted`,
+  `capture-unavailable`, startup stderr).
 
 Commands:
 
 ```
-pnpm test                 # 67 tests at 2026-10-24
+pnpm test                 # 796 tests at 2026-11-07
 pnpm typecheck
-node scripts/bench-engine.mjs --title="WizardryVariantsDaphne" --frames=120
 ```
 
 `scripts/bench-engine.mjs` measures capture round trip, cadence, age, World-side decode and native
