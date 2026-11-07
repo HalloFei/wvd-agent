@@ -26,8 +26,14 @@ import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Frame, RgbaImage } from '../src/contracts.ts';
-import { parseOpener, parseOpenerDetailed, TRAP_DIGIT_TEMPLATES } from '../src/perception/opener.ts';
-import { createNumeralsReader } from '../src/perception/readers/index.ts';
+import {
+  createOcrBudget,
+  parseOpener,
+  parseOpenerDetailed,
+  parseOpenerImage,
+  TRAP_DIGIT_TEMPLATES,
+} from '../src/perception/opener.ts';
+import { createNumeralsReader, type NumeralsReader } from '../src/perception/readers/index.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FIXTURES = new URL('../testdata/chest/2026-10-24-opener/', import.meta.url);
@@ -42,6 +48,21 @@ const PYTHON = process.env.WVD_OCR_PYTHON || ROOT + '/.tmp/ocr-venv/Scripts/pyth
 const SCRIPT = process.env.WVD_OCR_SCRIPT || ROOT + '/scripts/ocr-readout.py';
 /** Is there a runtime to measure? Gates the sharpened panel, so a host without it skips, not fails. */
 const OCR_AVAILABLE = existsSync(PYTHON) && existsSync(SCRIPT);
+
+/**
+ * The host's OCR environment must not decide what the fast tier answers (review I5). Every test
+ * starts with the runtime **unset**, so a field the template tier should answer can never be
+ * answered by a host venv in the background; the sharpened describe stubs the real pair back in,
+ * because there the escalation is the thing under test.
+ */
+beforeEach(() => {
+  vi.stubEnv('WVD_OCR_PYTHON', '');
+  vi.stubEnv('WVD_OCR_SCRIPT', '');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures
@@ -137,6 +158,28 @@ describe('the opener reads its numerals through the seam', () => {
     expect(panel!.members.map((member) => member.willpower)).toEqual(expectedWillpower(expected));
   });
 
+  it('reads the decoded fixture without asking the OCR tier at all', async () => {
+    // The decoded fixture is the fast tier's job (review I5): an escalation stubbed to throw proves
+    // it. Without this, a host that has the venv would let a slow process answer a field the template
+    // tier should have answered, and "the fast tier answers" would stay unasserted.
+    const expected = await measured();
+    let calls = 0;
+    const trapReader: NumeralsReader = {
+      read: async () => {
+        calls += 1;
+        throw new Error('the decoded fixture must not reach the OCR tier');
+      },
+    };
+
+    const parsed = await parseOpenerImage(await jpegImage('panel-00.jpg'), { trapReader });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.panel.members.map((member) => member.detect)).toEqual(expected.map((member) => member.detect));
+    expect(parsed.panel.members.map((member) => member.disarm)).toEqual(expected.map((member) => member.disarm));
+    expect(calls).toBe(0);
+  });
+
   it("names the number and the tier that answered a field's atlas read", async () => {
     // The 陷阱 atlas through the seam's own factory: the fast tier answers the fixture, the tier
     // travels with the number (the health metric Task 4 logs), and the bands are the opener's.
@@ -213,6 +256,93 @@ describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () 
       member.willpower === null ? 'absent' : Number.isNaN(member.willpower) ? 'unread' : member.willpower);
     expect(willpower).toEqual([100, 'unread', 100, 'absent', 90, 100]);
   }, 20_000);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The OCR escalation's per-parse budget (review I6, ruling R6)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `sharpened(panel, 3)` is the proxy where the template tier refuses **three** fields and no
+ * structural check refuses any (measured 2026-11-07): card 3's 陷阱发现, card 4's 陷阱发现 and card
+ * 5's 陷阱解除. The fake escalation answers `11` — two digits, the width the opener measured for
+ * all three fields — so nothing but the budget can refuse the third escalation.
+ */
+describe('the OCR escalation is budgeted per parse', () => {
+  let sharpenedThree: Promise<RgbaImage> | null = null;
+  function sharpenedThreePanel(): Promise<RgbaImage> {
+    sharpenedThree ??= jpegImage('panel-00.jpg').then((base) => sharpened(base, 3));
+    return sharpenedThree;
+  }
+
+  function countingEscalation(onCall?: () => void): { reader: NumeralsReader; state: { calls: number } } {
+    const state = { calls: 0 };
+    const reader: NumeralsReader = {
+      read: async () => {
+        state.calls += 1;
+        onCall?.();
+        return { value: 11, confidence: 0.9, tier: 'ocr' };
+      },
+    };
+    return { reader, state };
+  }
+
+  it('escalates at most twice: the third field the template refuses is refused', async () => {
+    const fake = countingEscalation();
+    const parsed = await parseOpenerImage(await sharpenedThreePanel(), { trapReader: fake.reader });
+
+    expect(parsed).toEqual({ ok: false, reason: 'unreadable' });
+    expect(fake.state.calls).toBe(2);
+  });
+
+  it('answers the same frame when the budget is three — the third refusal is the budget', async () => {
+    // Not a frame on which the escalation cannot answer: hand it a budget of three and the same
+    // reader answers all three fields, which is what makes the refusal above the cap's doing.
+    const expected = await measured();
+    const fake = countingEscalation();
+    const parsed = await parseOpenerImage(await sharpenedThreePanel(), {
+      trapReader: fake.reader,
+      ocrBudget: createOcrBudget({ maxCalls: 3 }),
+    });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(fake.state.calls).toBe(3);
+    // The three escalated fields carry the fake's answer; the other nine are the measured values.
+    expect(parsed.panel.members.map((member) => member.detect))
+      .toEqual(expected.map((member, index) => (index === 2 || index === 3 ? 11 : member.detect)));
+    expect(parsed.panel.members.map((member) => member.disarm))
+      .toEqual(expected.map((member, index) => (index === 4 ? 11 : member.disarm)));
+  });
+
+  it('stops escalating when the first call consumes the 2 s deadline', async () => {
+    // A first escalation slower than the window spends the budget by construction: the clock is the
+    // budget's own, advanced by the reader's first answer (R6's deadline, asserted deterministically).
+    let clock = 10_000;
+    const fake = countingEscalation(() => {
+      clock += 2_001;
+    });
+    const parsed = await parseOpenerImage(await sharpenedThreePanel(), {
+      trapReader: fake.reader,
+      ocrBudget: createOcrBudget({ now: () => clock }),
+    });
+
+    expect(parsed).toEqual({ ok: false, reason: 'unreadable' });
+    expect(fake.state.calls).toBe(1);
+  });
+
+  it('counts the call cap and the time window separately', () => {
+    const cap = createOcrBudget({ now: () => 0 });
+    expect([cap.take(), cap.take(), cap.take()]).toEqual([true, true, false]);
+
+    let clock = 0;
+    const window = createOcrBudget({ maxCalls: 5, now: () => clock });
+    expect(window.take()).toBe(true);
+    clock = 2_000;
+    expect(window.take()).toBe(true);
+    clock = 2_001;
+    expect(window.take()).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

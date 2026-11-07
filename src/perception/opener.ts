@@ -39,6 +39,11 @@
  * the band, the floors, the structural refusals, `unreadable`, and the heart's `absent` /
  * `unreadable` distinction (contracts §0.6).
  *
+ * **The escalation is budgeted per parse** (ruling R6, 2026-11-07): at most two OCR calls, and
+ * none starting more than 2 s after the first — twelve fields each waiting out the tier's 8 s bound
+ * would hold a panel for ~96 s inside `parseOpenerDetailed`, which `chest.ts` awaits. Past the
+ * budget a field refuses, which refuses the panel as any unreadable 陷阱 field does.
+ *
  * The **heart** field is the seam's measured exception: its atlas was recorded from a
  * chroma-segmented crop normalised against that crop's own median (chroma is what separates the
  * yellow numeral from the grey heart glyph beside it), while the template tier segments by luma
@@ -53,8 +58,10 @@
 import type { Frame, OpenerMember, OpenerPanel, Point, RgbaImage } from '../contracts.ts';
 import {
   createNumeralsReader,
+  ocrReader,
   type DigitTemplate,
   type Numerals,
+  type NumeralsReader,
   type Region,
 } from './readers/index.ts';
 
@@ -349,17 +356,82 @@ function normaliseGlyph(bytes: Uint8Array): Float64Array {
 export const TRAP_DIGIT_TEMPLATES: readonly DigitTemplate[] = atlasOf(TRAP_DIGITS);
 
 /**
- * The 陷阱 fields' reader: the seam's **template** strategy over that atlas, with the opener's own
- * floors. 'template' is template -> ocr (ruling R4, 2026-11-07): the rule tier is not in the chain
- * because its general shapes name this font's 4 as a 3, and OCR is the escalation for the day the
- * atlas stops matching — which is exactly what a raw capture does to it.
+ * The OCR escalation's per-parse budget (ruling R6, 2026-11-07). Twelve fields each waiting out the
+ * escalation's 8 s bound would hold a panel for ~96 s inside `parseOpenerDetailed`, which
+ * `chest.ts` awaits; the live failure the escalation exists for is one unreadable field, not
+ * twelve. Past the budget a field refuses (`null`), which refuses the panel exactly as any other
+ * unreadable 陷阱 field always has.
+ *
+ * At most **two calls**, and none starting more than **2 s after the first** — whichever comes first.
  */
-const TRAP_READER = createNumeralsReader({
-  strategy: 'template',
-  templates: TRAP_DIGIT_TEMPLATES,
-  matchFloor: DIGIT_MATCH_MIN,
-  marginFloor: DIGIT_MARGIN_MIN,
-});
+export const OCR_MAX_CALLS = 2;
+export const OCR_CALL_WINDOW_MS = 2_000;
+
+/**
+ * A parse's allowance of OCR escalations. `take()` answers whether one may start now and reserves
+ * it; the window is measured from the first reserved call. The clock is injectable so a deadline
+ * can be proved without waiting on one.
+ */
+export interface OcrBudget {
+  take(): boolean;
+}
+
+export interface OcrBudgetOptions {
+  /** The call cap; default `OCR_MAX_CALLS`. */
+  readonly maxCalls?: number;
+  /** The window from the first reserved call; default `OCR_CALL_WINDOW_MS`. */
+  readonly windowMs?: number;
+  /** The clock the window is measured on; default `Date.now`. */
+  readonly now?: () => number;
+}
+
+/** A per-parse budget: at most `maxCalls`, none starting more than `windowMs` after the first. */
+export function createOcrBudget(options: OcrBudgetOptions = {}): OcrBudget {
+  const maxCalls = options.maxCalls ?? OCR_MAX_CALLS;
+  const windowMs = options.windowMs ?? OCR_CALL_WINDOW_MS;
+  const now = options.now ?? Date.now;
+  let calls = 0;
+  let firstAt = 0;
+  return {
+    take() {
+      if (calls >= maxCalls) return false;
+      const at = now();
+      if (calls === 0) {
+        firstAt = at;
+        calls = 1;
+        return true;
+      }
+      if (at - firstAt > windowMs) return false;
+      calls += 1;
+      return true;
+    },
+  };
+}
+
+/**
+ * The 陷阱 fields' reader: the seam's **template** strategy over that atlas, with the opener's own
+ * floors, escalating to `escalation` behind the parse's budget. 'template' is template -> ocr
+ * (ruling R4, 2026-11-07): the rule tier is not in the chain because its general shapes name this
+ * font's 4 as a 3, and OCR is the escalation for the day the atlas stops matching — which is
+ * exactly what a raw capture does to it.
+ *
+ * Built per parse because the budget is per parse (R6): the template tier is the same tier every
+ * time, but the escalation's allowance belongs to the panel, not to the process.
+ */
+function createTrapReader(escalation: NumeralsReader, budget: OcrBudget): NumeralsReader {
+  return createNumeralsReader({
+    strategy: 'template',
+    templates: TRAP_DIGIT_TEMPLATES,
+    matchFloor: DIGIT_MATCH_MIN,
+    marginFloor: DIGIT_MARGIN_MIN,
+    ocr: {
+      async read(image, region, hint) {
+        if (!budget.take()) return null;
+        return escalation.read(image, region, hint);
+      },
+    },
+  });
+}
 
 const pixelLuma = (data: Uint8Array, width: number, x: number, y: number): number => {
   const offset = (y * width + x) * 4;
@@ -626,11 +698,15 @@ function isOpenerPanel(data: Uint8Array, width: number): boolean {
  *   be no more than a digit's pitch apart (NUMBER_START_TOLERANCE / MAX_DIGIT_START_GAP).
  * - **The field drew one glyph per atom**: an answer of another length (an OCR answer to a field
  *   whose glyphs were overpainted, say) is a misread, not a shorter number.
+ *
+ * The escalation is asked at most `OCR_MAX_CALLS` times per parse (R6): past the budget a field
+ * is refused without a call, so an unreadable panel cannot hold `chest.ts` for twelve 8 s bounds.
  */
 async function readTrapNumber(
   image: RgbaImage,
   slot: number,
   field: 'detect' | 'disarm',
+  trapReader: NumeralsReader,
 ): Promise<Numerals | null> {
   const { rect } = OPENER_SLOTS[slot]!;
   const card = cardBand(slot, field === 'detect' ? TRAP_DETECT_BAND : TRAP_DISARM_BAND);
@@ -656,7 +732,7 @@ async function readTrapNumber(
     width: TRAP_NUMBER_LEFT,
     height: TRAP_LABEL_HEIGHT,
   };
-  const read = await TRAP_READER.read(image, region, { label });
+  const read = await trapReader.read(image, region, { label });
   if (read === null) return null;
   return String(read.value).length === atoms.length ? read : null;
 }
@@ -746,8 +822,27 @@ function readHeartNumber(data: Uint8Array, width: number, slot: number): HeartRe
   return value === null ? { kind: 'unreadable' } : { kind: 'read', value };
 }
 
+/**
+ * How one parse reads its 陷阱 fields. Both fields exist for the tests: the escalation is what a
+ * counter counts (the budget, R6) and what a thrower refuses to be (the decoded fixture's fast-tier
+ * read); the budget is what a fake clock makes deterministic.
+ */
+export interface OpenerParseOptions {
+  /**
+   * The reader the trap fields **escalate to** when the template tier refuses a field — the OCR
+   * tier in production. Defaults to the readers package's `ocrReader`; the parse's budget wraps it
+   * either way.
+   */
+  readonly trapReader?: NumeralsReader;
+  /** The parse's OCR budget; default a fresh `createOcrBudget()` (two calls, 2 s). */
+  readonly ocrBudget?: OcrBudget;
+}
+
 /** async because the numerals are read through the seam, whose OCR tier leaves the process. */
-async function parseOpenerImage(image: RgbaImage): Promise<OpenerParse> {
+export async function parseOpenerImage(
+  image: RgbaImage,
+  options: OpenerParseOptions = {},
+): Promise<OpenerParse> {
   const { data, width, height } = image;
   if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) return { ok: false, reason: 'not-panel' };
   if (!isOpenerPanel(data, width)) return { ok: false, reason: 'not-panel' };
@@ -761,11 +856,13 @@ async function parseOpenerImage(image: RgbaImage): Promise<OpenerParse> {
     if (cardPresent(data, width, slot)) return { ok: false, reason: 'unreadable' };
   }
 
+  // One reader per parse: the escalation's allowance belongs to the panel (R6).
+  const trapReader = createTrapReader(options.trapReader ?? ocrReader, options.ocrBudget ?? createOcrBudget());
   const traps: Array<{ detect: number; disarm: number }> = [];
   const hearts: HeartReading[] = [];
   for (let slot = 0; slot < count; slot += 1) {
-    const detect = await readTrapNumber(image, slot, 'detect');
-    const disarm = await readTrapNumber(image, slot, 'disarm');
+    const detect = await readTrapNumber(image, slot, 'detect', trapReader);
+    const disarm = await readTrapNumber(image, slot, 'disarm', trapReader);
     if (detect === null || disarm === null) return { ok: false, reason: 'unreadable' };
     traps.push({ detect: detect.value, disarm: disarm.value });
     hearts.push(readHeartNumber(data, width, slot));
@@ -806,7 +903,10 @@ export type OpenerParse =
  * Read the `由谁打开?` opener panel out of one frame, or refuse it. Refusal is a value, not a throw
  * (contracts §0.6); `parseOpenerDetailed` keeps the reason.
  */
-export async function parseOpenerDetailed(frame: Frame): Promise<OpenerParse> {
+export async function parseOpenerDetailed(
+  frame: Frame,
+  options: OpenerParseOptions = {},
+): Promise<OpenerParse> {
   if (frame.width !== REFERENCE_WIDTH || frame.height !== REFERENCE_HEIGHT) return { ok: false, reason: 'not-panel' };
   let image: RgbaImage;
   try {
@@ -814,12 +914,15 @@ export async function parseOpenerDetailed(frame: Frame): Promise<OpenerParse> {
   } catch {
     return { ok: false, reason: 'not-panel' };
   }
-  return await parseOpenerImage(image);
+  return await parseOpenerImage(image, options);
 }
 
 /** The brief's shape: the panel, or `null` for every refusal. */
-export async function parseOpener(frame: Frame): Promise<OpenerPanel | null> {
-  const parsed = await parseOpenerDetailed(frame);
+export async function parseOpener(
+  frame: Frame,
+  options: OpenerParseOptions = {},
+): Promise<OpenerPanel | null> {
+  const parsed = await parseOpenerDetailed(frame, options);
   return parsed.ok ? parsed.panel : null;
 }
 
