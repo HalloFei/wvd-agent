@@ -10,8 +10,8 @@ export const WVD_ID = 'wvd';
  * The numerals-reader seam's settings (readers spec 2026-11-07; `worlds.wvd.readers`).
  *
  * The seam has one config switch: the **default strategy** a field is read by. The opener's own
- * 陷阱 fields are the measured exception — they stay `template` (R4) and escalate to whatever this
- * strategy builds (R8), because the rule tier names this font's 4 as a 3.
+ * 陷阱 fields are the measured exception — they stay `template` (R4) and escalate to the OCR tier
+ * directly (R9), because the rule tier names this font's 4 as a 3.
  */
 export interface WvdReadersConfig {
   /**
@@ -105,7 +105,7 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   mapOpenTimeoutMs: 3000,
   openerPanelTimeoutMs: 10000,
   // The seam's default strategy (readers spec 2026-11-07). The opener's fields are the exception
-  // (R4/R8): they stay 'template' and escalate to the reader this builds.
+  // (R4/R9): they stay 'template' and escalate to the OCR tier directly, not to the reader this builds.
   readers: { numerals: 'auto' },
   automoveArrivalTimeoutMs: 120000,
   automoveStillSeconds: 5,

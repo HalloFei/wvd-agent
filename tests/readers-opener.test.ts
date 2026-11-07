@@ -15,6 +15,9 @@
  *    answering where it refuses. That is the live failure reproduced: the old opener refuses this
  *    frame outright (unreadable).
  * 3. The negatives still refuse: the QTE bar and the 3-D view are not the panel.
+ * 4. The **escalation is the OCR tier directly** (ruling R9): on the amount-2 proxy the rule tier
+ *    would name a refused field 93 where the screen says 92, so the config-built reader is never
+ *    the opener's escalation.
  *
  * The heart's absent / unreadable distinction is covered where it lives, by the existing
  * tests/opener.test.ts cases (a card that draws no heart is null; a drawn numeral the atlas cannot
@@ -35,7 +38,9 @@ import {
   type OpenerTierSummary,
 } from '../src/perception/opener.ts';
 import { ChestPerceiver } from '../src/perception/chest.ts';
-import { createNumeralsReader, type NumeralsReader } from '../src/perception/readers/index.ts';
+import { WVD_DEFAULTS } from '../src/config.ts';
+import { createNumeralsReaderFromConfig } from '../src/main.ts';
+import { createNumeralsReader, ocrReader, type NumeralsReader } from '../src/perception/readers/index.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FIXTURES = new URL('../testdata/chest/2026-10-24-opener/', import.meta.url);
@@ -270,6 +275,83 @@ describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () 
       member.willpower === null ? 'absent' : Number.isNaN(member.willpower) ? 'unread' : member.willpower);
     expect(willpower).toEqual([100, 'unread', 100, 'absent', 90, 100]);
   }, 20_000);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The escalation is the OCR tier, never the rule chain (ruling R9)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * R9: a template-refused 陷阱 field escalates to the **OCR tier**, never to the config-built reader.
+ * Measured 2026-11-07 on `sharpened(panel, 2)`: the atlas refuses two fields, the rule tier names
+ * them 93 and 49, and OCR reads 92 and 49. So the config's default `auto` escalation would let the
+ * rules name card 4's 陷阱发现 93 where the screen says 92 — a wrong number rather than a refusal,
+ * which the opener's length check cannot see (both are two digits).
+ */
+describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
+  let sharpenedTwo: Promise<RgbaImage> | null = null;
+  function sharpenedTwoPanel(): Promise<RgbaImage> {
+    sharpenedTwo ??= jpegImage('panel-00.jpg').then((base) => sharpened(base, 2));
+    return sharpenedTwo;
+  }
+
+  it('the config-built chain answers the amount-2 refusals from the rules — the hazard R9 removes', async () => {
+    // What the pre-R9 wiring passed as the escalation (the factory, default 'auto'). The OCR runtime
+    // is unset here, so this is the rule tier alone: card 4's 陷阱发现 comes back 93, not the measured
+    // 92. If `number.ts`'s 4/3 fix (board card t-mw65nlh4-lfoik7) lands, this expectation is the one
+    // to revisit — it pins the misname R9 keeps out of the panel's ranking.
+    const expected = await measured();
+    const observation = await new ChestPerceiver({ trapReader: createNumeralsReaderFromConfig(WVD_DEFAULTS) })
+      .observe(frameOf(await sharpenedTwoPanel()));
+
+    expect(observation.screen).toBe('chest-open');
+    if (observation.screen !== 'chest-open') return;
+    expect(observation.opener.members.map((member) => member.detect)).toEqual(
+      expected.map((member, index) => (index === 3 ? 93 : member.detect)),
+    );
+  });
+
+  it('the OCR tier is the escalation: with no OCR runtime the same panel refuses, no rule answers', async () => {
+    // The escalation main.ts passes: the package's OCR tier. The runtime is unset, so the tier is a
+    // null rather than an answer, and the refused field refuses the panel — nothing fills in with a
+    // fast tier's guess.
+    const observation = await new ChestPerceiver({ trapReader: ocrReader })
+      .observe(frameOf(await sharpenedTwoPanel()));
+
+    expect(observation).toMatchObject({ screen: 'unknown', confidence: 0.3 });
+  });
+
+  describe.skipIf(!OCR_AVAILABLE)('with the OCR runtime', () => {
+    beforeEach(() => {
+      vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
+      vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('reads the amount-2 panel as measured (92), the OCR tier answering the refusals', async () => {
+      // Two fields escalate on this proxy, and each OCR call takes seconds on this host, so the
+      // production budget's 2 s window (R6) refuses the second one — the panel would refuse rather
+      // than be misnamed, which is R9's safe outcome. The window is widened here only to reach the
+      // measured value: the tier answering is the question, not the budget, and R6 itself is
+      // unchanged. The committed amount-1 proxy (one refusal) proves the default budget live.
+      const expected = await measured();
+      const parsed = await parseOpenerImage(await sharpenedTwoPanel(), {
+        trapReader: ocrReader,
+        ocrBudget: createOcrBudget({ maxCalls: 2, windowMs: 60_000 }),
+      });
+
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return;
+      const members = parsed.panel.members;
+      expect(members.map((member) => member.detect)).toEqual(expected.map((member) => member.detect));
+      expect(members.map((member) => member.disarm)).toEqual(expected.map((member) => member.disarm));
+      // The measured value of the field the rule chain names 93.
+      expect(members[3]!.detect).toBe(92);
+    }, 30_000);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

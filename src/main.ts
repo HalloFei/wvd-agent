@@ -51,6 +51,7 @@ import { takeSnapshot } from './escalation/image.ts';
 import { ChestPerceiver } from './perception/chest.ts';
 import {
   createNumeralsReader,
+  ocrReader,
   type NumeralsReader,
   type NumeralsReaderOptions,
 } from './perception/readers/index.ts';
@@ -88,13 +89,17 @@ export interface WvdComposition {
  * The numerals-reader seam's configured reader (readers spec 2026-11-07; ruling R8).
  *
  * `worlds.wvd.readers.numerals` selects the seam's **default strategy**, and this is the only place
- * the app reads it — no module hard-codes the order a field is read in. The opener's own 陷阱 fields
- * stay `template` (R4): the config builds the reader a template-refused field **escalates to**, not
- * the opener's chain, because the rule tier names this font's 4 as a 3 (board card
- * `t-mw65nlh4-lfoik7`) and the opener's atlas is the measured fast answer.
+ * the app reads it — no module hard-codes the order a field is read in.
+ *
+ * **It is not the opener's escalation** (ruling R9, 2026-11-07): the opener's 陷阱 fields stay
+ * `template` (R4), and a field that strategy refuses escalates to the package's OCR tier *directly*.
+ * The default `auto` chain starts with the rule tier, which names this font's 4 as a 3 (board card
+ * `t-mw65nlh4-lfoik7`); measured on the amount-2 sharpened proxy it names a refused field 93 where
+ * OCR reads 92, and a silently wrong number is worse than a refusal. So this factory is the seam's
+ * default strategy for future consumers, and nothing in the opener's chain is configurable.
  *
  * A pure function of the config object (plus the seam's own injection points), so the strategy can be
- * proved without a World, a session, or module state; `createWvdWorld` calls it once.
+ * proved without a World, a session, or module state.
  */
 export function createNumeralsReaderFromConfig(
   config: Pick<WvdConfigSection, 'readers'>,
@@ -217,12 +222,13 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       ? { python: ocrPython, script: ocrScript, timeoutMs: 20_000 }
       : undefined,
   );
-  // The numerals-reader seam's configured reader (readers spec 2026-11-07, R8): built once from the
-  // live section and handed to the chest perceiver as what a template-refused 陷阱 field escalates
-  // to. The opener's own chain stays 'template' (R4) and is not configurable in this plan.
-  const numeralsReader = createNumeralsReaderFromConfig(cfg);
+  // The opener's escalation is the OCR tier directly (ruling R9): a 陷阱 field its own 'template'
+  // strategy (R4) refuses goes to OCR, never to a chain whose 'auto' default starts with the rule
+  // tier — that tier names this font's 4 as a 3 and would silently name a refused field 93 where the
+  // screen says 92. `worlds.wvd.readers.numerals` is the seam's default strategy for future
+  // consumers (`createNumeralsReaderFromConfig`), not the opener's escalation.
   const chestPerceiver = new ChestPerceiver({
-    trapReader: numeralsReader,
+    trapReader: ocrReader,
     // The tier mix, once per panel (acceptance 2): a run that starts falling to the escalation must
     // be visible in the log before it dies, and the line names the counts, never a glyph.
     onOpenerTiers: ({ template, ocr }) => world?.note(

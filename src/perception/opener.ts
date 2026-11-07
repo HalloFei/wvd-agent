@@ -830,11 +830,11 @@ function readHeartNumber(data: Uint8Array, width: number, slot: number): HeartRe
  * How a panel's ranking fields were answered (readers plan 2026-11-07, Task 4): the 陷阱 fields the
  * template tier named, and the fields the template tier **refused** and the escalation answered.
  *
- * The escalation is the reader a caller named (the OCR tier by default; `worlds.wvd.readers.numerals`
- * builds it, R8), and a chain may answer as another tier first — `auto` tries the rules before OCR —
- * so the second slot counts *escalations*, not OCR answers specifically. That keeps the two counts
- * adding up to the fields a panel was read for, which is what the once-per-panel log reports. The
- * heart field is not on the seam (R5) and is not counted.
+ * The escalation is the reader a caller named — the OCR tier in production (R9; `main.ts` passes it
+ * directly), any reader in a test — and an injected chain may answer as another tier, so the second
+ * slot counts *escalations*, not OCR answers specifically. That keeps the two counts adding up to the
+ * fields a panel was read for, which is what the once-per-panel log reports. The heart field is not
+ * on the seam (R5) and is not counted.
  */
 export interface OpenerTierSummary {
   /** Fields the atlas tier named. */
@@ -888,8 +888,8 @@ export async function parseOpenerImage(
   const traps: Array<{ detect: number; disarm: number }> = [];
   const hearts: HeartReading[] = [];
   // The tier mix of this panel (Task 4): counted per field, reported once, whatever the outcome.
-  // The escalation's own tier is not named here — a config-built chain may start with the rules
-  // (R8) — so anything the template tier did not answer is an escalation. The counts add up.
+  // The escalation's own tier is not named here — production passes OCR, a test may pass any reader —
+  // so anything the template tier did not answer is an escalation. The counts add up.
   const tiers: { template: number; ocr: number } = { template: 0, ocr: 0 };
   const countTier = (read: Numerals): void => {
     if (read.tier === 'template') tiers.template += 1;

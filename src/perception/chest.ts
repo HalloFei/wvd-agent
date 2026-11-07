@@ -409,8 +409,8 @@ const REFUSED_PANEL_CONFIDENCE = 0.3;
 export interface ChestPerceiverOptions {
   /**
    * The reader a template-refused 陷阱 field **escalates to** (the opener's own strategy stays
-   * `template`, R4/R8). `main.ts` builds it from `worlds.wvd.readers.numerals`; the opener's R6
-   * budget wraps it here exactly as it wraps the default.
+   * `template`, R4). `main.ts` passes the package's OCR tier, exactly as the default does (ruling
+   * R9: the config never shapes the opener's escalation); the opener's R6 budget wraps it either way.
    */
   readonly trapReader?: NumeralsReader;
   /** Called once per recognised opener panel with the tiers that answered its 陷阱 fields. */
