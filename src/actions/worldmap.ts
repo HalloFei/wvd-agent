@@ -976,16 +976,22 @@ export async function travelViaAtlas(
 
   // 4. Zoom to the planned level and confirm the node at the projected point. Each press is checked:
   //    a swallowed E leaves the map at the previous level and the icon then matches at the wrong scale.
+  // The node may already be visible at the zoom the map opened at: confirm first, and zoom only when it
+  // is not. (Operator, 2026-11-07: *if the target location is already visible, then there needs to be no
+  // zoom in or out, just locate the target and tap.*)
   let levelNow = 0;
-  while (levelNow < level) {
+  let view = await lookAtMap(env, policy, timing);
+  if (!view.ok) return finish(view.failure);
+  let confirmed = confirmAt(view.image, levelNow, predicted, spec);
+  while (confirmed === null && levelNow < level) {
     const zoomed = await zoomInOneStep(env, timing, env.log);
     if (!zoomed.ok) return finish(zoomed);
     levelNow += 1;
     trace.zooms += 1;
+    view = await lookAtMap(env, policy, timing);
+    if (!view.ok) return finish(view.failure);
+    confirmed = confirmAt(view.image, levelNow, predicted, spec);
   }
-  const view = await lookAtMap(env, policy, timing);
-  if (!view.ok) return finish(view.failure);
-  const confirmed = confirmAt(view.image, levelNow, predicted, spec);
   if (confirmed === null) {
     return finish({
       ok: false,
