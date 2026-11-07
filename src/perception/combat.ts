@@ -6,19 +6,22 @@
  * icons are near-white, the HUD behind them is not, and both windows must clear the floor.
  *
  * The windows alone cannot separate a battle from a map — the B1F map's walls fill both (0.0355 and
- * 0.0212 on `nav-1024-0213/popup.jpg`) — so the frame's evidence is checked first: `screens.ts`
- * rules `combat` out on any frame with a minimap or a centred title bar, and this perceiver refuses
- * to answer when it has. The same rule protects the classifier, so a map whose parser refuses the
- * frame is never fought on.
+ * 0.0212 on `nav-1024-0213/popup.jpg`) — or from the town's party panel, whose idle sparkle and
+ * sunlit street fill both on the live 2026-11-07 client. So the frame's evidence is checked first:
+ * `screens.ts` rules `combat` out on any frame with a minimap, a centred title bar or the town's shop
+ * band (a battle is dim where the town draws its eight glyphs), and this perceiver refuses to answer
+ * when it has. The same rule protects the classifier, so a map whose parser refuses the frame — and
+ * the town — is never fought on.
  *
- * Measured 2026-10-25 over 1920×1080 frames:
+ * Measured over 1920×1080 frames (2026-10-25, and the town row 2026-11-07):
  *
  * | frame | speed window | auto window | verdict |
  * | --- | --- | --- | --- |
  * | battle (5 frames, both layouts) | 0.0086–0.0314 | 0.0107–0.0153 | combat |
  * | 3-D dungeon view | 0 | 0 | not |
  * | dungeon maps (5 frames) | 0.0008–0.0019 | 0–0.0374 | not |
- * | town, Dungeon Select, opener, chest QTE | ≤0.0005 | 0.0067–0.0110 | not |
+ * | town, Dungeon Select, opener, chest QTE (2026-10-25 frames) | ≤0.0005 | 0.0067–0.0110 | not |
+ * | **town, 2026-11-07 live frame** | **0.0239** | **0.0288** | **not (shop band)** |
  *
  * The buttons move between battle layouts: at the ends of the command row, (655,700) and
  * (1 205,700), while it is up, and at (694,716) and (1 241,716) with it down. The windows stay where

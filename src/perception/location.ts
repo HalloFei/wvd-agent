@@ -4,7 +4,15 @@
  *
  * `TownPerceiver` matches the party-panel chevron and the world-map icon in the lower band. The
  * chevron is primary evidence — the icon is covered while the panel is up (measured 0.475) — and the
- * two templates score 0.955 and 0.975 when the screen really is the town. `WorldMapPerceiver` uses a
+ * two legacy templates score 0.955 and 0.975 when the screen really is the town.
+ *
+ * The live client redrew the chevron tile: on the 2026-11-07 21:14 town frame
+ * (`testdata/screens/2026-11-07-town-live/town-1920.jpg`) the legacy mobile-art template's best score
+ * is **0.600**, below the 0.8 floor, and the world-map icon is still covered (0.481), so the camera
+ * went unnamed while its party panel lit the battle windows. The tile is drawn at 1:1 by this client,
+ * and `town-template.ts` carries the live art as a second sample: it scores **1.000** on that frame,
+ * 0.943–0.956 on the six town frames recorded 2026-10-25, and at most 0.497 on every other 1920×1080
+ * frame in `testdata/`. `WorldMapPerceiver` uses a
  * cheap structural fact instead: the PC build letterboxes the portrait map field between two black
  * pillars (measured 0.0 and 1.5 mean luma against ≥20.5 on every other committed screen).
  *
@@ -14,23 +22,46 @@
  * frame's 0 and turn a stop into an escalation.
  *
  * Cost: the entry runs outside the 10 Hz tick, but these two are in the composite, so each gate reads
- * only the band or the two pillars and the control match uses the two measured scales (0.66, 0.68)
- * rather than the full sweep.
+ * only the band or the two pillars; the legacy chevron and the world-map icon use the two measured
+ * scales (0.66, 0.68) and the live chevron 1:1, rather than the full sweep.
  */
-import type { Frame, Observation, Perceiver, RgbaImage } from '../contracts.ts';
+import type { Frame, Observation, Perceiver, PixelRect, RgbaImage } from '../contracts.ts';
 import { LOCATIONS } from './locations.ts';
-import { findTemplate } from './match.ts';
+import { findTemplate, type MatchTemplate } from './match.ts';
+import { TOWN_PANEL_CHEVRON_BASE64 } from './town-template.ts';
 
 const REFERENCE_WIDTH = 1920;
 const REFERENCE_HEIGHT = 1080;
 
-/** The two controls that mean "town": the chevron with the panel up, the icon with it down. */
-const TOWN_EVIDENCE = [
-  { id: 'panel-chevron', band: { x: 480, y: 720, width: 400, height: 360 } },
-  { id: 'world-map-icon', band: { x: 1_100, y: 900, width: 220, height: 180 } },
-] as const;
-/** The controls' measured range is 0.66–0.68; two scales are enough and half the cost. */
-const CONTROL_SCALES = [0.66, 0.68] as const;
+/** The live client's party-panel chevron, 34×26 at (679,789) on the 2026-11-07 town frame. */
+const TOWN_PANEL_CHEVRON: MatchTemplate = {
+  width: 34,
+  height: 26,
+  gray: Uint8Array.from(Buffer.from(TOWN_PANEL_CHEVRON_BASE64, 'base64')),
+};
+/** The live tile's band: it sits left of the party cards' centre column, at 1:1 on this client. */
+export const TOWN_PANEL_CHEVRON_BAND: PixelRect = { x: 600, y: 740, width: 300, height: 160 };
+
+/** The three controls that mean "town": the chevron (two arts) with the panel up, the icon with it down. */
+const TOWN_EVIDENCE: readonly {
+  readonly template: MatchTemplate;
+  readonly band: PixelRect;
+  readonly scales: readonly number[];
+}[] = [
+  // The live client's own art, tried first: cheapest, and it also carries the 2026-10-25 frames (0.943+).
+  { template: TOWN_PANEL_CHEVRON, band: TOWN_PANEL_CHEVRON_BAND, scales: [1] },
+  // The legacy mobile art at the PC UI's 0.66–0.68; still the evidence on the older layout.
+  {
+    template: LOCATIONS.get('panel-chevron')!.template,
+    band: { x: 480, y: 720, width: 400, height: 360 },
+    scales: [0.66, 0.68],
+  },
+  {
+    template: LOCATIONS.get('world-map-icon')!.template,
+    band: { x: 1_100, y: 900, width: 220, height: 180 },
+    scales: [0.66, 0.68],
+  },
+];
 const CONTROL_FLOOR = 0.8;
 const TOWN_CONFIDENCE_FLOOR = 0.5;
 
@@ -48,8 +79,8 @@ export class TownPerceiver implements Perceiver {
     if (image === null) return unnamed(frame.atMs);
     // With the panel up the chevron is the evidence; with it down the chevron is drawn differently
     // and the world-map icon is what appears. The icon is covered in the panel-up state (0.475).
-    for (const { id, band } of TOWN_EVIDENCE) {
-      const score = findTemplate(image, band, LOCATIONS.get(id)!.template, { scales: CONTROL_SCALES })?.score ?? 0;
+    for (const { template, band, scales } of TOWN_EVIDENCE) {
+      const score = findTemplate(image, band, template, { scales })?.score ?? 0;
       if (score < CONTROL_FLOOR) continue;
       const earned = (score - CONTROL_FLOOR) / (1 - CONTROL_FLOOR);
       return {
