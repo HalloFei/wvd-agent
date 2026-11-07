@@ -103,7 +103,8 @@ Commit per task, staged by explicit path.
       opener's chroma ink on a numeral-tight crop and normalised against that crop's own median; the
       tier segments by luma against the region median, so the same crop splits differently and 3 of 5
       hearts refuse at the 0.95 identity floor. On the sharpened proxy even the opener's own matcher
-      refuses card 1's `100` (0.871), so "the sharpened heart reads" is not achievable by either
+      refuses the second card (index 1)'s `100` (0.871), so "the sharpened heart reads" is not
+      achievable by either
       matcher. Moving the heart needs a re-recorded atlas (Task 5's corpus) or an ink/normalisation
       mode in the template tier — a separate change, pinned on the board.
 - [x] Commit: `feat(readers): the opener's trap numerals through the seam` (`a9c9caa`).

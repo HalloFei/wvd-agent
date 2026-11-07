@@ -46,7 +46,8 @@ the health metric: when the fast tiers start falling through, that is visible be
   the label; a context-free 60 px slice reads nothing). The **heart** field does not: its atlas was
   recorded with the opener's chroma ink on a numeral-tight crop and normalised against that crop's own
   median, while the tier segments by luma against the region median — 3 of 5 hearts refuse at its 0.95
-  identity floor, and on the sharpened proxy even the opener's own matcher refuses card 1's 100 (0.871).
+  identity floor, and on the sharpened proxy even the opener's own matcher refuses the second card
+  (index 1)'s 100 (0.871).
   It keeps its matcher until the atlas is re-recorded in the tier's geometry (R5).
 - The semantic rules do not move into the reader: a value outside the field's range, or the heart's
   `absent` vs `unreadable` distinction, stay the opener's (contracts §0.6 — the reader names a number,
