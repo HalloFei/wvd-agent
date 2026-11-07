@@ -1549,8 +1549,11 @@ export class WvdWorld implements World {
     // The orientation (contracts §10, the goal form): from whatever screen the session started on,
     // one command per tick until the map shows the farm floor. A screen the farm owns — a chest,
     // the bar, the loot card, a battle — yields to the route below, so the orientation never
-    // abandons something the party is in the middle of.
-    if (this.#orienting) {
+    // abandons something the party is in the middle of. The **mode** is what makes a battle, not the
+    // recogniser: the skill panel a cast opens reads `unknown`, and this gate used to answer it with
+    // its own wait, so the owed confirm was never dispatched (live 2026-11-07 22:13: 45 s under the
+    // panel, the press only after the recovery's Esc named the screen again).
+    if (this.#orienting && this.#mode.mode !== 'battle') {
       const orient = this.#task?.orient;
       if (orient === undefined) {
         this.#orienting = false;

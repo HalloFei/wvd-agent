@@ -2911,6 +2911,31 @@ describe('the orientation', () => {
     expect(stopped?.event.text).toContain('carries no 楼梯-门 icon');
   });
 
+  it('does not let the orientation starve the battle panel: the owed confirm is pressed on its unnamed frame', async () => {
+    // Live 2026-11-07 22:13: the session started inside the previous run's battle and was still
+    // orienting; the skill panel read 'unknown', and the orientation's own wait returned the tick
+    // before the route or the battle branch — so the confirm the sequence owed never went out: 45 s,
+    // the stall clock stopped the run, and the press only landed after the recovery's Esc named the
+    // screen again (22:14:20). A battle is not the orientation's business, even when no recogniser
+    // names the frame the battle is drawing.
+    const { task } = goalTask();
+    const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const { world, host, perceiver, slotCalls, confirmCalls, clock } = makeWorld({
+      observation: combatView, task, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
+    await started(world, host);
+
+    await world.tick();                              // the first read of the turn card
+    await world.tick();                              // the same name again: the slot
+    expect(slotCalls).toEqual(['爱丽丝']);
+
+    perceiver.observation = refusedPanel;            // the skill panel: unnamed, inside the battle
+    clock.advance(1_000);
+    await world.tick();                              // the owed confirm, not a wait for the floor
+    expect(confirmCalls).toEqual(['爱丽丝']);
+  });
+
   it('never abandons a chest: a prompt during the orientation is the route that finishes it', async () => {
     const { task } = goalTask();
     const { world, host, actuator, travelCalls } = makeWorld({ observation: chestPrompt, task });
