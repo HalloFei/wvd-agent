@@ -712,6 +712,11 @@ x 971–1135 at y 975–1035; **确定 = (1053,1005)**. Pressing it resolved the
 second tap is that button. `tests/battle-opener.test.ts` keeps the enemy-side form for an opener with
 no confirm point.
 
+**Superseded 2026-11-07** (the section *The skill panel's 確定 is located on the frame*): that constant
+is gone from the contract. The panel is not drawn at one place — the same panel sat at y 975–1035 on
+this frame and y 976–1037 on the 2026-11-07 one — so the button is located on the frame and the press
+goes to the located centre.
+
 ## Stages are ticks, and a death is Coo's decision (2026-11-05)
 
 The 2026-11-05 runs exposed two things the loop could not do. First, a task **stage** blocked the
@@ -1242,6 +1247,29 @@ confirm logs its press, because its silence was unreadable in the 22:00 log. Pro
 `tests/world.test.ts` (the panel's frame presses it; a panel with nothing owed presses nothing) and
 `tests/battle-sequence.test.ts`; the amendment is in
 `docs/specs/2026-11-04-battle-sequencing-design.md`.
+## The skill panel's 確定 is located on the frame (2026-11-07)
+
+Two live runs stopped on 拉巴迪奥斯的秘术's skill panel — 22:00 (482 ticks) and 22:13 (451 ticks) —
+and the 22:14 press that finally went out (`pressed the skill panel's 確定 …`) did **not** resolve it:
+at 22:16 the panel was still up, and the game's own frame at `testdata/screens/2026-11-07-battle-panel/`
+shows why. The panel moves between draws. On the 2026-11-05 frame its buttons sat at y 975–1035 (the
+measured `(1053,1005)`); on the 2026-11-07 frame they sit at y 976–1037, so the constant pressed the
+panel's body — a press that changes nothing, which is indistinguishable from a press that never went.
+
+The operator's rule (2026-11-07): *read the panel and tap the confirmation once you see it* — the
+chest path's "locate, then press", not a fixed point. So `perception/battle-panel.ts` now **locates**
+the button: a 57×33 luma sample of the live 確定 (generated from the frame by
+`scripts/extract-battle-panel-template.ts`), matched at scale 1 in a band that is the frame's lower
+middle by proportion. Measured: 1.000 and 0.99994 on two live panel frames at (1053,1006); 0.475
+(battle command phase), 0.465 (the battle's own stall frame, 1280) and 0.520 (town) elsewhere, so the
+floor is 0.85. `BattleOpener` loses `confirm`, `battleConfirm` takes the located point, and
+`world.ts` presses only what the locator answers on that frame — a frame without the panel presses
+nothing and the confirm stays owed (warned once per battle).
+
+**Live proof, 2026-11-07 22:21:** a fresh capture located the button at (1053,1006) @ 0.99994, one
+tap there resolved the panel, and the next frame is the battle's command phase with 爱丽丝 at
+MP 136/161 — the skill was cast and its 25 MP spent. That press is the acceptance for the module; the
+three-cycle run is still owed.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

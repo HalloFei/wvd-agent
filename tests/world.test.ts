@@ -334,6 +334,9 @@ const qteBar: Observation = {
   },
 };
 
+/** The skill panel's 確定 as the live client drew it 2026-11-07 22:16 (located, not assumed). */
+const PANEL_CONFIRM_AT: Point = { x: 1_053, y: 1_006 };
+
 function makeWorld(options: {
   cfg?: Partial<WvdConfigSection>;
   observation?: Observation;
@@ -354,8 +357,15 @@ function makeWorld(options: {
   moveResult?: ActionResult;
   /** The aim cannot be read on this run: the walk is never given a point (live 2026-11-06). */
   blindAim?: boolean;
-  /** The opener list and the member reader (contracts §11); absent leaves battles to auto. */
-  battle?: { readonly openers: readonly BattleOpener[]; readonly reader: BattleMemberReader };
+  /**
+   * The opener list, the member reader (contracts §11) and the panel locator. The locator defaults to
+   * the live client's measured 確定; a test that needs the panel absent or moved passes its own.
+   */
+  battle?: {
+    readonly openers: readonly BattleOpener[];
+    readonly reader: BattleMemberReader;
+    readonly locateConfirm?: (frame: Frame) => Promise<Point | null>;
+  };
   host?: FakeHost;
   /**
    * The QTE timing sub-loop. The real one unless a test scripts it: a bar on screen would then
@@ -401,7 +411,13 @@ function makeWorld(options: {
     cfg,
     timezone: 'Asia/Shanghai',
     policy: options.policy ?? routePolicy,
-    battle: options.battle,
+    battle: options.battle === undefined
+      ? undefined
+      : {
+        openers: options.battle.openers,
+        reader: options.battle.reader,
+        locateConfirm: options.battle.locateConfirm ?? (async () => PANEL_CONFIRM_AT),
+      },
     classify,
     timing: options.timing ?? timeQte,
     commands: {
@@ -431,7 +447,9 @@ function makeWorld(options: {
       battleAuto: () => pressBattleAuto(actuator),
       // The opener's taps are pinned in tests/battle-opener.test.ts; the world tests need the calls.
       battleSlot: async (opener) => { slotCalls.push(opener.name); return { ok: true }; },
-      battleConfirm: async (opener) => { confirmCalls.push(opener.name); return { ok: true }; },
+      // The cast's resolving press takes the **located** point (perception/battle-panel.ts), so the
+      // harness records where it would have pressed, not which member cast it.
+      battleConfirm: async (at) => { confirmCalls.push(`${at.x},${at.y}`); return { ok: true }; },
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
       travel: async (to) => {
@@ -1094,7 +1112,7 @@ describe('a walk stays in flight through the screens it produces', () => {
 
     clock.advance(1);
     await world.tick();                              // the resolving press
-    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['1053,1006']);
 
     clock.advance(1_000);
     await world.tick();                              // 自動
@@ -1120,7 +1138,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     perceiver.observation = refusedPanel;            // the skill panel: above a blank frame, below the act floor
     clock.advance(1_000);
     await world.tick();                              // the owed confirm, on the panel's own frame
-    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['1053,1006']);
     expect(host.logRecords.some((line) => line.message.includes('確定'))).toBe(true);
   });
 
@@ -1141,6 +1159,37 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(slotCalls).toEqual([]);
     expect(confirmCalls).toEqual([]);
   });
+  it('presses the confirm only once the panel is located, and at the point it is located', async () => {
+    // Operator rule 2026-11-07: *read the panel and tap the confirmation once you see it.* The panel
+    // moves between draws, so a fixed point lands on its body (the same panel was at y 975–1035 on
+    // 2026-11-05 and y 976–1037 on 2026-11-07 and the fixed press resolved neither). The locator
+    // answers the frame; null is "the panel is not drawn yet" and nothing is pressed.
+    const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
+    let panel: Point | null = null;
+    const battle = {
+      openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }],
+      reader,
+      locateConfirm: async () => panel,
+    };
+    const { world, host, perceiver, confirmCalls, clock } = makeWorld({
+      observation: combatView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
+    await started(world, host);
+    await world.tick();                              // the first read
+    await world.tick();                              // the slot
+
+    perceiver.observation = refusedPanel;            // the panel's frame, but the locator has not seen it
+    clock.advance(1_000);
+    await world.tick();
+    expect(confirmCalls).toEqual([]);
+    expect(host.logRecords.some((line) => line.message.includes('not on this frame'))).toBe(true);
+
+    panel = { x: 1_048, y: 1_046 };                  // a later frame draws it, forty pixels lower
+    clock.advance(1_000);
+    await world.tick();
+    expect(confirmCalls).toEqual(['1048,1046']);
+  });
+
   it('does nothing but auto when the ACTIVE member is not on the opener list', async () => {
     const reader: BattleMemberReader = { readActiveMember: async () => '本杰明' };
     const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
@@ -1227,7 +1276,7 @@ describe('a walk stays in flight through the screens it produces', () => {
 
     clock.advance(1_000);
     await world.tick();                       // the resolving press
-    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['1053,1006']);
 
     clock.advance(1_000);
     await world.tick();                       // 自動 back on
@@ -1252,7 +1301,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(slotCalls).toEqual(['爱丽丝']);
     clock.advance(1_000);
     await world.tick();                        // the resolving press
-    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['1053,1006']);
     clock.advance(1_000);
     await world.tick();                        // 自動 on
     expect(actuator.calls).toEqual(['tap 1231,708']);
@@ -1268,7 +1317,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     await world.tick();
     expect(reads).toBe(2);                     // both reads belonged to the first battle
     expect(slotCalls).toEqual(['爱丽丝']);
-    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['1053,1006']);
     expect(actuator.calls.filter((call) => call === 'tap 1231,708').length).toBe(2);
   });
 
@@ -1423,7 +1472,7 @@ describe('a walk stays in flight through the screens it produces', () => {
 
     clock.advance(1_000);
     await world.tick();                       // the resolving press
-    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['1053,1006']);
 
     clock.advance(1_000);
     await world.tick();                       // 3. 自動
@@ -1442,7 +1491,7 @@ describe('a walk stays in flight through the screens it produces', () => {
       await world.tick();
     }
     expect(slotCalls).toEqual(['爱丽丝']);
-    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['1053,1006']);
   });
 
   it('puts the heal before the next command in the cycle pipeline', async () => {
@@ -2933,7 +2982,7 @@ describe('the orientation', () => {
     perceiver.observation = refusedPanel;            // the skill panel: unnamed, inside the battle
     clock.advance(1_000);
     await world.tick();                              // the owed confirm, not a wait for the floor
-    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(confirmCalls).toEqual(['1053,1006']);
   });
 
   it('never abandons a chest: a prompt during the orientation is the route that finishes it', async () => {

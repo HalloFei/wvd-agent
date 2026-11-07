@@ -24,6 +24,7 @@ import {
 } from './contracts.ts';
 import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
 import { BATTLE_OPENERS, tapOpenerConfirm, tapOpenerSlot } from './actions/battle.ts';
+import { locateSkillPanelConfirm } from './perception/battle-panel.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from './actions/chest.ts';
 import { closeCharacterPage } from './actions/heal.ts';
 import { CharacterPagePerceiver } from './perception/character-page.ts';
@@ -399,7 +400,8 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
         }
         return tapped;
       },
-      battleConfirm: (opener) => tapOpenerConfirm(actuator, opener),
+      // The panel's 確定 is located on the frame, so this command presses the point it is given.
+      battleConfirm: (at) => tapOpenerConfirm(actuator, at),
       // The attempt-vs-reroll policy's action: leave the QTE (free, chest §4) and re-click a card.
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
@@ -426,6 +428,10 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     battle: {
       openers: BATTLE_OPENERS,
       reader: { readActiveMember: async (frame) => activePartyMember(await frame.toRgba()) },
+      // The cast's resolving press is **located**, not assumed (operator, 2026-11-07): the skill panel's
+      // 確定 is found on the frame the cast is on, and a frame without the panel answers null — nothing
+      // is pressed, and the confirm stays owed for the next paced look.
+      locateConfirm: async (frame) => locateSkillPanelConfirm(await frame.toRgba())?.at ?? null,
     },
     openSession,
   });

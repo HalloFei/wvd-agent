@@ -16,7 +16,7 @@
  * The quick slots are the member's own pre-assigned skills (`技能切换`, R), so the level is whatever
  * the party configured: this module never picks a level.
  */
-import type { ActionResult, Actuator, BattleOpener, BattleSlot, BattleTarget, Point } from '../contracts.ts';
+import type { ActionResult, Actuator, BattleOpener, BattleSlot, Point } from '../contracts.ts';
 
 /** The four quick slots of the command phase, measured 2026-11-02 (their centres). */
 export const BATTLE_SLOTS: Readonly<Record<'左上' | '右上' | '左下' | '右下', Point>> = {
@@ -29,32 +29,16 @@ export const BATTLE_SLOTS: Readonly<Record<'左上' | '右上' | '左下' | '右
 
 
 /**
- * The party side of a party-targeted skill: the front row's leftmost member card, measured from the
- * battle HUD, 2026-11-02. No configured opener uses it today — Alice's is enemy-targeted — but the
- * contract's other target form resolves over this point.
+ * The skill detail panel's **確定** is not a constant here: it is located on the frame
+ * (`perception/battle-panel.ts`) and the press goes to the located centre. The panel moves between
+ * draws — the same 拉巴迪奥斯的秘术 panel was at y 975–1035 on 2026-11-05 and y 976–1037 on
+ * 2026-11-07 — so the fixed point this module used to export (1053,1005) landed on the panel's body
+ * twice and nothing resolved (live 2026-11-07 22:00 and 22:13, 48 s and 45 s on the panel).
  */
-export const PARTY_FRONT_AT: Point = { x: 787, y: 939 };
-
-/**
- * An enemy in the middle of the group the battle opens with — Alice's configured target. The enemies
- * move with the camera, so a hit that misses here is a *target* miss, not an input failure; the
- * caller logs it and falls back to auto, and a named recogniser for the enemy marker is the upgrade.
- */
-export const ENEMY_TARGET_AT: Point = { x: 1_000, y: 540 };
-
-/**
- * The skill detail panel's **确定** button, measured live 2026-11-05 on the 拉巴迪奥斯的秘术 panel
- * (`.tmp/panel-stuck.jpg`, 1920×1080): the two buttons span x 781–946 (取消) and 971–1135 (确定) at
- * y 975–1035; the point is the 确定 centre, and tapping it resolved the stuck panel and spent the
- * skill's 25 MP. The operator's correction (2026-11-03): *the cast is pressing 确认, not a tap on the
- * enemy* — the enemy side does nothing while this panel is up (live 2026-11-05: the panel stayed and
- * the battle stalled).
- */
-export const PANEL_CONFIRM_AT: Point = { x: 1_053, y: 1_005 };
 
 /** The operator's configuration: a list of members with their opener. */
 export const BATTLE_OPENERS: readonly BattleOpener[] = [
-  { name: '爱丽丝', slot: '左下', target: 'enemy', confirm: PANEL_CONFIRM_AT },
+  { name: '爱丽丝', slot: '左下', target: 'enemy' },
 ];
 
 /**
@@ -87,8 +71,6 @@ export function openerFor(name: string | null, openers: readonly BattleOpener[])
 /** How long the detail panel / target selection needs before the target tap lands on it. */
 export const OPENER_SETTLE_MS = 700;
 
-const targetAt = (target: BattleTarget): Point => (target === 'enemy' ? ENEMY_TARGET_AT : PARTY_FRONT_AT);
-
 /**
  * The cast's first tap: the member's configured quick slot, and nothing else. The World's battle
  * sequence sends this as one operation and waits out its own pace before the resolving press
@@ -99,27 +81,28 @@ export async function tapOpenerSlot(actuator: Actuator, opener: BattleOpener): P
 }
 
 /**
- * The cast's second tap: the skill's own **确认** when the operator configured its point, the target
- * side otherwise. The operator's correction (2026-11-03): *the skill cast is actually pressing 确认,
- * not a tap on the enemy*.
+ * The cast's second tap: exactly where the panel's **確定** was located on the frame. The function
+ * takes the point, not the opener: the panel's position is perception's answer (live 2026-11-07), and
+ * an unknown position is never replaced by a default one here.
  */
-export async function tapOpenerConfirm(actuator: Actuator, opener: BattleOpener): Promise<ActionResult> {
-  return actuator.tap(opener.confirm ?? targetAt(opener.target));
+export async function tapOpenerConfirm(actuator: Actuator, at: Point): Promise<ActionResult> {
+  return actuator.tap(at);
 }
 
 /**
- * Cast the opener in one call: the slot, a settle, then the press that resolves it. Kept for the
- * scripts and measurements that own no tick loop; the World's battle sequence sends the two taps as
- * two paced operations instead (they are the same two taps). A refused slot press ends the chain and
- * is returned unchanged, never retried.
+ * Cast the opener in one call: the slot, a settle, then the press that resolves it, at the point the
+ * caller located. Kept for the scripts and measurements that own no tick loop; the World's battle
+ * sequence sends the two taps as two paced operations instead (they are the same two taps). A refused
+ * slot press ends the chain and is returned unchanged, never retried.
  */
 export async function castBattleOpener(
   actuator: Actuator,
   opener: BattleOpener,
+  at: Point,
   sleep: (ms: number) => Promise<void>,
 ): Promise<ActionResult> {
   const slot = await tapOpenerSlot(actuator, opener);
   if (!slot.ok) return slot;
   await sleep(OPENER_SETTLE_MS);
-  return tapOpenerConfirm(actuator, opener);
+  return tapOpenerConfirm(actuator, at);
 }

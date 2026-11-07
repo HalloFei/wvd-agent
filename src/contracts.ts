@@ -544,22 +544,17 @@ export type BattleTarget = 'party-front' | 'enemy';
  * One configured opener: a member's pre-assigned skill, cast once when that member is the one whose
  * command phase is up. `name` is the member's name exactly as the ACTIVE card draws it; the list of
  * openers is the operator's config, and a name that is not on it takes the default action.
+ *
+ * It carries no point for the cast's resolving press: the skill detail panel's **確定** is **located on
+ * the frame** (`perception/battle-panel.ts`) and the press goes to the located centre. A fixed point
+ * was tried and failed twice (live 2026-11-07): the panel moves between draws — the same panel was at
+ * y 975–1035 on 2026-11-05 and y 976–1037 on 2026-11-07 — and a press into the panel's body changes
+ * nothing. The operator's rule (2026-11-07): *read the panel and tap the confirmation once you see it.*
  */
 export interface BattleOpener {
   readonly name: string;
   readonly slot: BattleSlot;
   readonly target: BattleTarget;
-  /**
-   * The **确定** button of the skill detail panel, when the skill draws one. The operator's correction
-   * (2026-11-03, with the frame): a 全体范围 skill's cast presses *确定* at the panel's bottom — the
-   * panel reads 拉巴迪奥斯的秘术, the description, MP 132 ▸ 107 (消费MP: 25) and two buttons, **取消**
-   * and **确定** — not an enemy's tile. The panel also carries the 队列 (queue) control at its right.
-   * Set, the cast presses this point instead of `target`. Measured live 2026-11-05 for Alice's
-   * opener: the 确定 centre is (1053,1005) on the 1920 client (取消 781–946, 确定 971–1135, y 975–1035),
-   * and pressing it resolved the panel and spent the skill's 25 MP. An unmeasured point is never
-   * configured: a guess on the cast path costs the battle's turn.
-   */
-  readonly confirm?: Point;
 }
 
 /**

@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionResult, Actuator, BattleOpener, Point } from '../src/contracts.ts';
 import {
-  BATTLE_OPENERS, BATTLE_SLOTS, ENEMY_TARGET_AT, OPENER_SETTLE_MS, PARTY_FRONT_AT, castBattleOpener, memberKey,
-  openerFor, tapOpenerConfirm, tapOpenerSlot,
+  BATTLE_OPENERS, BATTLE_SLOTS, OPENER_SETTLE_MS, castBattleOpener, memberKey, openerFor,
+  tapOpenerConfirm, tapOpenerSlot,
 } from '../src/actions/battle.ts';
 
 /**
- * The battle opener (operator rule 2026-11-02): a LIST of members with their skill and target. Every
- * command phase filters the ACTIVE member against it; a match casts (slot -> target), a miss takes the
- * default action and the battle carries on.
+ * The battle opener (operator rule 2026-11-02): a LIST of members with their skill and target side.
+ * Every command phase filters the ACTIVE member against it; a match casts (slot -> the panel's
+ * located 確定), a miss takes the default action and the battle carries on.
+ *
+ * The resolving press is **located on the frame** (`perception/battle-panel.ts`, the operator's rule of
+ * 2026-11-07: *read the panel and tap the confirmation once you see it*). This module therefore presses
+ * exactly the point its caller gives it — a fixed default here is what failed live (the same panel was
+ * drawn at two different heights, and the fixed point landed on the panel's body).
  */
 
 function fakeActuator(...results: ActionResult[]): Actuator & { readonly taps: Point[] } {
@@ -26,14 +31,11 @@ function fakeActuator(...results: ActionResult[]): Actuator & { readonly taps: P
 const sleep = async (): Promise<void> => {};
 /**
  * The operator's entry (2026-11-03): Alice's bottom-left slot is 拉巴迪奥斯的秘术, a 攻击范围=全体
- * damage spell, so the target is an enemy. The resolving press is the panel's **确定**, measured live
- * 2026-11-05 — the enemy side does not resolve this panel (the battle stalled on it).
+ * damage spell, so the skill resolves over the enemy side.
  */
-const alice: BattleOpener = {
-  name: '爱丽丝', slot: '左下', target: 'enemy', confirm: { x: 1_053, y: 1_005 },
-};
-/** The same entry without a 确认 point: the enemy-side form, still in the contract. */
-const plain: BattleOpener = { name: '爱丽丝', slot: '左下', target: 'enemy' };
+const alice: BattleOpener = { name: '爱丽丝', slot: '左下', target: 'enemy' };
+/** The panel's 確定 as the locator would answer it on the live 1920 client, 2026-11-07. */
+const PANEL_CONFIRM: Point = { x: 1_053, y: 1_006 };
 
 describe('the battle opener filter', () => {
   it('is a list with 爱丽丝 and nobody else', () => {
@@ -66,34 +68,27 @@ describe('the battle opener filter', () => {
 });
 
 describe('the battle opener cast', () => {
-  it('taps the configured slot, waits for its panel, then taps the enemy side', async () => {
+  it('taps the configured slot, waits for its panel, then presses the located 確定', async () => {
     const actuator = fakeActuator();
-    const result = await castBattleOpener(actuator, plain, sleep);
+    const result = await castBattleOpener(actuator, alice, PANEL_CONFIRM, sleep);
 
     expect(result).toEqual({ ok: true });
-    expect(actuator.taps).toEqual([BATTLE_SLOTS['左下'], ENEMY_TARGET_AT]);
+    expect(actuator.taps).toEqual([BATTLE_SLOTS['左下'], PANEL_CONFIRM]);
   });
 
-  it('presses the skill\'s own 确认 instead of a target side when it is configured', async () => {
-    // Operator correction 2026-11-03: the cast's second press is 确认 at the bottom of the panel, not a
-    // tap on the enemy. The point is a config parameter until it is measured live.
+  it('presses exactly the point it is given, and never a default one', async () => {
+    // The panel moves between draws (the live client put the same panel at y 975–1035 and y 976–1037),
+    // so a press at a fixed point lands on the panel's body and nothing resolves. The located point is
+    // the only point this module presses.
     const actuator = fakeActuator();
-    const confirm: Point = { x: 960, y: 1_032 };
-    await castBattleOpener(actuator, { ...alice, confirm }, sleep);
-
-    expect(actuator.taps).toEqual([BATTLE_SLOTS['左下'], confirm]);
+    const moved: Point = { x: 1_048, y: 1_046 };
+    await tapOpenerConfirm(actuator, moved);
+    expect(actuator.taps).toEqual([moved]);
   });
 
-  it('aims a party-targeted opener at the party side', async () => {
-    const actuator = fakeActuator();
-    await castBattleOpener(actuator, { ...plain, slot: '右上', target: 'party-front' }, sleep);
-
-    expect(actuator.taps).toEqual([BATTLE_SLOTS['右上'], PARTY_FRONT_AT]);
-  });
-
-  it('stops at a refused slot press and never taps the target', async () => {
+  it('stops at a refused slot press and never presses the panel', async () => {
     const actuator = fakeActuator({ ok: false, reason: 'rejected', detail: 'not-foreground' });
-    const result = await castBattleOpener(actuator, alice, sleep);
+    const result = await castBattleOpener(actuator, alice, PANEL_CONFIRM, sleep);
 
     expect(result).toMatchObject({ ok: false, reason: 'rejected' });
     expect(actuator.taps).toHaveLength(1);
@@ -108,13 +103,8 @@ describe('the battle opener cast', () => {
     expect(slot.taps).toEqual([BATTLE_SLOTS['左下']]);
 
     const confirm = fakeActuator();
-    const point: Point = { x: 960, y: 1_032 };
-    await tapOpenerConfirm(confirm, { ...alice, confirm: point });
-    expect(confirm.taps).toEqual([point]);
-
-    const side = fakeActuator();
-    await tapOpenerConfirm(side, plain);
-    expect(side.taps).toEqual([ENEMY_TARGET_AT]);
+    await tapOpenerConfirm(confirm, PANEL_CONFIRM);
+    expect(confirm.taps).toEqual([PANEL_CONFIRM]);
   });
 
   it('keeps the measured 2x2 quick-slot grid and the cast settle', () => {

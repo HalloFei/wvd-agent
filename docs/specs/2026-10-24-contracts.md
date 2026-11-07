@@ -663,9 +663,11 @@ export interface BattleOpener {
   readonly name: string;          // as the ACTIVE card draws it
   readonly slot: BattleSlot;
   readonly target: BattleTarget;  // multi-target: the tap names the side
-  readonly confirm?: Point;       // the skill's own 确认 button; pressed instead of `target` when set.
-                                  // Measured 2026-11-05: (1053,1005) resolves 拉巴迪奥斯的秘术's panel.
 }
+// No confirm point: the skill panel's 確定 is **located on the frame** by perception
+// (`perception/battle-panel.ts`), and the press goes to the located centre. A fixed point was
+// measured on 2026-11-05 and failed live twice on 2026-11-07 — the same panel is drawn at y 975–1035
+// in one frame and y 976–1037 in another, so the constant landed on the panel's body.
 
 export interface BattleMemberReader {
   readActiveMember(frame: Frame): Promise<string | null>;
@@ -680,7 +682,10 @@ screen size — is a miss, never an error, and never a tap on a slot.
 
 The World sends the battle's operations as a **sequence** (`src/policy/battle-sequence.ts`, operator
 rule 2026-11-04): settle → 倍速 → **自動 off (when the cast is owed and 自動 is on)** → the opener's
-slot → the opener's confirm → 自動 → hold. One tap per tick, in that order, each waiting
+slot → the located **確定** → 自動 → hold. The resolving press is a **perception answer**: the frame is
+searched for the panel's 確定 button (the operator's rule, 2026-11-07: *read the panel and tap the
+confirmation once you see it*), and a frame that does not draw the panel presses nothing — the confirm
+stays owed and the next paced tick looks again. One tap per tick, in that order, each waiting
 `battleStepMs` (§8.5) from the previous tap's **return**, and no press at all before
 `battleSettleMs` has passed since the battle's first frame. Both toggles are read before they are
 pressed (§2 `speedOn`/`autoOn`), so a blind re-press cannot turn one back off; a press that did not

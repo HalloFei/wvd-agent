@@ -160,8 +160,11 @@ export interface RouteCommands {
    * one operation and waits out its own pace before the resolving press (operator rule 2026-11-04).
    */
   battleSlot(opener: BattleOpener): Promise<ActionResult>;
-  /** The cast's second tap: the skill's own 确认 when configured, the side its target resolves over. */
-  battleConfirm(opener: BattleOpener): Promise<ActionResult>;
+  /**
+   * The cast's second tap: exactly the **located** 確定 of the skill detail panel (the frame named it;
+   * a fixed point failed live twice — see `perception/battle-panel.ts`).
+   */
+  battleConfirm(at: Point): Promise<ActionResult>;
   /**
    * Leave the chest QTE without spending an attempt (chest §4): the round ✕ at the left of the
    * hotbar. Used by the attempt-vs-reroll policy, which changes the bar's speed by re-selecting the
@@ -225,7 +228,15 @@ export interface WvdWorldOptions {
    * phase is up (contracts §11). Absent leaves every battle to auto. A name that is not on the list —
    * including a null from a reader that cannot tell — takes the default action and lets the battle run.
    */
-  battle?: { readonly openers: readonly BattleOpener[]; readonly reader: BattleMemberReader } | undefined;
+  battle?: {
+    readonly openers: readonly BattleOpener[];
+    readonly reader: BattleMemberReader;
+    /**
+     * Where the skill panel's **確定** is on this frame, or null when the panel is not drawn. The
+     * cast's resolving press is this answer, never a constant (`perception/battle-panel.ts`).
+     */
+    readonly locateConfirm: (frame: Frame) => Promise<Point | null>;
+  } | undefined;
   /** The loop's scheduler: on in production, off in tests so a tick runs only when asked. */
   autoTick?: boolean | undefined;
   /** The one clock. `performance.now()` unless a test says otherwise. */
@@ -635,6 +646,8 @@ export class WvdWorld implements World {
   #battleAutoWarned = false;
   #battleNotListedWarned = false;
   #battleAutoStuckWarned = false;
+  /** Said once per battle: the panel the cast owes is not on the frame (yet), so nothing is pressed. */
+  #battlePanelWarned = false;
   /** The cast went out (a slot tap landed) — the opener was not given up. */
   #battleCastSent = false;
   /** The opener was given up for this battle: no confirmed turn card. Said once. */
@@ -679,7 +692,11 @@ export class WvdWorld implements World {
    * in text. Cleared by the next named screen.
    */
   #askedForMap = false;
-  readonly #battle: { readonly openers: readonly BattleOpener[]; readonly reader: BattleMemberReader } | undefined;
+  readonly #battle: {
+    readonly openers: readonly BattleOpener[];
+    readonly reader: BattleMemberReader;
+    readonly locateConfirm: (frame: Frame) => Promise<Point | null>;
+  } | undefined;
   #unsubscribe: (() => void) | null = null;
   #running = false;
   #starting = false;
@@ -1640,6 +1657,7 @@ export class WvdWorld implements World {
     this.#battleAutoWarned = false;
     this.#battleNotListedWarned = false;
     this.#battleAutoStuckWarned = false;
+    this.#battlePanelWarned = false;
     this.#battleCastSent = false;
     this.#battleOpenerGaveUp = false;
     this.#battleRead = null;
@@ -2828,11 +2846,28 @@ export class WvdWorld implements World {
             return;
           }
           case 'confirm': {
-            const pressed = await send(`${step.opener.name}'s opener confirm`, this.#commands.battleConfirm(step.opener));
+            // The press is **located on this frame**, never a constant (operator, 2026-11-07: *read the
+            // panel and tap the confirmation once you see it*). The panel moves between draws, so a
+            // fixed point lands on the panel's body — measured live twice: y 975–1035 on 2026-11-05 and
+            // y 976–1037 on 2026-11-07, where (1053,1005) pressed nothing for 48 s. A panel that is not
+            // on the frame is not pressed: the confirm stays owed and the next paced tick looks again.
+            const at = this.#battle === undefined || context === undefined
+              ? null
+              : await this.#battle.locateConfirm(context.frame);
+            if (at === null) {
+              if (!this.#battlePanelWarned) {
+                this.#battlePanelWarned = true;
+                this.#host?.log.info('wvd: the skill panel is not on this frame yet; the confirm stays owed');
+              }
+              return;
+            }
+            const pressed = await send(`${step.opener.name}'s opener confirm`, this.#commands.battleConfirm(at));
             if (pressed.ok) {
               // Said out loud because its absence was unreadable in a live log: a cast whose panel never
               // resolved looked exactly like a cast with no confirmation step at all (2026-11-07 22:00).
-              this.#host?.log.info(`wvd: pressed the skill panel's 確定 for ${step.opener.name}'s opener`);
+              this.#host?.log.info(
+                `wvd: pressed the skill panel's 確定 at ${at.x},${at.y} for ${step.opener.name}'s opener`,
+              );
             }
             return;
           }
