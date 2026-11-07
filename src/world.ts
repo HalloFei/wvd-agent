@@ -165,6 +165,8 @@ export interface RouteCommands {
    * a fixed point failed live twice — see `perception/battle-panel.ts`).
    */
   battleConfirm(at: Point): Promise<ActionResult>;
+  /** One Esc: the measured way out of a page the loop cannot close (operator, 2026-11-07). */
+  escape(): Promise<ActionResult>;
   /**
    * Leave the chest QTE without spending an attempt (chest §4): the round ✕ at the left of the
    * hotbar. Used by the attempt-vs-reroll policy, which changes the bar's speed by re-selecting the
@@ -1374,8 +1376,7 @@ export class WvdWorld implements World {
           this.#host?.log.warn(
             `wvd: the character page did not close after ${PAGE_CLOSE_TRIES} taps; pressing Esc once`,
           );
-          const pageSession = this.#session;
-          if (pageSession !== null) await pageSession.actuator.holdKey(ESC_SCAN, this.#cfg.pressHoldMs);
+          await this.#commands.escape();
         }
         return;
       }

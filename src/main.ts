@@ -402,6 +402,8 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       },
       // The panel's 確定 is located on the frame, so this command presses the point it is given.
       battleConfirm: (at) => tapOpenerConfirm(actuator, at),
+      // One Esc, through the command seam: this.#session is not the tick's session.
+      escape: () => actuator.holdKey(0x01, pressHoldMs()),
       // The attempt-vs-reroll policy's action: leave the QTE (free, chest §4) and re-click a card.
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),

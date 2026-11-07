@@ -380,6 +380,7 @@ function makeWorld(options: {
   /** The battle's cast, split into its two operations (contracts §11, the sequence). */
   const slotCalls: string[] = [];
   const confirmCalls: string[] = [];
+  const escCalls: string[] = [];
   const snapshotCalls: Array<number | undefined> = [];
   const shot = options.screenshot === null ? null : options.screenshot;
   const session: WvdSession = {
@@ -450,6 +451,7 @@ function makeWorld(options: {
       // The cast's resolving press takes the **located** point (perception/battle-panel.ts), so the
       // harness records where it would have pressed, not which member cast it.
       battleConfirm: async (at) => { confirmCalls.push(`${at.x},${at.y}`); return { ok: true }; },
+      escape: async () => { escCalls.push('esc'); return { ok: true }; },
       cancelQte: () => cancelQte(actuator),
       reenterChest: () => reenterChest(actuator, cfg.hazardEscapeHoldMs),
       travel: async (to) => {
@@ -469,6 +471,7 @@ function makeWorld(options: {
     world, host, source, perceiver, actuator, cfg, snapshotCalls, clock, travelCalls,
     slotCalls,
     confirmCalls,
+    escCalls,
     openSessionCalls: () => openSessionCalls,
   };
 }
@@ -1792,7 +1795,7 @@ describe('the character page', () => {
     // Operator rule 2026-11-03: after open and heal there shall be a close of the character panel, so
     // go back to the dungeon. The page is a named screen now, so the close is verified, not hoped for.
     const page: Observation = { screen: 'character-page', atMs: 100, confidence: 1 };
-    const { world, host, actuator, perceiver, clock } = makeWorld({ observation: page });
+    const { world, host, actuator, perceiver, clock, escCalls } = makeWorld({ observation: page });
     await started(world, host);
 
     await world.tick();
@@ -1805,7 +1808,8 @@ describe('the character page', () => {
     // A page that takes no close is a lost screen, and the measured way out is one Esc — not the
     // stall clock (live 2026-11-07 22:34: three presses returned ok, the page stayed, and the loop
     // waited ~45 s for the escalation to do what this press does at once).
-    expect(actuator.calls.filter((call) => call.startsWith('key '))).toEqual(['key 1 60']);
+    // The cap's way out goes through the command seam: the World's session field is not the tick's.
+    expect(escCalls).toEqual(['esc']);
 
     // The page left: nothing more is sent.
     perceiver.observation = dungeonView;
