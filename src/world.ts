@@ -1657,6 +1657,12 @@ export class WvdWorld implements World {
     if (intent.kind === 'wait' && this.#mode.mode === 'battle' && this.#battleSequence?.pendingConfirm() != null) {
       intent = { kind: 'fight' };
     }
+    // The route may not press from a page frame, or from a frame that has not held: open-map on a page
+    // cannot open a map, and the loop then closes the page and asks again — the 20 s alternation of
+    // live 2026-11-07 23:39 / 2026-11-08 00:00 (runs 21, 22). One owner, from a stable frame.
+    if (intent.kind === 'open-map' && (observation.screen === 'character-page' || this.#stableCount < 2)) {
+      return;
+    }
     if (COMMAND_KINDS.has(intent.kind) && this.#failed.has(intent.kind)) {
       // A blind retry is not a decision: `openMap`'s second `G` on an already-open map is
       // 移动至目的地. The stall clock turns this into an escalation instead.

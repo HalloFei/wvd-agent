@@ -549,7 +549,9 @@ describe('the tick', () => {
     const { world, host, actuator, perceiver, clock } = makeWorld({ observation: dungeonView });
     await started(world, host);
 
-    await world.tick();
+    await world.tick();                                   // one frame of the view: not yet a decision
+    expect(actuator.calls).toEqual([]);
+    await world.tick();                                   // the second frame: the route may command
     expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
 
     // mapOpenTimeoutMs passes with the 3-D view still up: the map command changed nothing.
@@ -1795,6 +1797,16 @@ describe('the stall policy', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('the character page', () => {
+  it('never opens the map from a page frame, or from a frame that has not held', async () => {
+    // Live 2026-11-07 23:39 / 2026-11-08 00:00: the route pressed open-map, the frame was the page, the
+    // page block closed it, and the route asked again — twenty seconds a turn, for minutes.
+    const page: Observation = { screen: 'character-page', atMs: 100, confidence: 1 };
+    const { world, host, actuator } = makeWorld({ observation: page });
+    await started(world, host);
+    for (let index = 0; index < 6; index += 1) await world.tick();
+    expect(actuator.calls.filter((call) => call === 'key ' + SCAN.G + ' 60')).toEqual([]);
+  });
+
   it('closes a page, and the next frame proves it', async () => {
     // Operator rule 2026-11-03: after open and heal there shall be a close of the character panel, so
     // go back to the dungeon. The page is a named screen now, so the close is verified, not hoped for.
