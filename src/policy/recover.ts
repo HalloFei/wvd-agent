@@ -18,10 +18,17 @@ export type { RecoveryStep };
 /**
  * The town page's party-panel collapse control: pressing it reveals the world map the panel covers
  * (operator, 2026-11-07: "in town page the worldmap can be hide from party panel, press here to
- * unhide"). The point is taken from the operator's screenshot (the double-chevron at ~0.82, 0.62 of
- * the frame); it is confirmed by the live acceptance before it is trusted.
+ * unhide").
+ *
+ * Measured 2026-11-07 on the live camera: the chevron is the 34x26 sample in
+ * `src/perception/town-template.ts` at (679, 789) of
+ * `testdata/screens/2026-11-07-town-live/town-1920.jpg` (the client redrew the tile; the legacy
+ * mobile art scores 0.600 there). Its centre is the press: (696, 802). The sample scores 1.000 on
+ * that frame and 0.943-0.956 on the six town frames recorded 2026-10-25, where the legacy template
+ * and this point agree within 3 px. The operator screenshot's (1577, 669) is a different control:
+ * it does not hit the chevron.
  */
-export const PARTY_PANEL_COLLAPSE: Point = { x: 1_577, y: 669 };
+export const PARTY_PANEL_COLLAPSE: Point = { x: 696, y: 802 };
 
 /** The screens the route can act from: a walk, a map, a travel, a fight. */
 const NAVIGABLE: ReadonlySet<Observation['screen']> = new Set<Observation['screen']>([

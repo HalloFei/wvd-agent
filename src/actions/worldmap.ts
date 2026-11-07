@@ -14,8 +14,10 @@
 import type { ActionFailure, Actuator, Frame, Observation, Point, RgbaImage, ScreenId } from '../contracts.ts';
 import { waitStable } from '../frames/stable.ts';
 import { DUNGEON_SELECT_AREA, DUNGEON_SELECT_FLOOR, DUNGEON_SELECT_SCALES } from '../perception/dungeon-select.ts';
+import { TOWN_PANEL_CHEVRON_BAND } from '../perception/location.ts';
 import { LOCATIONS, type LocationEntry } from '../perception/locations.ts';
 import { findTemplate, type Match, type MatchTemplate } from '../perception/match.ts';
+import { TOWN_PANEL_CHEVRON_BASE64 } from '../perception/town-template.ts';
 import {
   LABEL_ANCHORS,
   MAP_PAN_GAIN,
@@ -73,6 +75,21 @@ const OPEN_WORLD_MAP_FLOOR = 0.80;
 const DUNGEON_SELECT_WORLD_MAP_AT = { x: 1100, y: 666 } as const;
 const TOWN_ICON_BAND = { x: 1_100, y: 900, width: 220, height: 180 } as const;
 const PANEL_BAND = { x: 480, y: 720, width: 400, height: 360 } as const;
+/**
+ * The town page's party-panel chevron in the live client's own art, 34x26 at (679, 789) of
+ * `testdata/screens/2026-11-07-town-live/town-1920.jpg` and drawn 1:1 by this client
+ * (`src/perception/town-template.ts`; the band is the perceiver's, `TOWN_PANEL_CHEVRON_BAND` —
+ * the tile is only found at 1:1 inside it, measured 1.000 here and 0.943-0.956 on the six town
+ * frames recorded 2026-10-25). The legacy mobile art in PANEL_BAND is the second chance: on this
+ * camera it scores 0.600, below the 0.8 floor.
+ */
+const TOWN_PANEL_CHEVRON: MatchTemplate = {
+  width: 34,
+  height: 26,
+  gray: Uint8Array.from(Buffer.from(TOWN_PANEL_CHEVRON_BASE64, 'base64')),
+};
+/** The live tile's own scale; it is not resized by this client. */
+const LIVE_CHEVRON_SCALES = [1] as const;
 const CONTROL_SCALES = [0.66, 0.68] as const;
 const POLL_MS = 100;
 /** The stable-frame guard: a screen must hold this long before a control/node is tapped. */
@@ -296,7 +313,8 @@ async function openFrom(
   if (image === null) return { ok: false, reason: 'unavailable', detail: 'frame did not decode' };
   let icon = findTemplate(image, TOWN_ICON_BAND, LOCATIONS.get('world-map-icon')!.template, { scales: CONTROL_SCALES });
   if (icon === null) {
-    const chevron = findTemplate(image, PANEL_BAND, LOCATIONS.get('panel-chevron')!.template, { scales: CONTROL_SCALES });
+    const chevron = findTemplate(image, TOWN_PANEL_CHEVRON_BAND, TOWN_PANEL_CHEVRON, { scales: LIVE_CHEVRON_SCALES })
+      ?? findTemplate(image, PANEL_BAND, LOCATIONS.get('panel-chevron')!.template, { scales: CONTROL_SCALES });
     if (chevron === null) {
       return { ok: false, reason: 'world-map-control-not-found', detail: 'neither the icon nor the chevron was found' };
     }

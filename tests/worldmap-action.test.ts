@@ -13,6 +13,7 @@ async function frame(relative: string): Promise<Frame> {
 
 interface Fixtures {
   readonly townUp: Frame;
+  readonly townLive: Frame;
   readonly townDown: Frame;
   readonly mapVnh: Frame;
   readonly mapNoVnh: Frame;
@@ -25,6 +26,7 @@ let loaded: Promise<Fixtures> | null = null;
 function fixtures(): Promise<Fixtures> {
   loaded ??= (async () => ({
     townUp: await frame('testdata/frames/town-0.jpg'),
+    townLive: await frame('testdata/screens/2026-11-07-town-live/town-1920.jpg'),
     townDown: await frame('testdata/frames/town-panel-down.jpg'),
     mapVnh: await frame('testdata/worldmap/2026-10-24/14.jpg'),
     mapNoVnh: await frame('testdata/worldmap/2026-10-24/20.jpg'),
@@ -59,9 +61,13 @@ class Session implements WorldMapEnv {
   readonly fixtures: Fixtures;
   readonly abort: AbortSignal | undefined;
 
-  constructor(fixtures: Fixtures, options: { abort?: AbortSignal; start?: 'town-up' | 'town-down' | 'map' | 'dungeon' | 'combat' } = {}) {
+  /** The frame the panel-up town is drawn on: the 2026-10-25 recording, or the live 2026-11-07 one. */
+  townUpFrame: Frame;
+
+  constructor(fixtures: Fixtures, options: { abort?: AbortSignal; start?: 'town-up' | 'town-down' | 'town-live' | 'map' | 'dungeon' | 'combat' } = {}) {
     this.fixtures = fixtures;
     this.abort = options.abort;
+    this.townUpFrame = options.start === 'town-live' ? fixtures.townLive : fixtures.townUp;
     this.mapFrame = fixtures.mapNoVnh;
     if (options.start === 'town-down') this.panel = 'down';
     if (options.start === 'map') { this.mapOpen = true; this.panel = 'down'; }
@@ -71,7 +77,7 @@ class Session implements WorldMapEnv {
   forced: Frame | null = null;
   screenOf = (frame: Frame): Observation => {
     // The guard measures stability on the observation's own clock; a frozen atMs would never hold.
-    if (frame === this.fixtures.townUp || frame === this.fixtures.townDown) return { screen: 'town', atMs: this.clock, confidence: 0.9 };
+    if (frame === this.townUpFrame || frame === this.fixtures.townDown) return { screen: 'town', atMs: this.clock, confidence: 0.9 };
     if (frame === this.fixtures.dungeon) return { screen: 'dungeon', atMs: this.clock, confidence: 0.9 };
     if (frame === this.fixtures.combat) return { screen: 'unknown', atMs: this.clock, confidence: 0.2 };
     return { screen: 'worldmap', atMs: this.clock, confidence: 0.9 };
@@ -87,7 +93,7 @@ class Session implements WorldMapEnv {
     if (this.forced !== null) return this.forced;
     if (this.left) return this.fixtures.townDown;
     if (this.mapOpen) return this.mapFrame;
-    return this.panel === 'up' ? this.fixtures.townUp : this.fixtures.townDown;
+    return this.panel === 'up' ? this.townUpFrame : this.fixtures.townDown;
   };
   observe = async (frame: Frame): Promise<Observation> => this.screenOf(frame);
   actuator: Actuator = {
@@ -143,6 +149,36 @@ describe('openWorldMap', () => {
     expect(session.taps).toHaveLength(2);
     expect(near(session.taps[0]!, { x: 697, y: 799 })).toBe(true);
     expect(near(session.taps[1]!, { x: 1185, y: 1023 })).toBe(true);
+  });
+
+  it('collapses the panel on the live client chevron, then taps the icon it reveals', async () => {
+    // Live camera 2026-11-07: the client redrew the chevron tile; the legacy mobile-art template
+    // scores 0.600 here, below the 0.8 floor, so the entry could not collapse the panel at all.
+    // The live sample (`src/perception/town-template.ts`) is the 34x26 tile at (679,789) — a press
+    // must land on its centre (696,802), not the operator screenshot point (1577,669).
+    const session = new Session(await fixtures(), { start: 'town-live' });
+    expect(await openWorldMap(session)).toEqual({ ok: true });
+    expect(session.taps).toHaveLength(2);
+    expect(near(session.taps[0]!, { x: 696, y: 802 }, 4)).toBe(true);
+    expect(near(session.taps[1]!, { x: 1185, y: 1023 })).toBe(true);
+  });
+
+  it('still finds the chevron on the older cameras', async () => {
+    // The same live sample reads the six recorded town frames at 0.943-0.956, so it must find the
+    // chevron on the five that draw one (town-panel-down.jpg draws the icon instead: the panel is down).
+    for (const rel of [
+      'testdata/frames/town-0.jpg',
+      'testdata/frames/town-1.jpg',
+      'testdata/frames/town-2.jpg',
+      'testdata/frames/town-3.jpg',
+      'testdata/frames/town-4.jpg',
+    ]) {
+      const session = new Session(await fixtures());
+      session.townUpFrame = await frame(rel);
+      expect(await openWorldMap(session)).toEqual({ ok: true });
+      expect(session.taps).toHaveLength(2);
+      expect(near(session.taps[0]!, { x: 696, y: 802 }, 6)).toBe(true);
+    }
   });
 
   it('taps the icon directly when the panel is already down', async () => {
