@@ -79,13 +79,19 @@ Commit per task, staged by explicit path.
 
 ### Task 3 — The opener reads its numerals through the seam
 
-- [ ] `tests/readers-opener.test.ts`: `panel-00.jpg` reads `measurements.json`'s 陷阱 and heart values
-      (both tiers allowed, the value must match); the **sharpened** variant reads the same values (the
-      live failure); the negatives still refuse (the QTE bar, the 3-D view); the heart's
-      `absent`/`unreadable` distinction survives.
-- [ ] Change `readTrapNumber`/`readHeartNumber` to the seam with the label as context; keep the
-      bands and the semantics. The opener's existing corpus tests must stay green.
-- [ ] Commit: `feat(readers): the opener's numerals through the seam`.
+- [x] `tests/readers-opener.test.ts`: `panel-00.jpg` reads `measurements.json`'s twelve 陷阱 values;
+      the **sharpened** variant reads the same twelve (the live failure, proved through OCR); the
+      negatives still refuse (the QTE bar, the 3-D view); the heart's `absent`/`unreadable`
+      distinction survives.
+- [x] `readTrapNumber` reads through the seam (template → OCR, R4) with the 陷阱 label as context.
+- [x] **R5 (amendment):** `readHeartNumber` keeps its own matcher. Its atlas was recorded with the
+      opener's chroma ink on a numeral-tight crop and normalised against that crop's own median; the
+      tier segments by luma against the region median, so the same crop splits differently and 3 of 5
+      hearts refuse at the 0.95 identity floor. On the sharpened proxy even the opener's own matcher
+      refuses card 1's `100` (0.871), so "the sharpened heart reads" is not achievable by either
+      matcher. Moving the heart needs a re-recorded atlas (Task 5's corpus) or an ink/normalisation
+      mode in the template tier — a separate change, pinned on the board.
+- [x] Commit: `feat(readers): the opener's trap numerals through the seam` (`a9c9caa`).
 
 ### Task 4 — The config switch and the tier log
 
