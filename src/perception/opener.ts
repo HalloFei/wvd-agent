@@ -39,10 +39,15 @@
  * the band, the floors, the structural refusals, `unreadable`, and the heart's `absent` /
  * `unreadable` distinction (contracts §0.6).
  *
- * **The escalation is budgeted per parse** (ruling R6, 2026-11-07): at most two OCR calls, and
- * none starting more than 2 s after the first — twelve fields each waiting out the tier's 8 s bound
- * would hold a panel for ~96 s inside `parseOpenerDetailed`, which `chest.ts` awaits. Past the
- * budget a field refuses, which refuses the panel as any unreadable 陷阱 field does.
+ * **The escalation is budgeted per parse** (ruling R6, 2026-11-07; window R10, 2026-11-07): at most
+ * two OCR calls, and none starting more than 10 s after the first — twelve fields each waiting out the
+ * tier's 8 s bound would hold a panel for ~96 s inside `parseOpenerDetailed`, which `chest.ts`
+ * awaits. The **cap is the budget**; the window only stops an unbounded panel, and it is 10 s because
+ * this host's OCR measures ~2.5–5 s per call (Task 4 report) — at 2 s the second escalation of a panel
+ * that needed two could never start, so a two-refusal panel could never read. A panel with two
+ * escalating fields can therefore spend up to ~16 s, once per chest, each call still bounded by the
+ * OCR tier's own 8 s bound. Past the budget a field refuses, which refuses the panel as any unreadable
+ * 陷阱 field does.
  *
  * **The tier mix is reported once per panel** (Task 4): `onTiers` carries how many 陷阱 fields the
  * template tier named and how many escalated, and the composition root logs that one line. The mix
@@ -360,16 +365,21 @@ function normaliseGlyph(bytes: Uint8Array): Float64Array {
 export const TRAP_DIGIT_TEMPLATES: readonly DigitTemplate[] = atlasOf(TRAP_DIGITS);
 
 /**
- * The OCR escalation's per-parse budget (ruling R6, 2026-11-07). Twelve fields each waiting out the
- * escalation's 8 s bound would hold a panel for ~96 s inside `parseOpenerDetailed`, which
- * `chest.ts` awaits; the live failure the escalation exists for is one unreadable field, not
- * twelve. Past the budget a field refuses (`null`), which refuses the panel exactly as any other
- * unreadable 陷阱 field always has.
+ * The OCR escalation's per-parse budget (ruling R6, 2026-11-07; window R10, 2026-11-07). Twelve fields
+ * each waiting out the escalation's 8 s bound would hold a panel for ~96 s inside
+ * `parseOpenerDetailed`, which `chest.ts` awaits; the live failure the escalation exists for is one
+ * unreadable field, not twelve. Past the budget a field refuses (`null`), which refuses the panel
+ * exactly as any other unreadable 陷阱 field always has.
  *
- * At most **two calls**, and none starting more than **2 s after the first** — whichever comes first.
+ * At most **two calls**, and none starting more than **10 s after the first** — whichever comes first.
+ * **The cap is the real budget**: OCR measures ~2.5–5 s per call on this host (Task 4 report), so the
+ * window only has to stop an unbounded panel. At its former 2 s a second escalation could never start
+ * after a real call returned, so a panel needing two calls could never read. At 10 s a first call is
+ * cleared even at the OCR tier's own 8 s bound, and the two-call cap still bounds the panel: two
+ * escalating fields can spend up to ~16 s, once per chest.
  */
 export const OCR_MAX_CALLS = 2;
-export const OCR_CALL_WINDOW_MS = 2_000;
+export const OCR_CALL_WINDOW_MS = 10_000;
 
 /**
  * A parse's allowance of OCR escalations. `take()` answers whether one may start now and reserves
@@ -855,7 +865,7 @@ export interface OpenerParseOptions {
    * either way.
    */
   readonly trapReader?: NumeralsReader;
-  /** The parse's OCR budget; default a fresh `createOcrBudget()` (two calls, 2 s). */
+  /** The parse's OCR budget; default a fresh `createOcrBudget()` (two calls, 10 s — R6/R10). */
   readonly ocrBudget?: OcrBudget;
   /**
    * Called **once** for every panel the gates recognised — read or refused — with the tier mix of the

@@ -331,17 +331,16 @@ describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
       vi.unstubAllEnvs();
     });
 
-    it('reads the amount-2 panel as measured (92), the OCR tier answering the refusals', async () => {
-      // Two fields escalate on this proxy, and each OCR call takes seconds on this host, so the
-      // production budget's 2 s window (R6) refuses the second one — the panel would refuse rather
-      // than be misnamed, which is R9's safe outcome. The window is widened here only to reach the
-      // measured value: the tier answering is the question, not the budget, and R6 itself is
-      // unchanged. The committed amount-1 proxy (one refusal) proves the default budget live.
+    it("reads the amount-2 panel as measured (92) on the production budget — this host's OCR starts the second call inside the 10 s window", async () => {
+      // Two fields escalate on this proxy. R10 raised the production window (R6: two calls, none
+      // starting more than OCR_CALL_WINDOW_MS after the first) from 2 s to 10 s, because this host's
+      // OCR takes ~2.5–5 s per call (Task 4 report): the second escalation now starts inside it, so
+      // the panel reads the measured twelve instead of refusing. No budget is injected — what the
+      // composition root builds is what the panel is read under, and the 2-call cap is unchanged. On
+      // a host whose OCR starts the second call past 10 s the panel refuses at the second take() (the
+      // safe R9 outcome, never a rule's 93); that is the only host on which this expectation changes.
       const expected = await measured();
-      const parsed = await parseOpenerImage(await sharpenedTwoPanel(), {
-        trapReader: ocrReader,
-        ocrBudget: createOcrBudget({ maxCalls: 2, windowMs: 60_000 }),
-      });
+      const parsed = await parseOpenerImage(await sharpenedTwoPanel(), { trapReader: ocrReader });
 
       expect(parsed.ok).toBe(true);
       if (!parsed.ok) return;
@@ -433,12 +432,13 @@ describe('the OCR escalation is budgeted per parse', () => {
     expect(summaries).toEqual([{ template: 9, ocr: 3 }]);
   });
 
-  it('stops escalating when the first call consumes the 2 s deadline', async () => {
+  it('stops escalating when the first call consumes the 10 s deadline', async () => {
     // A first escalation slower than the window spends the budget by construction: the clock is the
-    // budget's own, advanced by the reader's first answer (R6's deadline, asserted deterministically).
+    // budget's own, advanced by the reader's first answer (R6's deadline, asserted deterministically
+    // at R10's production default — +10 001 ms, one past the window).
     let clock = 10_000;
     const fake = countingEscalation(() => {
-      clock += 2_001;
+      clock += 10_001;
     });
     const parsed = await parseOpenerImage(await sharpenedThreePanel(), {
       trapReader: fake.reader,
@@ -471,13 +471,24 @@ describe('the OCR escalation is budgeted per parse', () => {
     const cap = createOcrBudget({ now: () => 0 });
     expect([cap.take(), cap.take(), cap.take()]).toEqual([true, true, false]);
 
+    // The default window is the production one (R10: 10 s, the measured OCR latency), so the
+    // boundary follows it: a second call starting at +10 000 ms is inside, +10 001 is not.
     let clock = 0;
     const window = createOcrBudget({ maxCalls: 5, now: () => clock });
     expect(window.take()).toBe(true);
-    clock = 2_000;
+    clock = 10_000;
     expect(window.take()).toBe(true);
-    clock = 2_001;
+    clock = 10_001;
     expect(window.take()).toBe(false);
+
+    // An explicit window is still honoured: the default moved, the parameter did not.
+    let explicitClock = 0;
+    const explicit = createOcrBudget({ maxCalls: 5, windowMs: 2_000, now: () => explicitClock });
+    expect(explicit.take()).toBe(true);
+    explicitClock = 2_000;
+    expect(explicit.take()).toBe(true);
+    explicitClock = 2_001;
+    expect(explicit.take()).toBe(false);
   });
 });
 
