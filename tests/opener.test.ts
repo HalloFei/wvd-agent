@@ -524,6 +524,19 @@ describe('ChestPerceiver', () => {
     expect(observation.opener.members[3]!.disarm).toBe(105);
   });
 
+  it('reports the tier mix once per panel through its constructor option (Task 4)', async () => {
+    // main.ts logs this line: the opener's fields are read through the seam, and a panel that starts
+    // falling to the escalation must be visible before a run dies (readers spec, acceptance 2). Once
+    // per panel, not once per glyph: the decoded fixture is twelve template reads and no OCR.
+    const summaries: Array<{ template: number; ocr: number }> = [];
+    const observation = await new ChestPerceiver({
+      onOpenerTiers: (summary) => summaries.push(summary),
+    }).observe(await jpegFrame('panel-00.jpg', 4_321));
+
+    expect(observation.screen).toBe('chest-open');
+    expect(summaries).toEqual([{ template: 12, ocr: 0 }]);
+  });
+
   it('reports a recognised but unreadable panel as unknown at a small positive confidence', async () => {
     const image = copyOf(await jpegImage('panel-00.jpg'));
     paint(image, { x: 788, y: 794, w: 10, h: 15 }, [235, 235, 235]);

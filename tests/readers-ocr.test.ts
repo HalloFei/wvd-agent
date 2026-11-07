@@ -12,7 +12,7 @@
  * and run everywhere. The stubbed env below only names the pair — it is not a runtime — so an ungated
  * live read fails rather than skips on a machine that never had the venv (found by review).
  */
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RgbaImage } from '../src/contracts.ts';
+import { ocrRunnerFromEnv, readTextsViaOcr } from '../src/perception/ocr-process.ts';
 import { numeralOf, ocrReader } from '../src/perception/readers/ocr.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -139,4 +140,55 @@ describe('the numerals-reader seam, OCR tier', () => {
         .resolves.toBeNull();
     }, 20_000);
   });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The call's bound is configurable (ruling R7)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `WVD_OCR_TIMEOUT_MS` is read at call time beside the interpreter and the script, so a host whose
+ * OCR load is slow (the full suite's parallel forks made the 8 s bound time out, 2026-11-07) can
+ * widen it without changing the committed default. Unset, empty, non-numeric or <= 0 is the 8 s
+ * default — the map readout's bound, unchanged.
+ */
+describe('the OCR call bound (R7)', () => {
+  it('reads WVD_OCR_TIMEOUT_MS at call time and falls back to 8 s for a value that is not a positive number', () => {
+    vi.stubEnv('WVD_OCR_PYTHON', 'python');
+    vi.stubEnv('WVD_OCR_SCRIPT', 'readout.py');
+
+    vi.stubEnv('WVD_OCR_TIMEOUT_MS', '1500');
+    expect(ocrRunnerFromEnv()?.timeoutMs).toBe(1_500);
+    vi.stubEnv('WVD_OCR_TIMEOUT_MS', '2500');
+    expect(ocrRunnerFromEnv()?.timeoutMs).toBe(2_500);
+
+    for (const bad of ['', 'soon', '0', '-5', 'NaN', 'Infinity']) {
+      vi.stubEnv('WVD_OCR_TIMEOUT_MS', bad);
+      expect(ocrRunnerFromEnv()?.timeoutMs, bad).toBe(8_000);
+    }
+  });
+
+  it('kills a slow fake process at the configured bound, and answers it at the default one', async () => {
+    // A "fake process": node itself runs a script that prints the readout's JSON answer after 400 ms.
+    // Nothing here is the real OCR, so the only variable is the bound the environment names.
+    const dir = mkdtempSync(join(tmpdir(), 'wvd-ocr-fake-'));
+    try {
+      const script = join(dir, 'slow-ocr.mjs');
+      writeFileSync(script, "setTimeout(() => console.log(JSON.stringify({ ok: true, texts: ['38'] })), 400);\n");
+      vi.stubEnv('WVD_OCR_PYTHON', process.execPath);
+      vi.stubEnv('WVD_OCR_SCRIPT', script);
+      const image: RgbaImage = { data: new Uint8Array(8 * 8 * 4).fill(255), width: 8, height: 8 };
+      const region = { x: 0, y: 0, width: 8, height: 8 };
+
+      // The effective bound, not just the parsed number: the same process that answers below is
+      // killed at 150 ms here.
+      vi.stubEnv('WVD_OCR_TIMEOUT_MS', '150');
+      await expect(readTextsViaOcr(image, region, ocrRunnerFromEnv())).resolves.toBeNull();
+
+      vi.stubEnv('WVD_OCR_TIMEOUT_MS', '5000');
+      await expect(readTextsViaOcr(image, region, ocrRunnerFromEnv())).resolves.toEqual(['38']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

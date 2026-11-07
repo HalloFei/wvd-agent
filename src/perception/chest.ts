@@ -41,7 +41,8 @@
  * device pixels, so a caller never does the offset arithmetic itself.
  */
 import type { Frame, Observation, Perceiver, PixelRect, Point, QteState, RgbaImage } from '../contracts.ts';
-import { parseOpenerDetailed } from './opener.ts';
+import { parseOpenerDetailed, type OpenerTierSummary } from './opener.ts';
+import type { NumeralsReader } from './readers/index.ts';
 
 // ---------------------------------------------------------------------------------------------
 // Measured constants
@@ -401,6 +402,22 @@ function parseImage(image: RgbaImage, previousMarkerX?: number, origin?: Point):
 const REFUSED_PANEL_CONFIDENCE = 0.3;
 
 /**
+ * What the composition root may hand the chest perceiver (readers plan 2026-11-07, Task 4). Both are
+ * optional so every existing `new ChestPerceiver()` keeps its behaviour: no reader named means a
+ * template-refused field escalates to the OCR tier, and no callback means nothing is reported.
+ */
+export interface ChestPerceiverOptions {
+  /**
+   * The reader a template-refused 陷阱 field **escalates to** (the opener's own strategy stays
+   * `template`, R4/R8). `main.ts` builds it from `worlds.wvd.readers.numerals`; the opener's R6
+   * budget wraps it here exactly as it wraps the default.
+   */
+  readonly trapReader?: NumeralsReader;
+  /** Called once per recognised opener panel with the tiers that answered its 陷阱 fields. */
+  readonly onOpenerTiers?: (summary: OpenerTierSummary) => void;
+}
+
+/**
  * A `Perceiver` over the chest screens. **The opener panel is tried first**, then the QTE bar; a
  * frame that is neither is `unknown` (contracts §2: something drawn, nothing named).
  *
@@ -411,8 +428,17 @@ const REFUSED_PANEL_CONFIDENCE = 0.3;
  * must act while the bar may never exist.
  */
 export class ChestPerceiver implements Perceiver {
+  readonly #options: ChestPerceiverOptions;
+
+  constructor(options: ChestPerceiverOptions = {}) {
+    this.#options = options;
+  }
+
   async observe(frame: Frame): Promise<Observation> {
-    const opener = await parseOpenerDetailed(frame);
+    const opener = await parseOpenerDetailed(frame, {
+      trapReader: this.#options.trapReader,
+      onTiers: this.#options.onOpenerTiers,
+    });
     if (opener.ok) {
       return { screen: 'chest-open', atMs: frame.atMs, confidence: 1, opener: opener.panel };
     }

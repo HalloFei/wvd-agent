@@ -95,9 +95,14 @@ Commit per task, staged by explicit path.
 
 ### Task 4 — The config switch and the tier log
 
-- [ ] `tests/config` row for `worlds.wvd.readers.numerals` (`auto` | `fast` | `ocr`, default
-      `auto`); `main.ts` builds the reader from the config; the opener logs the tier once per panel.
-- [ ] Commit: `feat(readers): the numerals strategy is a config value`.
+- [x] `tests/readers-config.test.ts`: the `worlds.wvd.readers.numerals` row (`auto` | `fast` |
+      `template` | `ocr`, default `auto`), its schema, and `main.ts`'s
+      `createNumeralsReaderFromConfig` building the seam's reader from a config object (R8).
+- [x] `src/config.ts`: the nested `readers` row; the factory and its wiring in `main.ts`; the
+      opener's `onTiers` reported once per panel and logged by `ChestPerceiver`'s option.
+- [x] **R7 (amendment):** `WVD_OCR_TIMEOUT_MS` (default 8000, read at call time) bounds the OCR
+      tier; proved by a fake process killed at the configured bound.
+- [x] Commit: `feat(readers): the numerals strategy is a config value`.
 
 ### Task 5 — The regression corpus and the whole-suite proof
 

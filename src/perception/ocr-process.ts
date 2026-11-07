@@ -29,14 +29,35 @@ export interface OcrRunner {
 }
 
 /**
- * The runner the environment names — `WVD_OCR_PYTHON` and `WVD_OCR_SCRIPT` — or null when either is
- * unset: an unavailable OCR tier is not an error (readers spec 2026-11-07, Config).
+ * The call's bound when `WVD_OCR_TIMEOUT_MS` names no usable value: the map readout's 8 s, a bound
+ * that assumes nothing about the host (the first run loads the OCR models).
+ */
+export const DEFAULT_OCR_TIMEOUT_MS = 8_000;
+
+/**
+ * The bound the environment names (ruling R7, 2026-11-07), in milliseconds, or the 8 s default. Read
+ * at call time beside the interpreter and the script, so a host whose OCR load is slower than the
+ * committed default (the full suite's parallel forks made the 8 s bound time out) can widen it
+ * without editing it. A value that is empty, non-numeric, non-finite or <= 0 is not a bound: it falls
+ * back rather than becoming an immediate kill.
+ */
+export function ocrTimeoutMsFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.WVD_OCR_TIMEOUT_MS;
+  if (raw === undefined) return DEFAULT_OCR_TIMEOUT_MS;
+  const value = Number(raw.trim());
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_OCR_TIMEOUT_MS;
+}
+
+/**
+ * The runner the environment names — `WVD_OCR_PYTHON`, `WVD_OCR_SCRIPT` and `WVD_OCR_TIMEOUT_MS` —
+ * or null when either path is unset: an unavailable OCR tier is not an error (readers spec
+ * 2026-11-07, Config). The bound is carried with the runner so one call cannot read two bounds.
  */
 export function ocrRunnerFromEnv(env: NodeJS.ProcessEnv = process.env): OcrRunner | null {
   const python = env.WVD_OCR_PYTHON;
   const script = env.WVD_OCR_SCRIPT;
   return python !== undefined && python !== '' && script !== undefined && script !== ''
-    ? { python, script }
+    ? { python, script, timeoutMs: ocrTimeoutMsFromEnv(env) }
     : null;
 }
 
@@ -80,7 +101,7 @@ function run(options: OcrRunner, file: string, region: PixelRect): Promise<strin
       { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
     );
     let out = '';
-    const timer = setTimeout(() => { try { child.kill(); } catch { /* already gone */ } resolve(null); }, options.timeoutMs ?? 8_000);
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* already gone */ } resolve(null); }, options.timeoutMs ?? DEFAULT_OCR_TIMEOUT_MS);
     child.stdout?.on('data', (chunk: Buffer) => { out += chunk.toString('utf8'); });
     child.on('error', () => { clearTimeout(timer); resolve(null); });
     child.on('close', () => {

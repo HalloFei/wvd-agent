@@ -2,8 +2,25 @@
 import type { ConfigGroup } from 'cortico/core/config-schema.ts';
 import type { WorldSection } from 'cortico/world.ts';
 import { MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH } from './engine/protocol.ts';
+import type { NumeralsStrategy } from './perception/readers/index.ts';
 
 export const WVD_ID = 'wvd';
+
+/**
+ * The numerals-reader seam's settings (readers spec 2026-11-07; `worlds.wvd.readers`).
+ *
+ * The seam has one config switch: the **default strategy** a field is read by. The opener's own
+ * 陷阱 fields are the measured exception — they stay `template` (R4) and escalate to whatever this
+ * strategy builds (R8), because the rule tier names this font's 4 as a 3.
+ */
+export interface WvdReadersConfig {
+  /**
+   * The seam's default strategy: `auto` (rule → template → ocr), `fast` (rule → template, never an
+   * OCR process), `template` (template → ocr) or `ocr` (the escalation alone). Read through
+   * `createNumeralsReaderFromConfig` (`main.ts`), never hard-coded in a module.
+   */
+  numerals: NumeralsStrategy;
+}
 
 export interface WvdConfigSection extends WorldSection {
   dryRun: boolean;
@@ -30,6 +47,8 @@ export interface WvdConfigSection extends WorldSection {
   mapOpenTimeoutMs: number;
   /** How long the 由谁打开? panel may take to answer the 打开 click, milliseconds. */
   openerPanelTimeoutMs: number;
+  /** The readers seam's settings (readers spec 2026-11-07). */
+  readers: WvdReadersConfig;
   automoveArrivalTimeoutMs: number;
   automoveStillSeconds: number;
   hazardEscapeSteps: number;
@@ -85,6 +104,9 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   escalationImageWidth: 1280,
   mapOpenTimeoutMs: 3000,
   openerPanelTimeoutMs: 10000,
+  // The seam's default strategy (readers spec 2026-11-07). The opener's fields are the exception
+  // (R4/R8): they stay 'template' and escalate to the reader this builds.
+  readers: { numerals: 'auto' },
   automoveArrivalTimeoutMs: 120000,
   automoveStillSeconds: 5,
   hazardEscapeSteps: 3,
@@ -174,6 +196,11 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.wvd.openerPanelTimeoutMs': {
         type: 'integer', title: '开箱面板超时', description: '点击「打开」后等待「由谁打开?」面板，毫秒；实测 5–8 秒。',
+      },
+      'worlds.wvd.readers.numerals': {
+        type: 'string', title: '数字读取策略',
+        description: '数值字段的默认读取策略：auto（规则 → 模板 → OCR）、fast（只用快速层，不启动 OCR）、template（模板 → OCR）、ocr（直接用 OCR）。开箱面板的陷阱数字固定用模板层（R4/R8）。',
+        enum: ['auto', 'fast', 'template', 'ocr'],
       },
       'worlds.wvd.automoveArrivalTimeoutMs': {
         type: 'integer', title: '自动移动超时', description: '一直没到达就放弃，毫秒。',

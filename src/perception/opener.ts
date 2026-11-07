@@ -44,6 +44,10 @@
  * would hold a panel for ~96 s inside `parseOpenerDetailed`, which `chest.ts` awaits. Past the
  * budget a field refuses, which refuses the panel as any unreadable 陷阱 field does.
  *
+ * **The tier mix is reported once per panel** (Task 4): `onTiers` carries how many 陷阱 fields the
+ * template tier named and how many escalated, and the composition root logs that one line. The mix
+ * is the health metric, so a run that starts falling to the escalation is visible before it dies.
+ *
  * The **heart** field is the seam's measured exception: its atlas was recorded from a
  * chroma-segmented crop normalised against that crop's own median (chroma is what separates the
  * yellow numeral from the grey heart glyph beside it), while the template tier segments by luma
@@ -823,6 +827,23 @@ function readHeartNumber(data: Uint8Array, width: number, slot: number): HeartRe
 }
 
 /**
+ * How a panel's ranking fields were answered (readers plan 2026-11-07, Task 4): the 陷阱 fields the
+ * template tier named, and the fields the template tier **refused** and the escalation answered.
+ *
+ * The escalation is the reader a caller named (the OCR tier by default; `worlds.wvd.readers.numerals`
+ * builds it, R8), and a chain may answer as another tier first — `auto` tries the rules before OCR —
+ * so the second slot counts *escalations*, not OCR answers specifically. That keeps the two counts
+ * adding up to the fields a panel was read for, which is what the once-per-panel log reports. The
+ * heart field is not on the seam (R5) and is not counted.
+ */
+export interface OpenerTierSummary {
+  /** Fields the atlas tier named. */
+  readonly template: number;
+  /** Fields the atlas tier refused and the escalation answered, whichever tier of it answered. */
+  readonly ocr: number;
+}
+
+/**
  * How one parse reads its 陷阱 fields. Both fields exist for the tests: the escalation is what a
  * counter counts (the budget, R6) and what a thrower refuses to be (the decoded fixture's fast-tier
  * read); the budget is what a fake clock makes deterministic.
@@ -836,6 +857,12 @@ export interface OpenerParseOptions {
   readonly trapReader?: NumeralsReader;
   /** The parse's OCR budget; default a fresh `createOcrBudget()` (two calls, 2 s). */
   readonly ocrBudget?: OcrBudget;
+  /**
+   * Called **once** for every panel the gates recognised — read or refused — with the tier mix of the
+   * 陷阱 fields answered. A refusal reports the fields answered before it, which is what makes a
+   * panel the escalation could not finish visible. The read never depends on the callback.
+   */
+  readonly onTiers?: (summary: OpenerTierSummary) => void;
 }
 
 /** async because the numerals are read through the seam, whose OCR tier leaves the process. */
@@ -860,13 +887,27 @@ export async function parseOpenerImage(
   const trapReader = createTrapReader(options.trapReader ?? ocrReader, options.ocrBudget ?? createOcrBudget());
   const traps: Array<{ detect: number; disarm: number }> = [];
   const hearts: HeartReading[] = [];
+  // The tier mix of this panel (Task 4): counted per field, reported once, whatever the outcome.
+  // The escalation's own tier is not named here — a config-built chain may start with the rules
+  // (R8) — so anything the template tier did not answer is an escalation. The counts add up.
+  const tiers: { template: number; ocr: number } = { template: 0, ocr: 0 };
+  const countTier = (read: Numerals): void => {
+    if (read.tier === 'template') tiers.template += 1;
+    else tiers.ocr += 1;
+  };
   for (let slot = 0; slot < count; slot += 1) {
     const detect = await readTrapNumber(image, slot, 'detect', trapReader);
     const disarm = await readTrapNumber(image, slot, 'disarm', trapReader);
-    if (detect === null || disarm === null) return { ok: false, reason: 'unreadable' };
+    if (detect === null || disarm === null) {
+      options.onTiers?.({ ...tiers });
+      return { ok: false, reason: 'unreadable' };
+    }
+    countTier(detect);
+    countTier(disarm);
     traps.push({ detect: detect.value, disarm: disarm.value });
     hearts.push(readHeartNumber(data, width, slot));
   }
+  options.onTiers?.({ ...tiers });
 
   const members: OpenerMember[] = traps.map((value, index) => {
     const reading = hearts[index]!;

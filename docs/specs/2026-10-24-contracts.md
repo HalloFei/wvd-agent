@@ -609,6 +609,17 @@ constant** — the plan's one slide term is a measured time (the bar's park, els
 succeed" test, and a pass the band refuses is what the reroll answers. Both values remain editable,
 and a fitted value replaces the default with its provenance in the commit that changes it.
 
+### 8.6 Perception
+
+| Key | Type | Default | Owner | Meaning |
+|---|---|---|---|---|
+| `readers.numerals` | string `auto` \| `fast` \| `template` \| `ocr` | `auto` | perception | the numerals-reader seam's default strategy: `auto` = rule → template → ocr, `fast` = the fast tiers and never an OCR process, `template` = template → ocr (R4), `ocr` = the escalation alone. The opener's 陷阱 fields keep their own `template` strategy (R4/R8); this value is what a field that strategy refuses **escalates to**. |
+
+The seam's OCR escalation is the map readout's process: `WVD_OCR_PYTHON` / `WVD_OCR_SCRIPT` name
+it, unset means the tier is unavailable (`null`, never a throw), and `WVD_OCR_TIMEOUT_MS` (default
+`8000`; unset, non-numeric or ≤ 0 means `8000`) bounds one call. A runtime path is per machine, so
+it lives in the environment beside the venv, not in this section.
+
 ## 9. Ownership
 
 | Contract | Defined here | Implemented by |

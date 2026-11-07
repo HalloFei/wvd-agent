@@ -49,6 +49,11 @@ import { createChannel, layoutChannel, type FrameChannel } from './engine/vision
 import { captureJpeg, focusGame, sendInput, Win32Capture } from './engine/win32.ts';
 import { takeSnapshot } from './escalation/image.ts';
 import { ChestPerceiver } from './perception/chest.ts';
+import {
+  createNumeralsReader,
+  type NumeralsReader,
+  type NumeralsReaderOptions,
+} from './perception/readers/index.ts';
 import { CombatPerceiver } from './perception/combat.ts';
 import { ChestPromptPerceiver } from './perception/prompt.ts';
 import { ChestOpeningPerceiver } from './perception/chest-opening.ts';
@@ -77,6 +82,25 @@ export interface WvdComposition {
   /** The live `worlds.wvd` section. Keys are read per decision; nothing is copied into a module. */
   cfg: WvdConfigSection;
   timezone: string;
+}
+
+/**
+ * The numerals-reader seam's configured reader (readers spec 2026-11-07; ruling R8).
+ *
+ * `worlds.wvd.readers.numerals` selects the seam's **default strategy**, and this is the only place
+ * the app reads it — no module hard-codes the order a field is read in. The opener's own 陷阱 fields
+ * stay `template` (R4): the config builds the reader a template-refused field **escalates to**, not
+ * the opener's chain, because the rule tier names this font's 4 as a 3 (board card
+ * `t-mw65nlh4-lfoik7`) and the opener's atlas is the measured fast answer.
+ *
+ * A pure function of the config object (plus the seam's own injection points), so the strategy can be
+ * proved without a World, a session, or module state; `createWvdWorld` calls it once.
+ */
+export function createNumeralsReaderFromConfig(
+  config: Pick<WvdConfigSection, 'readers'>,
+  options: Omit<NumeralsReaderOptions, 'strategy'> = {},
+): NumeralsReader {
+  return createNumeralsReader({ ...options, strategy: config.readers.numerals });
 }
 
 /** Builds the World this deployment runs. Touches no engine until a session starts. */
@@ -193,8 +217,20 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       ? { python: ocrPython, script: ocrScript, timeoutMs: 20_000 }
       : undefined,
   );
+  // The numerals-reader seam's configured reader (readers spec 2026-11-07, R8): built once from the
+  // live section and handed to the chest perceiver as what a template-refused 陷阱 field escalates
+  // to. The opener's own chain stays 'template' (R4) and is not configurable in this plan.
+  const numeralsReader = createNumeralsReaderFromConfig(cfg);
+  const chestPerceiver = new ChestPerceiver({
+    trapReader: numeralsReader,
+    // The tier mix, once per panel (acceptance 2): a run that starts falling to the escalation must
+    // be visible in the log before it dies, and the line names the counts, never a glyph.
+    onOpenerTiers: ({ template, ocr }) => world?.note(
+      `wvd: opener panel: ${template} fields on the template tier, ${ocr} escalated`,
+    ),
+  });
   const perceiver = new CompositePerceiver([
-    { perceiver: new ChestPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
+    { perceiver: chestPerceiver, floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: mapReader, floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: new ChestPromptPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
     // The item-claim screen comes before the opening: the result banner (`获得了…` over the opened chest)

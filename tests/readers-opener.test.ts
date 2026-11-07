@@ -32,7 +32,9 @@ import {
   parseOpenerDetailed,
   parseOpenerImage,
   TRAP_DIGIT_TEMPLATES,
+  type OpenerTierSummary,
 } from '../src/perception/opener.ts';
+import { ChestPerceiver } from '../src/perception/chest.ts';
 import { createNumeralsReader, type NumeralsReader } from '../src/perception/readers/index.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -180,6 +182,18 @@ describe('the opener reads its numerals through the seam', () => {
     expect(calls).toBe(0);
   });
 
+  it('reports the tier that answered every field, once per panel (Task 4)', async () => {
+    // The health metric the log exists for: six cards x two 陷阱 fields, and on this decoded panel the
+    // template tier answers all twelve — no glyph is handed to OCR. Once, not once per glyph.
+    const summaries: OpenerTierSummary[] = [];
+    const parsed = await parseOpenerImage(await jpegImage('panel-00.jpg'), {
+      onTiers: (summary) => summaries.push(summary),
+    });
+
+    expect(parsed.ok).toBe(true);
+    expect(summaries).toEqual([{ template: 12, ocr: 0 }]);
+  });
+
   it("names the number and the tier that answered a field's atlas read", async () => {
     // The 陷阱 atlas through the seam's own factory: the fast tier answers the fixture, the tier
     // travels with the number (the health metric Task 4 logs), and the bands are the opener's.
@@ -300,19 +314,41 @@ describe('the OCR escalation is budgeted per parse', () => {
     // reader answers all three fields, which is what makes the refusal above the cap's doing.
     const expected = await measured();
     const fake = countingEscalation();
+    const summaries: OpenerTierSummary[] = [];
     const parsed = await parseOpenerImage(await sharpenedThreePanel(), {
       trapReader: fake.reader,
       ocrBudget: createOcrBudget({ maxCalls: 3 }),
+      onTiers: (summary) => summaries.push(summary),
     });
 
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(fake.state.calls).toBe(3);
+    // Nine fields the atlas read, three the escalation answered — the mix of one panel, once.
+    expect(summaries).toEqual([{ template: 9, ocr: 3 }]);
     // The three escalated fields carry the fake's answer; the other nine are the measured values.
     expect(parsed.panel.members.map((member) => member.detect))
       .toEqual(expected.map((member, index) => (index === 2 || index === 3 ? 11 : member.detect)));
     expect(parsed.panel.members.map((member) => member.disarm))
       .toEqual(expected.map((member, index) => (index === 4 ? 11 : member.disarm)));
+  });
+
+  it('counts an escalation answered by another tier as escalated — the two counts add up', async () => {
+    // The escalation is the caller's chain, not necessarily the OCR tier: 'auto' tries the rules
+    // first (R8), and a field that chain names is still a field the template tier refused. Counting
+    // only `tier: 'ocr'` would report nine template fields and leave three unaccounted for.
+    const ruleAnswering: NumeralsReader = {
+      read: async () => ({ value: 11, confidence: 0.8, tier: 'rule' }),
+    };
+    const summaries: OpenerTierSummary[] = [];
+    const parsed = await parseOpenerImage(await sharpenedThreePanel(), {
+      trapReader: ruleAnswering,
+      ocrBudget: createOcrBudget({ maxCalls: 3 }),
+      onTiers: (summary) => summaries.push(summary),
+    });
+
+    expect(parsed.ok).toBe(true);
+    expect(summaries).toEqual([{ template: 9, ocr: 3 }]);
   });
 
   it('stops escalating when the first call consumes the 2 s deadline', async () => {
@@ -329,6 +365,24 @@ describe('the OCR escalation is budgeted per parse', () => {
 
     expect(parsed).toEqual({ ok: false, reason: 'unreadable' });
     expect(fake.state.calls).toBe(1);
+  });
+
+  it('carries the reader and the tier log through ChestPerceiver, the composition root\'s own entry', async () => {
+    // main.ts builds the reader from `worlds.wvd.readers.numerals` and hands it to ChestPerceiver,
+    // which must pass it to the parse as the escalation and the tier log up as the callback (R8, R6).
+    const fake = countingEscalation();
+    const summaries: OpenerTierSummary[] = [];
+    const observation = await new ChestPerceiver({
+      trapReader: fake.reader,
+      onOpenerTiers: (summary) => summaries.push(summary),
+    }).observe(frameOf(await sharpenedThreePanel(), 4_321));
+
+    // The default budget is two calls, so the third field the template refuses stays refused and the
+    // panel is the recognised-but-unreadable answer; the ceiling is still the opener's, not the seam's.
+    expect(observation).toMatchObject({ screen: 'unknown', confidence: 0.3 });
+    expect(fake.state.calls).toBe(2);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({ ocr: 2 });
   });
 
   it('counts the call cap and the time window separately', () => {
