@@ -373,6 +373,8 @@ const PARTY_DOWN_FRAMES = 2;
 
 /** How many X 关闭 taps a character page may take before the loop leaves it to the stall clock. */
 const PAGE_CLOSE_TRIES = 3;
+/** How long the the page opened by the heal may take to leave before the sequence's one Esc (the measured close settle + 1 s). */
+const HEAL_VERIFY_GRACE_MS = 2_500;
 
 /**
  * How many recovery steps one screen gets before the loop leaves it to the stall clock (operator,
@@ -684,6 +686,12 @@ export class WvdWorld implements World {
   #qteLatencyMs: number | null = null;
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
   #pageCloseTries = 0;
+  /** When the heal's taps were sent: set until a stable frame proves the page is gone (or one Esc has been given). */
+  #healVerifyAtMs: number | null = null;
+  #healEscaped = false;
+  /** The screen the last frames named, and how many in a row: the stable-frame gate. */
+  #stableScreen: ScreenId | null = null;
+  #stableCount = 0;
   #pageCloseWarned = false;
   /** Ticks in a row with a readable map that carries no 楼梯-门 icon (the orientation's patience). */
   #mapIconWaits = 0;
@@ -1349,11 +1357,35 @@ export class WvdWorld implements World {
     // The heal is the game's own quick heal, and it is only valid from the 3-D view: a battle or a
     // chest set the flag, this tick spends it as one command (the four taps carry their own settles).
     if (this.#healDue && now - this.#healDueAtMs > HEAL_WINDOW_MS) this.#healDue = false;
-    if (!waiting && this.#healDue && observation.screen === 'dungeon') {
+    if (!waiting && this.#healDue && this.#healVerifyAtMs === null && observation.screen === 'dungeon') {
       this.#healDue = false;
       const healed = await this.#commands.healParty();
       if (healed.ok) this.#host?.log.info('wvd: healed the party');
       else this.#host?.log.warn(`wvd: the heal was refused (${healed.reason})`);
+      // The heal is not done when its taps are sent: it is done when a stable frame proves the page it
+      // opened is gone (operator rule 2026-11-07: *only next order based on the current stable frame. no
+      // competing orders*). Until then the heal owns the tick — the route is not asked, and the page
+      // block does not press (live 2026-11-07 23:39: open-map and the page alternated seven times).
+      this.#healVerifyAtMs = this.#now();
+      this.#healEscaped = false;
+      return;
+    }
+
+    if (this.#healVerifyAtMs !== null) {
+      const since = this.#healVerifyAtMs;
+      if (observation.screen === 'character-page') {
+        if (!this.#healEscaped && now - since >= HEAL_VERIFY_GRACE_MS) {
+          this.#healEscaped = true;
+          this.#host?.log.warn('wvd: the the page opened by the heal did not close; pressing Esc once');
+          await this.#commands.escape();
+        }
+        return;
+      }
+      const named = observation.screen !== 'unknown' && observation.screen !== 'loading';
+      if (named && this.#stableCount >= 2) {
+        this.#host?.log.info('wvd: the the page opened by the heal is gone (stable ' + observation.screen + '); the farm continues');
+        this.#healVerifyAtMs = null;
+      }
       return;
     }
 
@@ -1361,7 +1393,7 @@ export class WvdWorld implements World {
     // operator rule 2026-11-03: *after open and heal there shall be a close of the character panel, so
     // go back to the dungeon*. Its X 关闭 tile is the evidence that names it, so the close is verified
     // by the next frame rather than hoped for; a page that stays costs one tap per tick, capped.
-    if (!waiting && observation.screen === 'character-page') {
+    if (this.#healVerifyAtMs === null && !waiting && observation.screen === 'character-page') {
       // Paced (operator rule 2026-11-03): the page animates while it closes, and a tap sent into that
       // animation lands on the 3-D view and opens another member's page. One tap per pace, on a frame
       // that has stopped moving.
@@ -1675,6 +1707,8 @@ export class WvdWorld implements World {
 
   /** The two counts the route's `RouteState` needs, from the observation that carries them. */
   #track(observation: Observation): void {
+    if (observation.screen === this.#stableScreen) this.#stableCount += 1;
+    else { this.#stableScreen = observation.screen; this.#stableCount = 1; }
     if (observation.screen === 'chest-prompt') {
       // A chest's prompt starts a new bar: its measured carry and input leg do not carry over.
       this.#qteCarryTauS = null;

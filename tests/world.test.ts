@@ -1523,7 +1523,11 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(healed()).toBe(1);
     expect(callsAtHeal).toBe(fightCalls);
 
-    // The next tick is the route's: with the heal spent, the map opens for the next chest.
+    // The heal owns the tick until a stable frame proves its page is gone (operator rule 2026-11-07:
+    // only the next order, from the current stable frame), so the tick after it clears that gate and the
+    // route's map press is the one after.
+    clock.advance(500);
+    await world.tick();
     clock.advance(500);
     await world.tick();
     expect(actuator.calls.slice(fightCalls)).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
