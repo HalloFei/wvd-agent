@@ -7,8 +7,9 @@
  * does not import the opener: the atlases are private to their owner and are handed in as
  * `DigitTemplate`s (plan ruling R1).
  *
- * With no templates the template tier is simply absent, and `auto` is `rule` → `ocr`: an atlas is
- * one field's data, so a caller that has none is not an error, just a shorter chain.
+ * With no templates the template tier is simply absent: `auto` is `rule` → `ocr`, and `template`
+ * is OCR alone. An atlas is one field's data, so a caller that has none is not an error, just a
+ * shorter chain. The opener's fields ask for `template` (R4): the rule tier misnames their font.
  */
 export * from './contract.ts';
 export * from './ocr.ts';
@@ -21,7 +22,7 @@ import type { NumeralsReader } from './contract.ts';
 import { createTemplateReader, type DigitTemplate } from './template.ts';
 
 export interface NumeralsReaderOptions {
-  /** `auto` (default), `fast` or `ocr` — the spec's config value, passed in. */
+  /** `auto` (default), `fast`, `template` or `ocr` — the spec's config value, passed in. */
   readonly strategy?: NumeralsStrategy;
   /** The field's atlas. Absent or empty means there is no template tier. */
   readonly templates?: ReadonlyArray<DigitTemplate>;

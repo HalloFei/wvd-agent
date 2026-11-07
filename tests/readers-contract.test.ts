@@ -100,6 +100,26 @@ const BLOCK: Bitmap = Array.from({ length: 12 }, () => '######');
 /** A 12 x 2 bar: shorter than the six rows `number.ts` needs, and unlike any template. */
 const BAR: Bitmap = ['############', '############'];
 
+/**
+ * The opener font's weak `4` as `number.ts` names it: two right bowls, no hole, a bottom bar — its
+ * own `3`. The measured opener `4` is this shape (Task 2 report: the rule reads `49` as `39`), and
+ * an atlas recorded from the same glyph calls it `4`, so the two fast tiers disagree on one frame.
+ */
+const RULE_THREE: Bitmap = [
+  '#######',
+  '.....#.',
+  '.....#.',
+  '.....#.',
+  '..####.',
+  '.....#.',
+  '.....#.',
+  '.....#.',
+  '.....#.',
+  '.....#.',
+  '.....#.',
+  '#######',
+];
+
 /** The read's rectangle: the same box for every synthetic frame (a 20 x 16 frame's left 16 px). */
 const REGION: Region = { x: 0, y: 0, width: 16, height: 16 };
 
@@ -130,6 +150,12 @@ const BLOCK_TEMPLATE = templateOf('8', BLOCK_IMAGE);
 const ONE_TEMPLATE = templateOf('1', ONE_IMAGE);
 const SIX_TEMPLATE = templateOf('6', SIX_IMAGE);
 const STRIP_ATLAS = [ONE_TEMPLATE, SIX_TEMPLATE];
+
+const RULE_THREE_IMAGE = blank(20, 16);
+stamp(RULE_THREE_IMAGE, RULE_THREE, 2, 2);
+
+/** The same shape, recorded by the caller as the `4` it is — the rule tier's known misread. */
+const THREE_AS_FOUR = templateOf('4', RULE_THREE_IMAGE);
 
 /*
  * ---------------------------------------------------------------------------------------------
@@ -253,6 +279,62 @@ describe('the numerals-reader seam, the selector', () => {
       ocr: fixedReader(null),
     });
     await expect(refusing.read(STRIP, REGION)).resolves.toBeNull();
+  });
+});
+
+describe('the numerals-reader seam, the template-first strategy (ruling R4)', () => {
+  it('answers from the template tier even when the rule would name the glyph differently (the opener 4-as-3 shape)', async () => {
+    // The premise: the rule tier's answer here is the wrong digit — `number.ts`'s known weakness.
+    const viaRules = await ruleReader.read(RULE_THREE_IMAGE, REGION);
+    expect(viaRules?.value).toBe(3);
+    expect(viaRules?.tier).toBe('rule');
+    // `auto` keeps the rule first, so the same frame answers the misread.
+    const auto = createAutoReader({
+      template: createTemplateReader({ templates: [THREE_AS_FOUR] }),
+      ocr: failingReader('ocr'),
+    });
+    expect((await auto.read(RULE_THREE_IMAGE, REGION))?.value).toBe(3);
+    // `template` asks the atlas first and carries the atlas's digit.
+    const templateFirst = createAutoReader({
+      strategy: 'template',
+      template: createTemplateReader({ templates: [THREE_AS_FOUR] }),
+      ocr: failingReader('ocr'),
+    });
+    const read = await templateFirst.read(RULE_THREE_IMAGE, REGION);
+    expect(read?.value).toBe(4);
+    expect(read?.tier).toBe('template');
+    expect(read!.confidence).toBeGreaterThan(0.99);
+  });
+
+  it('falls to OCR when the atlas refuses, and never calls the rule tier', async () => {
+    // The premise: this bar is a crop the atlas tier refuses (a 12 x 2 bar, below its floor).
+    await expect(createTemplateReader({ templates: STRIP_ATLAS }).read(BAR_IMAGE, REGION)).resolves.toBeNull();
+    let ocrCalls = 0;
+    const ocr: NumeralsReader = {
+      read: async () => {
+        ocrCalls += 1;
+        return { value: 5, confidence: 0.9, tier: 'ocr' };
+      },
+    };
+    const reader = createAutoReader({
+      strategy: 'template',
+      // A rule tier that would throw if asked: the strategy must not consult it at all.
+      rule: failingReader('rule'),
+      template: createTemplateReader({ templates: STRIP_ATLAS }),
+      ocr,
+    });
+    expect(await reader.read(BAR_IMAGE, REGION)).toEqual({ value: 5, confidence: 0.9, tier: 'ocr' });
+    expect(ocrCalls).toBe(1);
+  });
+
+  it('template without an atlas is an OCR-only read', async () => {
+    // Templates are optional data, not a precondition: the template tier is absent, so the strategy
+    // is OCR alone — not `auto`, which would let the rule tier (16) answer before OCR (8).
+    const reader = createNumeralsReader({
+      strategy: 'template',
+      ocr: fixedReader({ value: 8, confidence: 0.9, tier: 'ocr' }),
+    });
+    expect(await reader.read(STRIP, REGION)).toEqual({ value: 8, confidence: 0.9, tier: 'ocr' });
   });
 });
 
