@@ -1,30 +1,102 @@
 {
   "id": "ffxi-4f",
   "label": "[Chest] FFXI 4F",
-  "floor": { "titleKey": "000000007f3ffe007ffeff00220bb600" },
+  "floor": {
+    "titleKey": "000000007f3ffe007ffeff00220bb600"
+  },
   "goal": {
     "site": "ffxi-gcn",
     "zone": "ffxi-zone3"
   },
-  "rest": { "at": [916, 488], "timeoutMs": 90000 },
+  "rest": {
+    "at": [
+      916,
+      488
+    ],
+    "timeoutMs": 90000
+  },
   "exit": {
     "timeoutMs": 300000,
     "steps": [
-      { "op": "tap", "at": [1787, 96] },
-      { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },
-      { "op": "key", "key": "f" },
-      { "op": "wait", "ms": 8000 },
-      { "op": "expect", "screen": "dungeon", "timeoutMs": 8000 },
-      { "op": "tap", "at": [1787, 96] },
-      { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },
-      { "op": "key", "key": "f" },
-      { "op": "wait", "ms": 8000 },
-      { "op": "tap", "at": [960, 714] },
-      { "op": "wait", "ms": 800 },
-      { "op": "tap", "at": [960, 714] },
-      { "op": "expect", "screen": "dungeon-select", "timeoutMs": 20000 },
-      { "op": "travel", "to": "vnh" },
-      { "op": "expect", "screen": "town", "timeoutMs": 30000 }
+      {
+        "op": "key",
+        "key": "g"
+      },
+      {
+        "op": "key",
+        "key": "g"
+      },
+      {
+        "op": "expect",
+        "screen": "dungeonmap",
+        "timeoutMs": 8000
+      },
+      {
+        "op": "key",
+        "key": "f"
+      },
+      {
+        "op": "wait",
+        "ms": 8000
+      },
+      {
+        "op": "expect",
+        "screen": "dungeon",
+        "timeoutMs": 8000
+      },
+      {
+        "op": "key",
+        "key": "g"
+      },
+      {
+        "op": "key",
+        "key": "g"
+      },
+      {
+        "op": "expect",
+        "screen": "dungeonmap",
+        "timeoutMs": 8000
+      },
+      {
+        "op": "key",
+        "key": "f"
+      },
+      {
+        "op": "wait",
+        "ms": 8000
+      },
+      {
+        "op": "tap",
+        "at": [
+          960,
+          714
+        ]
+      },
+      {
+        "op": "wait",
+        "ms": 800
+      },
+      {
+        "op": "tap",
+        "at": [
+          960,
+          714
+        ]
+      },
+      {
+        "op": "expect",
+        "screen": "dungeon-select",
+        "timeoutMs": 20000
+      },
+      {
+        "op": "travel",
+        "to": "vnh"
+      },
+      {
+        "op": "expect",
+        "screen": "town",
+        "timeoutMs": 30000
+      }
     ]
   }
 }
