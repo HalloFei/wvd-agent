@@ -889,8 +889,15 @@ export async function parseOpenerImage(
   while (count < CARD_SLOTS && cardPresent(data, width, count)) count += 1;
   if (count === 0) return { ok: false, reason: 'not-panel' };
   // A drawn card after an undrawn one is a layout this parser has never seen: refuse, do not renumber.
+  // The panel was recognised (the gates above) and is refused before any numeral is read, so the tier
+  // log still sees it — with nothing read, both counts are zero. Once per recognised panel means once
+  // per panel, not once per panel that got as far as a field: a refusal that reports nothing is
+  // exactly the silence the log exists to close.
   for (let slot = count; slot < CARD_SLOTS; slot += 1) {
-    if (cardPresent(data, width, slot)) return { ok: false, reason: 'unreadable' };
+    if (cardPresent(data, width, slot)) {
+      options.onTiers?.({ template: 0, ocr: 0 });
+      return { ok: false, reason: 'unreadable' };
+    }
   }
 
   // One reader per parse: the escalation's allowance belongs to the panel (R6).

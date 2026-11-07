@@ -31,6 +31,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Frame, RgbaImage } from '../src/contracts.ts';
 import {
   createOcrBudget,
+  OPENER_SLOTS,
   parseOpener,
   parseOpenerDetailed,
   parseOpenerImage,
@@ -55,6 +56,23 @@ const PYTHON = process.env.WVD_OCR_PYTHON || ROOT + '/.tmp/ocr-venv/Scripts/pyth
 const SCRIPT = process.env.WVD_OCR_SCRIPT || ROOT + '/scripts/ocr-readout.py';
 /** Is there a runtime to measure? Gates the sharpened panel, so a host without it skips, not fails. */
 const OCR_AVAILABLE = existsSync(PYTHON) && existsSync(SCRIPT);
+
+/**
+ * The most one OCR call may take for the two-call amount-2 read to be measurable here: the read needs
+ * both calls under the tier's 8 s bound with the second starting inside the budget's 10 s window, so a
+ * single call over 5 s leaves no headroom (this host measures ~2.5–5 s per call; a loaded one has
+ * already taken 8 070 ms, the Task 4 flake). Above it the measured read skips, with the reason; the
+ * always-run invariant beside it covers the same panel, and the 92 assertion itself is not weakened.
+ */
+const MEASURED_READ_PROBE_MAX_MS = 5_000;
+
+/**
+ * Card 1's 陷阱发现 band and its label on panel-00: the crop one OCR call reads as 38 (measured
+ * 2026-11-07). It is the latency probe before the amount-2 read — one call of the same work the read
+ * needs twice, so a loaded host is found before the two-call read turns into a red assertion.
+ */
+const PROBE_BAND = { x: 778, y: 793, width: 87, height: 16 };
+const PROBE_LABEL = { x: 704, y: 785, width: 74, height: 30 };
 
 /**
  * The host's OCR environment must not decide what the fast tier answers (review I5). Every test
@@ -127,6 +145,26 @@ function sharpened(image: RgbaImage, amount: number): RgbaImage {
     }
   }
   return { data: out, width, height };
+}
+
+/**
+ * The decoded panel with the given slots' bottom border erased — the one piece of evidence
+ * `cardPresent` reads (its row, across the card box's x edges). Slot 4 erased and slot 5 kept is
+ * "a drawn card after an undrawn one", the layout `parseOpenerImage` refuses before reading a
+ * numeral; all six erased is a frame the card segmentation calls `not-panel`.
+ */
+function withoutCardBorders(image: RgbaImage, slots: readonly number[]): RgbaImage {
+  const out: RgbaImage = { data: new Uint8Array(image.data), width: image.width, height: image.height };
+  for (const slot of slots) {
+    const { rect } = OPENER_SLOTS[slot]!;
+    for (let x = rect.x0; x <= rect.x1; x += 1) {
+      const offset = (rect.y1 * out.width + x) * 4;
+      out.data[offset] = 0;
+      out.data[offset + 1] = 0;
+      out.data[offset + 2] = 0;
+    }
+  }
+  return out;
 }
 
 /** What measurements.json says the six cards carry. willpower: null = the card draws no heart. */
@@ -220,6 +258,45 @@ describe('the opener reads its numerals through the seam', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// The tier log on a panel refused before a numeral is read (review gap, Task 4)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * `onTiers` is fired once per **recognised panel**, not once per field read: a panel the gates
+ * recognised and the parser then refuses must still report the mix it read so far — zero, when the
+ * refusal comes before any 陷阱 field. Silence there is a recognised panel whose tier the log cannot
+ * see ("a read that silently changes tier cannot be measured", plan Global Constraints), and it is
+ * the hole this block pins.
+ */
+describe('a recognised panel refused before a numeral is read still reports its tier mix', () => {
+  it('reports the drawn-card-after-an-undrawn-one layout it refuses', async () => {
+    // Slot 5's border erased and slot 6 kept: a hole in the roster prefix, the layout opener.ts
+    // refuses before the escalation is even built (so before `trapReader` can answer a field).
+    const summaries: OpenerTierSummary[] = [];
+    const parsed = await parseOpenerImage(withoutCardBorders(await jpegImage('panel-00.jpg'), [4]), {
+      onTiers: (summary) => summaries.push(summary),
+    });
+
+    expect(parsed).toEqual({ ok: false, reason: 'unreadable' });
+    // Nothing was read, and the panel still says so — once, with both counts zero.
+    expect(summaries).toEqual([{ template: 0, ocr: 0 }]);
+  });
+
+  it('reports nothing for a frame the gates refused — no cards, no panel', async () => {
+    // The other half of the boundary. This frame passes the panel band and the title's ink gate but
+    // draws no card, so the parse answers `not-panel` and ChestPerceiver falls through to the bar:
+    // there is no recognised panel whose tiers could be reported, and the log stays silent.
+    const summaries: OpenerTierSummary[] = [];
+    const parsed = await parseOpenerImage(withoutCardBorders(await jpegImage('panel-00.jpg'), [0, 1, 2, 3, 4, 5]), {
+      onTiers: (summary) => summaries.push(summary),
+    });
+
+    expect(parsed).toEqual({ ok: false, reason: 'not-panel' });
+    expect(summaries).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // The sharpened panel — the raw-pixel proxy of the live failure
 // ---------------------------------------------------------------------------------------------
 
@@ -289,6 +366,20 @@ describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () 
  * which the opener's length check cannot see (both are two digits).
  */
 describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
+  // The block's own env: the two cases below are about what happens with no OCR runtime, so the pair
+  // is stubbed out here as well as at the file level — the block does not lean on a hook it cannot
+  // see. A host that exports the pair must not turn the 93 case into OCR's 92 or the refusal case into
+  // a read; the case whose whole point is the escalation opts back into the real pair explicitly (the
+  // sharpened describe's shape).
+  beforeEach(() => {
+    vi.stubEnv('WVD_OCR_PYTHON', '');
+    vi.stubEnv('WVD_OCR_SCRIPT', '');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   let sharpenedTwo: Promise<RgbaImage> | null = null;
   function sharpenedTwoPanel(): Promise<RgbaImage> {
     sharpenedTwo ??= jpegImage('panel-00.jpg').then((base) => sharpened(base, 2));
@@ -321,6 +412,33 @@ describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
     expect(observation).toMatchObject({ screen: 'unknown', confidence: 0.3 });
   });
 
+  it("the amount-2 panel refuses or reads the measured twelve — never the rule chain's 93", async () => {
+    // The invariant that runs on every host, whatever its OCR load: R9's escalation is OCR-only, so a
+    // field it cannot answer refuses the panel; it never falls back to the rules, whose 4-as-3 would
+    // name card 4's 陷阱发现 93 where the screen says 92. A read is the other legal outcome and must
+    // be the measured twelve. The runtime, when this host has one, is what the composition root
+    // passes; without it the refusal branch is the answer.
+    if (OCR_AVAILABLE) {
+      vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
+      vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+    }
+    const expected = await measured();
+    const parsed = await parseOpenerImage(await sharpenedTwoPanel(), { trapReader: ocrReader });
+
+    if (!parsed.ok) {
+      // Refused, not named: nothing fills in for a field the escalation could not answer, so no
+      // number at all is recorded — the 93 is not reachable from here.
+      expect(parsed).toEqual({ ok: false, reason: 'unreadable' });
+      return;
+    }
+    const detects = parsed.panel.members.map((member) => member.detect);
+    expect(detects).toEqual(expected.map((member) => member.detect));
+    expect(parsed.panel.members.map((member) => member.disarm)).toEqual(expected.map((member) => member.disarm));
+    // The measured value of the field the rule chain names 93, and the 93 itself nowhere in the read.
+    expect(parsed.panel.members[3]!.detect).toBe(92);
+    expect(detects).not.toContain(93);
+  }, 40_000);
+
   describe.skipIf(!OCR_AVAILABLE)('with the OCR runtime', () => {
     beforeEach(() => {
       vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
@@ -331,14 +449,31 @@ describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
       vi.unstubAllEnvs();
     });
 
-    it("reads the amount-2 panel as measured (92) on the production budget — this host's OCR starts the second call inside the 10 s window", async () => {
+    it("reads the amount-2 panel as measured (92) on the production budget — this host's OCR starts the second call inside the 10 s window", async (context) => {
       // Two fields escalate on this proxy. R10 raised the production window (R6: two calls, none
       // starting more than OCR_CALL_WINDOW_MS after the first) from 2 s to 10 s, because this host's
       // OCR takes ~2.5–5 s per call (Task 4 report): the second escalation now starts inside it, so
       // the panel reads the measured twelve instead of refusing. No budget is injected — what the
       // composition root builds is what the panel is read under, and the 2-call cap is unchanged. On
       // a host whose OCR starts the second call past 10 s the panel refuses at the second take() (the
-      // safe R9 outcome, never a rule's 93); that is the only host on which this expectation changes.
+      // safe R9 outcome, never a rule's 93); the always-run invariant above holds on that host.
+      //
+      // The read is gated by one call's latency first: it needs **two** calls under the 8 s bound with
+      // the second starting inside the window, and a loaded host (the full suite's parallel forks made
+      // one call take 8 070 ms) would turn the 92 into a host measurement. Over the threshold this
+      // case skips with the reason; under it the 92 below is asserted unchanged.
+      const probeStart = Date.now();
+      const probe = await ocrReader.read(await jpegImage('panel-00.jpg'), PROBE_BAND, { label: PROBE_LABEL });
+      const probeMs = Date.now() - probeStart;
+      if (probeMs > MEASURED_READ_PROBE_MAX_MS) {
+        // vitest 2.1.9's context.skip() carries no note, so the reason is reported before the skip:
+        // it lands in the run's log beside the skipped test.
+        console.warn(`wvd: the amount-2 measured read is skipped — one OCR call took ${probeMs} ms, over the ${MEASURED_READ_PROBE_MAX_MS} ms a two-call read leaves headroom for`);
+        context.skip();
+      }
+      // Fast and silent is a broken runtime, not a loaded host: that must fail, not skip.
+      expect(probe?.value).toBe(38);
+
       const expected = await measured();
       const parsed = await parseOpenerImage(await sharpenedTwoPanel(), { trapReader: ocrReader });
 
@@ -349,7 +484,7 @@ describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
       expect(members.map((member) => member.disarm)).toEqual(expected.map((member) => member.disarm));
       // The measured value of the field the rule chain names 93.
       expect(members[3]!.detect).toBe(92);
-    }, 30_000);
+    }, 45_000);
   });
 });
 
