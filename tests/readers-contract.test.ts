@@ -9,6 +9,11 @@
  * spawn one, and an `ocr` read must never touch the fast tiers. What is proved here is the seam's
  * behaviour; the real atlases are proved by the opener's own tests (Task 3).
  *
+ * The template tier is probed two ways: an atlas recorded from the very frame it reads (a 1.0
+ * self-match, enough for the digit and the floor), and an **observed-instance** atlas — two captures
+ * of one digit plus a near-tie rival — read from a third, unseen capture. The second is what
+ * exercises the per-digit grouping and the runner-up margin.
+ *
  * The synthetic strips are drawn at the game's glyph scale (12 px tall, 2 px strokes, 3–4 px gaps)
  * because both fast tiers were measured on that scale: three columns is the narrowest digit and
  * twelve the widest (opener's `MIN_GLYPH_COLUMNS` / `MAX_GLYPH_COLUMNS`).
@@ -22,6 +27,8 @@ import { ruleReader } from '../src/perception/readers/rule.ts';
 import {
   createTemplateReader,
   templateFeatureOf,
+  TEMPLATE_MARGIN_FLOOR,
+  TEMPLATE_MATCH_FLOOR,
   type DigitTemplate,
 } from '../src/perception/readers/template.ts';
 
@@ -94,6 +101,67 @@ const SIX: Bitmap = [
   '.###..',
 ];
 
+/**
+ * A second observation of that same `6`: the same bounding box, a slightly different stroke pattern
+ * — the observed-instance atlas a field hands in (the heart's), not a mean. On the frame read below
+ * its feature is 0.926 against the winning `6`'s 0.974, i.e. **inside** the 0.1 margin floor of the
+ * digit it shares: a per-template runner-up would mistake it for a rival.
+ */
+const SIX_INSTANCE_B: Bitmap = [
+  '.##...',
+  '.###..',
+  '.###..',
+  '.##...',
+  '.##...',
+  '.###..',
+  '.#####',
+  '.##..#',
+  '.##..#',
+  '.##..#',
+  '.#####',
+  '.###..',
+];
+
+/**
+ * A third observation of that `6`, and the frame the atlas reads: it is **not** one of the atlas's
+ * entries, so no score is the 1.0 a self-match would give. Its nearest entry is the `6` at 0.974;
+ * the atlas's `8` is the true runner-up at 0.842, a near-tie 0.132 behind — just outside the 0.1
+ * floor, so the read is an answer, and a raised floor makes it a refusal.
+ */
+const SIX_FRAME: Bitmap = [
+  '.##...',
+  '.##...',
+  '.##...',
+  '.##...',
+  '.##...',
+  '.##...',
+  '.#####',
+  '.##..#',
+  '.##..#',
+  '.##..#',
+  '.#####',
+  '.###..',
+];
+
+/**
+ * The one other digit in that atlas: an `8` with a full second bowl, the shape a `6` is nearest to.
+ * It is the near-tie the margin floor exists for.
+ */
+const EIGHT: Bitmap = [
+  '.###..',
+  '.##..#',
+  '.##..#',
+  '.##..#',
+  '.#####',
+  '.##..#',
+  '.##..#',
+  '.##..#',
+  '.##..#',
+  '.##..#',
+  '.#####',
+  '.###..',
+];
+
 /** A solid 6 x 12 box: `number.ts` refuses a full glyph ("total >= width * height * 0.9"). */
 const BLOCK: Bitmap = Array.from({ length: 12 }, () => '######');
 
@@ -139,6 +207,15 @@ stamp(ONE_IMAGE, ONE, 2, 2);
 const SIX_IMAGE = blank(20, 16);
 stamp(SIX_IMAGE, SIX, 8, 2);
 
+const SIX_INSTANCE_B_IMAGE = blank(20, 16);
+stamp(SIX_INSTANCE_B_IMAGE, SIX_INSTANCE_B, 2, 2);
+
+const SIX_FRAME_IMAGE = blank(20, 16);
+stamp(SIX_FRAME_IMAGE, SIX_FRAME, 2, 2);
+
+const EIGHT_IMAGE = blank(20, 16);
+stamp(EIGHT_IMAGE, EIGHT, 2, 2);
+
 /** An atlas records a digit by the tier's own feature — the caller's job (R1), not the reader's. */
 function templateOf(digit: string, image: RgbaImage): DigitTemplate {
   const values = templateFeatureOf(image, REGION);
@@ -150,6 +227,17 @@ const BLOCK_TEMPLATE = templateOf('8', BLOCK_IMAGE);
 const ONE_TEMPLATE = templateOf('1', ONE_IMAGE);
 const SIX_TEMPLATE = templateOf('6', SIX_IMAGE);
 const STRIP_ATLAS = [ONE_TEMPLATE, SIX_TEMPLATE];
+const SIX_INSTANCE_B_TEMPLATE = templateOf('6', SIX_INSTANCE_B_IMAGE);
+const EIGHT_TEMPLATE = templateOf('8', EIGHT_IMAGE);
+
+/** The NCC one frame's single glyph scores against one template: the tier's arithmetic, for premises. */
+function scoreOf(image: RgbaImage, template: DigitTemplate): number {
+  const values = templateFeatureOf(image, REGION);
+  expect(values, 'the synthetic frame must carry exactly one glyph').not.toBeNull();
+  let score = 0;
+  for (let index = 0; index < values!.length; index += 1) score += values![index]! * template.values[index]!;
+  return score;
+}
 
 const RULE_THREE_IMAGE = blank(20, 16);
 stamp(RULE_THREE_IMAGE, RULE_THREE, 2, 2);
@@ -221,6 +309,44 @@ describe('the numerals-reader seam, the template tier', () => {
   });
 });
 
+describe('the numerals-reader seam, the atlas instances and the runner-up margin', () => {
+  /*
+   * An observed-instance atlas: two captures of its `6` and one `8`. The frame is a third capture of
+   * the `6`, so it is not a self-match, and the two entries that are not the answer sit on opposite
+   * sides of the 0.1 margin floor — the second `6` is 0.049 behind (inside it) and the `8` is 0.132
+   * behind (outside it). The grouping has to ignore the instance and measure the `8`; the margin has
+   * to be able to refuse a near-tie.
+   */
+  const INSTANCE_ATLAS: DigitTemplate[] = [SIX_TEMPLATE, SIX_INSTANCE_B_TEMPLATE, EIGHT_TEMPLATE];
+
+  it('groups a digit\'s instances before the runner-up margin, and still refuses a near-tie', async () => {
+    const best = scoreOf(SIX_FRAME_IMAGE, SIX_TEMPLATE);
+    const instance = scoreOf(SIX_FRAME_IMAGE, SIX_INSTANCE_B_TEMPLATE);
+    const other = scoreOf(SIX_FRAME_IMAGE, EIGHT_TEMPLATE);
+    // The premise: a third observation (no self-match), with the second-best entry an instance of the
+    // winning digit and the third the other digit the read is a near-tie against.
+    expect(best).toBeGreaterThan(TEMPLATE_MATCH_FLOOR);
+    expect(best).toBeGreaterThan(0.95);
+    expect(best).toBeLessThan(0.999);
+    expect(best - instance).toBeLessThan(TEMPLATE_MARGIN_FLOOR);
+    expect(best - other).toBeGreaterThan(TEMPLATE_MARGIN_FLOOR);
+    expect(best - other).toBeLessThan(0.2);
+
+    // The grouping: the runner-up is the `8` (0.132 back), not the second `6` (0.049 back). A reader
+    // that took the runner-up per template would refuse this read; the frame is well above the match
+    // floor, so only the margin can turn it away.
+    const read = await createTemplateReader({ templates: INSTANCE_ATLAS }).read(SIX_FRAME_IMAGE, REGION);
+    expect(read?.value).toBe(6);
+    expect(read?.tier).toBe('template');
+    expect(read!.confidence).toBeCloseTo(best, 5);
+
+    // The margin: the same frame under a floor above its grouped margin is a refusal. A reader that
+    // dropped the margin check would answer `6` here.
+    const strict = createTemplateReader({ templates: INSTANCE_ATLAS, marginFloor: 0.25 });
+    await expect(strict.read(SIX_FRAME_IMAGE, REGION)).resolves.toBeNull();
+  });
+});
+
 describe('the numerals-reader seam, the selector', () => {
   it('answers from the rule tier when the region is a plain numeral strip', async () => {
     const reader = createAutoReader({
@@ -260,6 +386,20 @@ describe('the numerals-reader seam, the selector', () => {
     const read = await fast.read(STRIP, REGION);
     expect(read?.tier).toBe('rule');
     // Both fast tiers refuse: the read is a refusal, not an escalation.
+    await expect(fast.read(BAR_IMAGE, REGION)).resolves.toBeNull();
+  });
+
+  it('fast never calls the OCR tier with a template atlas in the chain', async () => {
+    // The atlas makes the chain rule -> template; a mutant chain that kept OCR (rule -> template ->
+    // ocr) would call this throwing fake on a frame both fast tiers refuse.
+    const fast = createAutoReader({
+      strategy: 'fast',
+      template: createTemplateReader({ templates: STRIP_ATLAS }),
+      ocr: failingReader('ocr'),
+    });
+    // The premise: both fast tiers refuse the bar, so only OCR could answer it.
+    await expect(ruleReader.read(BAR_IMAGE, REGION)).resolves.toBeNull();
+    await expect(createTemplateReader({ templates: STRIP_ATLAS }).read(BAR_IMAGE, REGION)).resolves.toBeNull();
     await expect(fast.read(BAR_IMAGE, REGION)).resolves.toBeNull();
   });
 
@@ -346,6 +486,14 @@ describe('the numerals-reader factory', () => {
 
     const fast = createNumeralsReader({ strategy: 'fast', ocr: failingReader('ocr') });
     await expect(fast.read(BLOCK_IMAGE, REGION)).resolves.toBeNull();
+
+    // With an atlas the fast chain carries the template tier too, and still no OCR.
+    const fastAtlas = createNumeralsReader({
+      strategy: 'fast',
+      templates: STRIP_ATLAS,
+      ocr: failingReader('ocr'),
+    });
+    await expect(fastAtlas.read(BAR_IMAGE, REGION)).resolves.toBeNull();
 
     const ocr = createNumeralsReader({
       strategy: 'ocr',
