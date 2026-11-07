@@ -41,8 +41,9 @@ export function ocrRunnerFromEnv(env: NodeJS.ProcessEnv = process.env): OcrRunne
 }
 
 /**
- * The lines of text the OCR read in `region`, in reading order, or null: no runner, the process failed
- * or timed out, or its answer was not the script's `{ ok: true, texts }`.
+ * The lines of text the OCR read in `region`, in reading order, or null: no runner, the crop could not
+ * be handed over (no temp dir, no space, no permission — the filesystem is part of this call), the
+ * process failed or timed out, or its answer was not the script's `{ ok: true, texts }`.
  */
 export async function readTextsViaOcr(
   image: RgbaImage,
@@ -50,13 +51,22 @@ export async function readTextsViaOcr(
   runner: OcrRunner | null,
 ): Promise<string[] | null> {
   if (runner === null) return null;
-  const dir = mkdtempSync(join(tmpdir(), 'wvd-ocr-'));
-  const file = join(dir, 'readout.ppm');
+  // The crop is handed over as a temp file, so the filesystem is part of this call: `mkdtempSync` or
+  // the PPM write can fail with ENOSPC / EACCES / EPERM / ENOENT. That failure is a refusal like a
+  // failed process — not a throw. `readers/ocr.ts` declares the tier never throws, and the loop must
+  // not see a filesystem error escape a read (measured: a missing temp root rejected the read).
+  let dir: string | undefined;
   try {
+    dir = mkdtempSync(join(tmpdir(), 'wvd-ocr-'));
+    const file = join(dir, 'readout.ppm');
     writeFileSync(file, ppmOf(image, region));
     return await run(runner, file, region);
+  } catch {
+    return null;
   } finally {
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* a temp dir that will not die is not an answer */ }
+    if (dir !== undefined) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* a temp dir that will not die is not an answer */ }
+    }
   }
 }
 

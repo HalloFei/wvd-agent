@@ -7,8 +7,9 @@
  * value. The process, its bound and its `null` on absence are the map readout's proven escalation
  * (ocr-process.ts, 2026-11-07: 16/4, 13/25, 19/2, 20/14 all correct).
  *
- * The tier never throws: an unconfigured runtime, a clip, a failed or timed-out process, an answer
- * with no single numeral or a number outside the hint's bounds are all `null`.
+ * The tier never throws: an unconfigured runtime, a clip, a temp path that cannot be written, a
+ * failed or timed-out process, an answer with no single numeral or a number outside the hint's
+ * bounds are all `null`.
  */
 import type { RgbaImage } from '../../contracts.ts';
 import { ocrRunnerFromEnv, readTextsViaOcr } from '../ocr-process.ts';
@@ -26,8 +27,9 @@ export const ocrReader: NumeralsReader = { read: readNumeralsViaOcr };
 
 /**
  * The number the OCR names in `region` (plus `hint.label`), or null: the OCR runtime is not configured,
- * the crop is not wholly inside the frame, the process failed or timed out, the answer carried no
- * single numeral, its length contradicts `hint.digits`, or the value is outside `hint.min` .. `hint.max`.
+ * the crop is not wholly inside the frame, the crop could not be written to a temp path, the process
+ * failed or timed out, the answer carried no single numeral, its length contradicts `hint.digits`, or
+ * the value is outside `hint.min` .. `hint.max`.
  */
 export async function readNumeralsViaOcr(
   image: RgbaImage,
