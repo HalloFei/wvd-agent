@@ -83,6 +83,10 @@ const PROBE_LABEL = { x: 704, y: 785, width: 74, height: 30 };
 beforeEach(() => {
   vi.stubEnv('WVD_OCR_PYTHON', '');
   vi.stubEnv('WVD_OCR_SCRIPT', '');
+  // R7's bound is the test's to set: the committed 8 s default is a production bound, and the
+  // sharpened-panel cases wait out a real OCR call. Stubbed, so `pnpm test` is green with no hand-set
+  // environment; the describes that stub the real runtime pair inherit this one.
+  vi.stubEnv('WVD_OCR_TIMEOUT_MS', '20000');
 });
 
 afterEach(() => {
@@ -301,12 +305,11 @@ describe('a recognised panel refused before a numeral is read still reports its 
 // ---------------------------------------------------------------------------------------------
 
 /**
- * These deadlines are 60 s, not the suite's 20 s, because each case waits out one **real** OCR call:
- * the numerals corpus (Task 5) runs 24 of them beside this file, and under the parallel forks a call
- * measured 10-13 s (2026-11-07; one heart case crossed the 20 s deadline, and the amount-2 probe
- * skipped for the same load). The call's own bound decides the read — `WVD_OCR_TIMEOUT_MS`, 20 s in
- * the suite (R7) — so the deadline only decides how long the test waits for an answer it does not
- * weaken: a call that returns null still fails the content assertion.
+ * These cases wait out one **real** OCR call each, and keep the suite's default 20 s deadline: the
+ * call's own bound (`WVD_OCR_TIMEOUT_MS`, stubbed to 20 s in this file — R7) decides the read, and a
+ * call that returns null still fails the content assertion. The suite runs its files one at a time
+ * (vitest.config.ts, `fileParallelism: false`), so this file's calls are not queued behind the
+ * corpus's 24 reads — the load that once made a call take 10-13 s and pushed a 20 s deadline.
  */
 describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () => {
   beforeEach(() => {
@@ -330,7 +333,7 @@ describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () 
     if (!parsed.ok) return;
     expect(parsed.panel.members.map((member) => member.detect)).toEqual(expected.map((member) => member.detect));
     expect(parsed.panel.members.map((member) => member.disarm)).toEqual(expected.map((member) => member.disarm));
-  }, 60_000);
+  });
 
   it('refuses the same frame when the OCR runtime is absent — the escalation is what answers it', async () => {
     // Not a loosened floor and not a second atlas: with no runtime named, the field the template tier
@@ -341,7 +344,7 @@ describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () 
     const image = sharpened(await jpegImage('panel-00.jpg'), 1);
 
     expect(await parseOpenerDetailed(frameOf(image))).toEqual({ ok: false, reason: 'unreadable' });
-  }, 60_000);
+  });
 
   it('keeps the heart semantics on the sharpened proxy: one unread numeral costs its own card', async () => {
     // The heart field is the one numeral whose atlas the template tier cannot reproduce: the heart
@@ -359,7 +362,7 @@ describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () 
     const willpower = parsed.panel.members.map((member) =>
       member.willpower === null ? 'absent' : Number.isNaN(member.willpower) ? 'unread' : member.willpower);
     expect(willpower).toEqual([100, 'unread', 100, 'absent', 90, 100]);
-  }, 60_000);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

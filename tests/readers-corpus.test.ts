@@ -225,6 +225,14 @@ describe('the numerals corpus', () => {
 // The template tier: the fast loop's reader, on the form it answers
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * The template tier refuses exactly one of the twelve sharpened proxy crops: card 1's 陷阱解除 (49),
+ * the one field the live panel escalated (`readers-opener.test.ts`). Pinned **by field name**, not as
+ * a count: a tier that starts answering that crop or refusing a different one is a re-record, and a
+ * count cannot tell a swap from a steady eleven.
+ */
+const TEMPLATE_PROXY_REFUSALS: ReadonlySet<string> = new Set(['card-1-disarm-sharp.ppm']);
+
 describe('the template tier over the corpus', () => {
   it('reads every decoded crop as the measured value', async () => {
     const corpus = await manifest();
@@ -241,19 +249,26 @@ describe('the template tier over the corpus', () => {
     // The proxy is the raw capture's stand-in (R3): the atlas may stop matching it (that is the live
     // failure), but a fall-through is a refusal, never a plausible-looking wrong number.
     const corpus = await manifest();
-    let answers = 0;
-    for (const entry of corpus.fields.filter((candidate) => candidate.form === 'sharp')) {
+    const sharp = corpus.fields.filter((candidate) => candidate.form === 'sharp');
+    const answered: string[] = [];
+    for (const entry of sharp) {
       const read = await templateReader.read(await cropImage(entry), entry.region, hintOf(entry));
       plausible(read, 'the template tier on ' + entry.file);
-      if (read === null) continue;
-      answers += 1;
+      if (read === null) {
+        expect(TEMPLATE_PROXY_REFUSALS.has(entry.file), entry.file + ' refused; record it in TEMPLATE_PROXY_REFUSALS').toBe(true);
+        continue;
+      }
+      answered.push(entry.file);
       expect(read.value, entry.file).toBe(entry.expected);
       expect(read.tier, entry.file).toBe('template');
     }
-    // The atlas names eleven of the twelve proxy crops and refuses card 1's 陷阱解除 (49) — the one
-    // field the live panel escalated (readers-opener.test.ts). Pinned: a tier that starts answering
-    // or refusing a different set is a re-record, not a silent pass.
-    expect(answers).toBe(11);
+    // Both directions are pinned **by field name**: exactly one proxy crop is the refusal, and every
+    // other proxy crop is an answer. A swap — card 1's 49 starting to answer while another crop starts
+    // refusing — was invisible to an `answers === 11` count; it fails here, because the answered set
+    // would name a crop the refusal set does not, and vice versa.
+    const expectedAnswers = sharp.map((entry) => entry.file)
+      .filter((file) => !TEMPLATE_PROXY_REFUSALS.has(file));
+    expect(answered).toEqual(expectedAnswers);
   });
 });
 // ---------------------------------------------------------------------------------------------
@@ -315,6 +330,10 @@ describe.skipIf(!OCR_AVAILABLE)('the OCR tier over the corpus', () => {
   beforeEach(() => {
     vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
     vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+    // R7's bound is the test's to set: the committed default (8 s) is a production bound and this
+    // host's OCR needs the wider one under the suite's real reads. Stubbed here, so `pnpm test`
+    // (plain vitest) is green with no hand-set environment.
+    vi.stubEnv('WVD_OCR_TIMEOUT_MS', '20000');
   });
 
   afterEach(() => {
@@ -323,16 +342,24 @@ describe.skipIf(!OCR_AVAILABLE)('the OCR tier over the corpus', () => {
 
   async function readForm(form: 'decoded' | 'sharp'): Promise<void> {
     const corpus = await manifest();
-    for (const entry of corpus.fields.filter((candidate) => candidate.form === form)) {
+    const crops = corpus.fields.filter((candidate) => candidate.form === form);
+    const answered: string[] = [];
+    for (const entry of crops) {
       const read = await ocrReader.read(await cropImage(entry), entry.region, hintOf(entry));
       plausible(read, 'the OCR tier on ' + entry.file);
       if (read === null) {
         expect(OCR_REFUSALS.has(entry.file), entry.file + ' refused; record it in OCR_REFUSALS').toBe(true);
         continue;
       }
+      answered.push(entry.file);
       expect(read.tier, entry.file).toBe('ocr');
       expect(read.value, entry.file).toBe(OCR_MISREADS.get(entry.file) ?? entry.expected);
     }
+    // The same both-directions pin as the template tier: the refusals and the answers are each named,
+    // so a crop that starts answering or starts refusing is a re-record, never a silent pass.
+    const expectedAnswers = crops.map((entry) => entry.file)
+      .filter((file) => !OCR_REFUSALS.has(file));
+    expect(answered).toEqual(expectedAnswers);
   }
 
   it('runs the decoded form against the measured twelve — one box-split refusal recorded', async () => {

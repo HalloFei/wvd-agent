@@ -37,13 +37,14 @@ Commit per task, staged by explicit path.
   report, not a ruling to make.
 - Every command through `node ~/.dsh/tools/check-digest.mjs --timeout 300 -- "<command>"`; the full
   suite in the final task and before the fast-forward.
-- **The suite's OCR bound (R7 in practice, 2026-11-07):** run the full suite with
-  `WVD_OCR_TIMEOUT_MS=20000 node ~/.dsh/tools/check-digest.mjs --timeout 900 -- "node ../Coopanion/node_modules/vitest/vitest.mjs run --no-file-parallelism"`.
-  At the committed 8 s default the OCR tests time out under vitest's parallel forks on this host, and
-  with the Task 5 corpus's 24 real OCR reads the default forks also push two timing tests
-  (`engine-child-snapshot`, `qte-band`) over their assertions; serially the suite is green
-  (859/859, 364 s). The flag changes no assertion. The bound is the run's, not the committed
-  default's: unset, production keeps the 8 s bound.
+- **The suite's OCR bound (R7 in practice, 2026-11-07):** `pnpm test` (plain `vitest run`)
+  is the gate, and it is green on this host with **no hand-set env and no extra flag** (859 passed,
+  0 failed, 65 files, 366 s). The OCR-dependent test files stub their own `WVD_OCR_TIMEOUT_MS=20000`
+  — R7's bound is the test's to set, and unset in production the committed 8 s default stands — and
+  `vitest.config.ts` sets `test.fileParallelism: false`: the Task 5 corpus's 24 real OCR reads run
+  beside two pre-existing load-sensitive timing files (`engine-child-snapshot`, `qte-band`), and under
+  parallel forks the load pushed those, and single OCR calls (2.5–5 s → 10–13 s), over their
+  assertions. The config carries the measurement and the reason; the flag changes no assertion.
 
 ## File Structure
 
@@ -123,7 +124,8 @@ Commit per task, staged by explicit path.
       77-as-177 misread **recorded**; the rule tier's known 4-vs-3 misname is recorded beside its other
       measured defeats and four refusals (board card `t-mw65nlh4-lfoik7`); no tier answers outside the
       field's plausible range (1–999). `docs/status.md` records the corpus and the measured defects.
-- [x] Full suite (`WVD_OCR_TIMEOUT_MS=20000`, above) + `tsc` clean; commit:
+- [x] Full suite (plain `pnpm test` — no env, no flag — 859 passed; R7's bound stubbed per test
+      file) + `tsc` clean; commit:
       `feat(readers): the numerals corpus and the full-suite proof`.
 
 ### Task 6 — Live acceptance (controller)

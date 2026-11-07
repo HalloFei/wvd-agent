@@ -1158,18 +1158,18 @@ task is testdata, a script, tests and docs — no `src/` change):
   range, so only the field pin catches it. The full panel never escalates those fields (the template
   tier answers them), so the live acceptance is unaffected.
 
-Pinned answers mean a fix is a deliberate re-record, not a silent pass. **The suite's OCR bound:** on
-this host the full suite runs with `WVD_OCR_TIMEOUT_MS=20000` (ruling R7) and
-`--no-file-parallelism`. The committed 8 s default times the OCR tests out under vitest's parallel
-forks, and with the corpus's 24 real OCR reads the default forks also push the suite's timing tests
-over their assertions: the three default-parallel runs on 2026-11-07 had one or two reds each, all of
-them deadlines or timing ratios — readers-opener's sharpened-heart case (a 20 s deadline, raised to
-60 s with its assertions untouched), engine-child-snapshot's capture aged under 200 ms (twice, a
-different case each time) and once qte-band's decode-time ratio. Excluding the corpus makes the same
-parallel run green (852 passed, 1 skipped, 80 s), which attributes the extra load to the corpus.
-Serially the whole suite is green: **859 passed, 0 failed (65 files, 364 s)**, with
-`npx tsc --noEmit` clean. The flag changes no assertion; it gives the host the idle machine these
-measurements were taken on.
+Pinned answers mean a fix is a deliberate re-record, not a silent pass. **The repo's gate is the
+plain command:** `pnpm test` (`vitest run`) is green on this host with **no hand-set environment and
+no extra flag** — **859 passed, 0 failed (65 files, 366 s)**, with `npx tsc --noEmit` clean. Two
+configurations make that true without weakening an assertion. The OCR-dependent test files stub their
+own `WVD_OCR_TIMEOUT_MS=20000` (ruling R7; unset, production keeps the committed 8 s default), and
+`vitest.config.ts` sets `fileParallelism: false`, so files run one at a time. The reason is load,
+measured 2026-11-07: under the default parallel forks the corpus's 24 real OCR reads pushed the
+suite's two pre-existing load-sensitive timing files (`engine-child-snapshot`'s capture aged under
+200 ms, `qte-band`'s decode-time ratio) over their assertions, and stretched single OCR calls from
+~2.5–5 s to 10–13 s. Serialising changes no assertion; its cost is wall time. The serial-only command
+with an exported bound that this section used to require is gone — it was never a gate, only a way to
+run one.
 
 ## Open work — the task board is the authority
 

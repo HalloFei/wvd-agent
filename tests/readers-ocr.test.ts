@@ -56,6 +56,10 @@ function panel(): Promise<RgbaImage> {
 beforeEach(() => {
   vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
   vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+  // R7's bound is the test's to set: the committed 8 s default is a production bound, and this host's
+  // OCR needs the wider one for the live reads below. (The R7 block stubs its own values, including
+  // the unset/fallback case, over this one.) Stubbed here so `pnpm test` is green with no hand-set env.
+  vi.stubEnv('WVD_OCR_TIMEOUT_MS', '20000');
 });
 
 afterEach(() => {
