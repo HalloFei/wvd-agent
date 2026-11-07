@@ -611,9 +611,12 @@ and a fitted value replaces the default with its provenance in the commit that c
 
 ### 8.6 Perception
 
-| Key | Type | Default | Owner | Meaning |
-|---|---|---|---|---|
-| `readers.numerals` | string `auto` \| `fast` \| `template` \| `ocr` | `auto` | perception | the numerals-reader seam's default strategy: `auto` = rule → template → ocr, `fast` = the fast tiers and never an OCR process, `template` = template → ocr (R4), `ocr` = the escalation alone. The opener's 陷阱 fields keep their own `template` strategy (R4) and escalate to the OCR tier directly (R9); this value is the seam's default for future consumers, and never shapes the opener's escalation. |
+No row: the numerals-reader seam's strategy is a **constructor argument** (ruling R12, 2026-11-07 —
+review F2 of `feat/readers`), not deployment data. `createNumeralsReader({ strategy })` takes
+`auto` | `fast` | `template` | `ocr`, the opener builds its own field chain from it (R4/R9), and a
+config key with no consumer is a lie (AGENTS §2). The deployment switch — the row this section used
+to carry — returns with the seam's first real consumer, the map readout migration (board card
+`t-mw6chgus-eybna8`).
 
 The seam's OCR escalation is the map readout's process: `WVD_OCR_PYTHON` / `WVD_OCR_SCRIPT` name
 it, unset means the tier is unavailable (`null`, never a throw), and `WVD_OCR_TIMEOUT_MS` (default

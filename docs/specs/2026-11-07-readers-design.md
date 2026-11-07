@@ -51,9 +51,14 @@ the health metric: when the fast tiers start falling through, that is visible be
 - The semantic rules do not move into the reader: a value outside the field's range, or the heart's
   `absent` vs `unreadable` distinction, stay the opener's (contracts §0.6 — the reader names a number,
   the caller names the fact).
-- **Config** (`worlds.wvd.readers`): `numerals: 'auto' | 'fast' | 'ocr'` (default `auto`). `fast` is
-  `rule` → `template` with no OCR; `ocr` skips the fast tiers. The OCR runtime path is the existing
-  `WVD_OCR_PYTHON`/`WVD_OCR_SCRIPT` pair; unset means the OCR tier is unavailable, not an error.
+- **The strategy is a constructor argument, not a config value** (ruling R12, 2026-11-07; review F2).
+  `createNumeralsReader({ strategy })` takes `auto` | `fast` | `template` | `ocr`: `fast` is
+  `rule` → `template` with no OCR; `ocr` skips the fast tiers. The opener builds its own chain
+  (`template` → OCR, R4/R9) from the constructor, so the seam is switchable without a config row. The
+  deployment switch (`worlds.wvd.readers.numerals`) returns when the seam gains its first real
+  consumer — the map readout migration (board card `t-mw6chgus-eybna8`); a config key nothing reads
+  is a lie (AGENTS §2). The OCR runtime path is the existing `WVD_OCR_PYTHON`/`WVD_OCR_SCRIPT` pair;
+  unset means the OCR tier is unavailable, not an error.
 
 ## Durability
 
@@ -61,6 +66,12 @@ A committed **regression corpus** of each numeric field's crop, in both the old-
 form (`testdata/readers/<field>/`), run through every tier by one test. A capture-pipeline change
 breaks a test instead of a night run. The next field to move onto the seam is the map readout (it
 already escalates to OCR); the chest card and battle panel follow when their fields are next touched.
+
+The heart field is recorded too (`testdata/readers/heart/`), although it keeps its own matcher (R5):
+the **record** does not wait for the migration, and it is what a re-record will be measured against.
+Its crops are cut by the opener's own exported field geometry (`OPENER_FIELD_GEOMETRY`), the same
+object the corpus test asserts the manifest against — the recorder does not own a copy of the bands,
+so moving one in the parser forces a re-record (review F4).
 
 ## Non-goals
 
@@ -75,7 +86,9 @@ already escalates to OCR); the chest card and battle panel follow when their fie
 1. The opener panel reads `measurements.json`'s values from `panel-00.jpg` **and** from a sharpened
    variant of it (the raw-pixel proxy that reproduced the live failure) — the fast tier may answer the
    first, the OCR tier the second, and the answer is the same.
-2. The tier that answered is logged for every field read, and `readers.numerals` switches the strategy.
+2. The tier that answered is logged once per opener panel, and the seam's strategy is switchable
+   through its constructor (`createNumeralsReader({ strategy })`); the deployment switch returns when
+   the map readout migrates onto the seam (board card `t-mw6chgus-eybna8`).
 3. The full suite green, `tsc` clean.
 4. Live: the farm reaches a chest, the opener panel is named, the chest is opened (needs the game
    launched by the operator).

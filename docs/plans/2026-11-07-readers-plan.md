@@ -29,22 +29,30 @@ Commit per task, staged by explicit path.
   venv command in `WVD_OCR_PYTHON`/`WVD_OCR_SCRIPT`; unset means the tier is unavailable (a `null`,
   not a throw). Bounded by a timeout (default 8 s, as the map readout).
 - **No perception-wide refactor:** only the opener's two numeral reads move onto the seam in this plan.
-- **Config in one place:** `worlds.wvd.readers.numerals` with its schema row and description; default
-  `auto`. Never hard-code the strategy in a module.
+- **The strategy is a constructor argument, and the config row is deferred** (ruling R12,
+  2026-11-07; whole-branch review F2): `createNumeralsReader({ strategy })` is the seam, and no
+  `worlds.wvd.readers` row ships until a real consumer reads it (the map readout migration, board
+  card `t-mw6chgus-eybna8`). An unread config key is a lie (AGENTS §2).
 - **The tier that answered must be observable:** every read carries `tier`, and the opener logs it at
   `info` once per panel read (not per glyph).
 - `src/contracts.ts` is not changed by this plan; if a task finds it must, that is a plan defect to
   report, not a ruling to make.
 - Every command through `node ~/.dsh/tools/check-digest.mjs --timeout 300 -- "<command>"`; the full
   suite in the final task and before the fast-forward.
-- **The suite's OCR bound (R7 in practice, 2026-11-07):** `pnpm test` (plain `vitest run`)
-  is the gate, and it is green on this host with **no hand-set env and no extra flag** (859 passed,
-  0 failed, 65 files, 366 s). The OCR-dependent test files stub their own `WVD_OCR_TIMEOUT_MS=20000`
-  — R7's bound is the test's to set, and unset in production the committed 8 s default stands — and
-  `vitest.config.ts` sets `test.fileParallelism: false`: the Task 5 corpus's 24 real OCR reads run
-  beside two pre-existing load-sensitive timing files (`engine-child-snapshot`, `qte-band`), and under
-  parallel forks the load pushed those, and single OCR calls (2.5–5 s → 10–13 s), over their
-  assertions. The config carries the measurement and the reason; the flag changes no assertion.
+- **The gate, and the proving run (R7 in practice, 2026-11-07; review F3):** the gate is the plain
+  `pnpm test` (`vitest run`) with **no hand-set env and no extra flag** — **851 passed, 11 skipped,
+  0 failed (862 tests, 65 files, 202 s)**. The 11 skips are the OCR proofs: the OCR-dependent blocks
+  are gated on `WVD_OCR_PYTHON`/`WVD_OCR_SCRIPT` being **in the environment** (never on this host's
+  gitignored `.tmp/ocr-venv` path), and the proving run exports the pair **and**
+  `WVD_OCR_REQUIRED=1`, which turns a missing runtime into a failure instead of a skip —
+  **861 passed, 1 skipped, 0 failed (65 files, 397 s)**, the skip being the named amount-2 measured
+  read (one call 5 479 ms over its 5 000 ms headroom gate; an earlier proving run of the same tree
+  skipped nothing: 862 passed, 387 s). Each OCR-dependent test file stubs its own `WVD_OCR_TIMEOUT_MS=20000` — R7's bound
+  is the test's to set, and unset in production the committed 8 s default stands — and
+  `vitest.config.ts` sets `test.fileParallelism: false`: the corpus's 24 real OCR reads ran beside two
+  pre-existing load-sensitive timing files (`engine-child-snapshot`, `qte-band`), and under parallel
+  forks the load pushed those, and single OCR calls (2.5–5 s → 10–13 s), over their assertions. The
+  config carries the measurement and the reason; the flag changes no assertion.
 
 ## File Structure
 
@@ -55,9 +63,8 @@ Commit per task, staged by explicit path.
 | `src/perception/readers/rule.ts` | the rule tier: `src/perception/number.ts` over the region |
 | `src/perception/readers/template.ts` | the template tier: an atlas reader over a region (reuses the opener's matcher) |
 | `src/perception/readers/auto.ts` | the selector: rule → template → ocr, with the tier reported |
-| `src/perception/readers/index.ts` | the factory `createNumeralsReader(config)` |
+| `src/perception/readers/index.ts` | the factory `createNumeralsReader(options)` (the constructor is the strategy switch, R12) |
 | `src/perception/opener.ts` (changed) | `readTrapNumber`/`readHeartNumber` read through the seam, label as context |
-| `src/config.ts` (changed) | `readers.numerals` + schema |
 | `tests/readers-contract.test.ts` | the contract and the tier reporting |
 | `tests/readers-ocr.test.ts` | the OCR tier on a known crop (skip when the venv is absent) |
 | `tests/readers-opener.test.ts` | the opener panel through the seam: decoded fixture, sharpened variant, the negatives |
@@ -101,16 +108,28 @@ Commit per task, staged by explicit path.
       mode in the template tier — a separate change, pinned on the board.
 - [x] Commit: `feat(readers): the opener's trap numerals through the seam` (`a9c9caa`).
 
-### Task 4 — The config switch and the tier log
+### Task 4 — The tier log, and the config switch that was deferred
 
-- [x] `tests/readers-config.test.ts`: the `worlds.wvd.readers.numerals` row (`auto` | `fast` |
-      `template` | `ocr`, default `auto`), its schema, and `main.ts`'s
-      `createNumeralsReaderFromConfig` building the seam's reader from a config object (R8).
-- [x] `src/config.ts`: the nested `readers` row; the factory and its wiring in `main.ts`; the
-      opener's `onTiers` reported once per panel and logged by `ChestPerceiver`'s option.
+- [x] **R12 (amendment, 2026-11-07; whole-branch review F2): the config row is removed from this
+      branch.** `worlds.wvd.readers.numerals`, its schema and description, the contracts §8.6 row,
+      `main.ts`'s `createNumeralsReaderFromConfig` and `tests/readers-config.test.ts` were deleted:
+      the key was read by tests only (the opener hard-codes its chain, R4/R9), and an unread config
+      key is a lie (AGENTS §2). The seam is unchanged and switchable through
+      `createNumeralsReader({ strategy })` — the constructor is the switch. The deployment switch is
+      pinned for its first real consumer on board card `t-mw6chgus-eybna8` ("The readers deployment
+      switch waits for a real consumer (the map readout migration)"). `tests/readers-wiring.test.ts`
+      keeps R9's half: the composition root hands `ChestPerceiver` the OCR tier and the tier log.
+- [x] **R6/F1 (amendment, 2026-11-07; review F1):** the opener's OCR allowance and its reported tier
+      mix belong to the **panel**, not the observation. `ChestPerceiver` holds one `OcrBudget` and one
+      reported flag, passes the budget into the parse, and resets both when a parse answers
+      `not-panel` — so a stuck panel costs at most two OCR calls and one log line in total, not per
+      tick.
+- [x] `src/perception/opener.ts`: the opener's `onTiers` reported once per recognised panel and
+      logged by `ChestPerceiver`'s option (`main.ts`).
 - [x] **R7 (amendment):** `WVD_OCR_TIMEOUT_MS` (default 8000, read at call time) bounds the OCR
       tier; proved by a fake process killed at the configured bound.
-- [x] Commit: `feat(readers): the numerals strategy is a config value`.
+- [x] Commit: `feat(readers): the numerals strategy is a config value` (`e0265e2`; the row itself
+      was later removed by R12).
 
 ### Task 5 — The regression corpus and the whole-suite proof
 
@@ -124,9 +143,14 @@ Commit per task, staged by explicit path.
       77-as-177 misread **recorded**; the rule tier's known 4-vs-3 misname is recorded beside its other
       measured defeats and four refusals (board card `t-mw65nlh4-lfoik7`); no tier answers outside the
       field's plausible range (1–999). `docs/status.md` records the corpus and the measured defects.
-- [x] Full suite (plain `pnpm test` — no env, no flag — 859 passed; R7's bound stubbed per test
-      file) + `tsc` clean; commit:
-      `feat(readers): the numerals corpus and the full-suite proof`.
+- [x] Full suite (plain `pnpm test` — no env, no flag — **851 passed, 11 skipped, 0 failed (862
+      tests, 65 files, 202 s)**; the 11 skips are the OCR proofs, and the proving run with the pair
+      exported plus `WVD_OCR_REQUIRED=1` is **861 passed, 1 skipped, 0 failed (397 s)** (the skip is
+      the named amount-2 measured read; the earlier run of the same tree skipped nothing at 387 s);
+      R7's bound stubbed per test file) + `tsc` clean; commit: `feat(readers): the numerals corpus and the full-suite proof`.
+- [x] **Fix wave (2026-11-07, whole-branch review):** F1's per-panel OCR allowance and tier log, F2's
+      R12 config removal, F3's environment-gated OCR proofs, F4's exported field geometry, F5's heart
+      corpus, and the minors F6–F9. Tests first for F1/F3/F4/F5; both runs above are the proof.
 
 ### Task 6 — Live acceptance (controller)
 

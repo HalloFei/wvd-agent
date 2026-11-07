@@ -23,7 +23,7 @@ acceptance).
 | 10 | The loop and the composition root | done, final fix wave reviewed clean | `b7ad52b`, `2cff58c`, `61b341b` |
 | 11 | Recognise the 3D view | done, reviewed clean | `2be0357`, `6df13ff` |
 
-859 tests across 65 files, `pnpm typecheck` clean (the suite's serial run is below).
+862 tests across 65 files, `pnpm typecheck` clean (both gate runs are below).
 
 ## What runs
 
@@ -1144,6 +1144,25 @@ tier reads all twelve decoded values and eleven of the twelve proxy crops (refus
 陷阱解除 49 — the field the live panel escalated — rather than naming a different number), and no
 tier ever answers outside the field's plausible range (1–999).
 
+The **heart field is on the record too** (review F5): `testdata/readers/heart/` holds every card's
+heart window of the same frame — 12 crops (six cards × two forms), 40,476 B — read by the opener's
+own matcher through `readHeartCrop`, not by a copy. Decoded: `100 100 100 absent 90 100` — card 4,
+the main character, draws no heart, and its empty window proves `absent` rather than `unreadable`.
+Sharpened proxy: `100 unreadable 100 absent 90 100`. **One correction to R5's prose, recorded as
+measured**: R5 says "card 1" is the one the opener's matcher refuses on the proxy, and the refused
+numeral is the **second** card (index 1; the panel test and the corpus pin the same order). R5's
+value (100) and score (0.871 against the 0.95 identity floor) stand; only the attribution moves.
+R5's "3 of 5 hearts refuse" is the **template tier's** answer on a numeral-tight crop, not this
+matcher's on the field window, so the record and the ruling do not conflict.
+
+**The corpus is cut by the parser's own geometry** (review F4): `opener.ts` exports
+`OPENER_FIELD_GEOMETRY` (bands, left, right inset, heart left, label above/height), the recorder
+imports it, and `tests/readers-corpus.test.ts` recomputes every manifest region and label from it.
+Moving a band in the parser now turns the corpus red until it is re-recorded, instead of leaving the
+fixture green against a geometry nothing reads. The recorder also writes each corpus **atomically**
+(review F8): it stages every crop, manifest and README in a sibling `.recording-*` directory and moves
+it into place, so an interrupted run cannot leave a half-deleted corpus.
+
 The corpus recorded the tiers' measured defeats instead of hiding them; **none is fixed here** (this
 task is testdata, a script, tests and docs — no `src/` change):
 
@@ -1160,16 +1179,46 @@ task is testdata, a script, tests and docs — no `src/` change):
 
 Pinned answers mean a fix is a deliberate re-record, not a silent pass. **The repo's gate is the
 plain command:** `pnpm test` (`vitest run`) is green on this host with **no hand-set environment and
-no extra flag** — **859 passed, 0 failed (65 files, 366 s)**, with `npx tsc --noEmit` clean. Two
-configurations make that true without weakening an assertion. The OCR-dependent test files stub their
-own `WVD_OCR_TIMEOUT_MS=20000` (ruling R7; unset, production keeps the committed 8 s default), and
-`vitest.config.ts` sets `fileParallelism: false`, so files run one at a time. The reason is load,
-measured 2026-11-07: under the default parallel forks the corpus's 24 real OCR reads pushed the
-suite's two pre-existing load-sensitive timing files (`engine-child-snapshot`'s capture aged under
-200 ms, `qte-band`'s decode-time ratio) over their assertions, and stretched single OCR calls from
-~2.5–5 s to 10–13 s. Serialising changes no assertion; its cost is wall time. The serial-only command
-with an exported bound that this section used to require is gone — it was never a gate, only a way to
-run one.
+no extra flag** — **851 passed, 11 skipped, 0 failed (862 tests, 65 files, 202 s)**, with
+`npx tsc --noEmit` clean. The 11 skips are the OCR proofs and nothing else, because the OCR-dependent
+blocks are gated on the **environment** (review F3): `WVD_OCR_PYTHON` and `WVD_OCR_SCRIPT` must name
+the runtime. The gate used to be `existsSync` of this host's gitignored `.tmp/ocr-venv` path, which
+is not a fact about the code.
+
+**The proving run is the proof.** Exporting the pair **and** `WVD_OCR_REQUIRED=1` runs the same
+blocks instead of skipping them, and turns a missing runtime into a **failure** with a named error —
+a skipped proof is a green run that proved nothing:
+
+```
+WVD_OCR_PYTHON=.../.tmp/ocr-venv/Scripts/python.exe WVD_OCR_SCRIPT=.../scripts/ocr-readout.py \
+WVD_OCR_REQUIRED=1 node ../Coopanion/node_modules/vitest/vitest.mjs run
+```
+
+→ **861 passed, 1 skipped, 0 failed (862 tests, 65 files, 397 s)**. The one skip is not a gate: it is
+the amount-2 measured read (readers-opener.test.ts), which skips itself when one OCR call exceeds its
+5 000 ms headroom gate, printing `wvd: the amount-2 measured read is skipped — one OCR call took
+N ms` before the skip (vitest 2.1.9's `context.skip()` carries no note). Its always-run invariant
+beside it covers the same panel and the 92 assertion is not weakened — but it is a skip a green run
+can hide, so it is named here with **both** observed outcomes: on the recorded proving run it skipped
+(one call **5 479 ms** > 5 000 ms), and an earlier proving run of the same tree ran it and reported
+**862 passed, 0 skipped, 0 failed (387 s)**. Both runs are green; every OCR assertion ran in the
+0-skip one, and the skip's reason is printed, never silent.
+
+Two configurations make the gate true without weakening an assertion. Each OCR-dependent test file
+stubs its own `WVD_OCR_TIMEOUT_MS=20000` (ruling R7; unset, production keeps the committed 8 s
+default), and `vitest.config.ts` sets `fileParallelism: false`, so files run one at a time. The
+reason is load, measured 2026-11-07: under the default parallel forks the corpus's 24 real OCR reads
+pushed the suite's two pre-existing load-sensitive timing files (`engine-child-snapshot`'s capture
+aged under 200 ms, `qte-band`'s decode-time ratio) over their assertions, and stretched single OCR
+calls from ~2.5–5 s to 10–13 s. Serialising changes no assertion; its cost is wall time.
+
+**The deployment switch is deferred (R12, review F2).** `worlds.wvd.readers.numerals`, its schema,
+`createNumeralsReaderFromConfig` and their test were removed from this branch: the key was read by
+tests only (the opener hard-codes its chain, R4/R9), and an unread config key is a lie (AGENTS §2).
+The seam is switchable through `createNumeralsReader({ strategy })`; the row returns with the seam's
+first real consumer, the map readout migration, pinned on the board as `t-mw6chgus-eybna8`.
+`tests/readers-wiring.test.ts` keeps R9's half — the composition root still hands `ChestPerceiver` the
+OCR tier and the tier log.
 
 ## Open work — the task board is the authority
 
