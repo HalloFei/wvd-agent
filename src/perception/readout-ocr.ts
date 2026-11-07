@@ -10,11 +10,10 @@
  * The reader is a **process**, not a layer: it is spawned, awaited with a timeout, and its absence is
  * `null` (the map stays refused, exactly as before).
  */
-import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { Point, RgbaImage } from '../contracts.ts';
+import { readTextsViaOcr, type OcrRunner } from './ocr-process.ts';
+
+export { ppmOf } from './ocr-process.ts';
 
 /** How to run the reader: the interpreter, the script, and how long it may take. */
 export interface OcrReadout {
@@ -44,43 +43,10 @@ export async function readNumbersViaOcr(
   band: ReadoutBand,
   options: OcrReadout | undefined,
 ): Promise<Point | null> {
-  if (options === undefined) return null;
-  const dir = mkdtempSync(join(tmpdir(), 'wvd-ocr-'));
-  const file = join(dir, 'readout.ppm');
-  try {
-    writeFileSync(file, ppmOf(image, band));
-    const text = await run(options, file, band);
-    if (text === null) return null;
-    return numbersOf(text);
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* a temp dir that will not die is not an answer */ }
-  }
-}
-
-/** The script's answer, parsed: its `texts` joined, or null when it did not succeed. */
-function run(options: OcrReadout, file: string, band: ReadoutBand): Promise<string | null> {
-  return new Promise((resolve) => {
-    const child = spawn(
-      options.python,
-      // The file is the band itself: the script crops from (0,0) of what it is handed.
-      [options.script, file, '0', '0', String(band.width), String(band.height)],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    let out = '';
-    const timer = setTimeout(() => { try { child.kill(); } catch { /* already gone */ } resolve(null); }, options.timeoutMs ?? 8_000);
-    child.stdout?.on('data', (chunk: Buffer) => { out += chunk.toString('utf8'); });
-    child.on('error', () => { clearTimeout(timer); resolve(null); });
-    child.on('close', () => {
-      clearTimeout(timer);
-      try {
-        const answer = JSON.parse(out.trim().split('\n').filter(Boolean).at(-1) ?? 'null') as { ok?: boolean; texts?: unknown } | null;
-        if (answer === null || answer.ok !== true || !Array.isArray(answer.texts)) return resolve(null);
-        resolve(answer.texts.map((item) => String(item)).join(' '));
-      } catch {
-        resolve(null);
-      }
-    });
-  });
+  const runner: OcrRunner | null = options === undefined ? null : options;
+  const texts = await readTextsViaOcr(image, band, runner);
+  if (texts === null) return null;
+  return numbersOf(texts.join(' '));
 }
 
 /** The integers the answer carries, in reading order: exactly two, or null. */
@@ -90,22 +56,4 @@ export function numbersOf(text: string): Point | null {
   const x = Number(values[0]);
   const y = Number(values[1]);
   return Number.isInteger(x) && Number.isInteger(y) ? { x, y } : null;
-}
-
-/** The band as a binary PPM (P6): PIL reads it, and the screen's alpha is not part of the luma. */
-export function ppmOf(image: RgbaImage, band: ReadoutBand): Buffer {
-  const width = Math.max(1, Math.min(image.width - band.x, band.width));
-  const height = Math.max(1, Math.min(image.height - band.y, band.height));
-  const header = Buffer.from('P6\n' + width + ' ' + height + '\n255\n', 'ascii');
-  const body = Buffer.alloc(width * height * 3);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const from = ((band.y + y) * image.width + (band.x + x)) * 4;
-      const to = (y * width + x) * 3;
-      body[to] = image.data[from]!;
-      body[to + 1] = image.data[from + 1]!;
-      body[to + 2] = image.data[from + 2]!;
-    }
-  }
-  return Buffer.concat([header, body]);
 }
