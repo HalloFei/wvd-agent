@@ -26,6 +26,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import type { Actuator, Frame, Observation, Point } from '../src/contracts.ts';
 import { connectEngine, startEngine } from '../src/engine/child.ts';
 import { captureJpeg, focusGame, sendInput, Win32Capture } from '../src/engine/win32.ts';
+import { openMapping } from '../src/engine/vision/channel-mapping.ts';
+import { createChannel, layoutChannel } from '../src/engine/vision/frame-channel.ts';
 import { ChestPerceiver } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
 import { ChestPromptPerceiver } from '../src/perception/prompt.ts';
@@ -157,10 +159,21 @@ if (!LOCATIONS.has('ffxi-gcn')) {
   process.exit(1);
 }
 
-const child = startEngine({ title: TITLE, jpegQuality: 90 });
+/**
+ * The frame channel the engine publishes into: the vision module's contract, created here exactly as
+ * main.ts does for the World. One region per process; the child opens the same name.
+ */
+const channelLayout = layoutChannel({ width: 1920, height: 1080, slots: 2 });
+const channelName = `wvd-live-${process.pid}-${Date.now()}`;
+const mapping = openMapping(channelName, channelLayout.bytes);
+const channel = createChannel(mapping.memory, channelLayout);
+const child = startEngine({
+  title: TITLE,
+  channel: { name: channelName, bytes: channelLayout.bytes },
+});
 const client = connectEngine(child, { timeoutMs: 8_000 });
 try {
-  const source = new Win32Capture(client, {});
+  const source = new Win32Capture(client, channel);
   const see = perceiver();
   const actuator = actuatorFor(client);
   const observe = async (): Promise<{ frame: Frame; observation: Observation }> => {
@@ -223,7 +236,7 @@ try {
       const width = widthAt >= 0 ? Number(args[widthAt + 1]) : undefined;
       if (!path) throw new Error('shot --out needs a path');
       if (width !== undefined && (!Number.isFinite(width) || width < 64)) throw new Error('shot --width is not a number');
-      const shot = await captureJpeg(client, width);
+      const shot = await captureJpeg(source, channel, width);
       await writeFile(path, shot.bytes);
       out({ ok: true, path, width: shot.width, height: shot.height });
       break;
