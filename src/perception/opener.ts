@@ -39,10 +39,14 @@
  * the band, the floors, the structural refusals, `unreadable`, and the heart's `absent` /
  * `unreadable` distinction (contracts §0.6).
  *
- * **The escalation is budgeted per parse** (ruling R6, 2026-11-07; window R10, 2026-11-07): at most
- * two OCR calls, and none starting more than 10 s after the first — twelve fields each waiting out the
- * tier's 8 s bound would hold a panel for ~96 s inside `parseOpenerDetailed`, which `chest.ts`
- * awaits. The **cap is the budget**; the window only stops an unbounded panel, and it is 10 s because
+ * **The escalation is budgeted per panel** (ruling R6, 2026-11-07; window R10, 2026-11-07; the
+ * per-observation leak fixed in review F1): at most two OCR calls, and none starting more than 10 s
+ * after the first — twelve fields each waiting out the tier's 8 s bound would hold a panel for ~96 s
+ * inside `parseOpenerDetailed`, which `chest.ts` awaits. The parse takes the budget from its caller
+ * (`OpenerParseOptions.ocrBudget`); `ChestPerceiver` holds one per panel and resets it when the
+ * screen stops being the panel, because it observes a frame every tick and a fresh budget per call
+ * spent the whole allowance on each tick. The **cap is the budget**; the window only stops an
+ * unbounded panel, and it is 10 s because
  * this host's OCR measures ~2.5–5 s per call (Task 4 report) — at 2 s the second escalation of a panel
  * that needed two could never start, so a two-refusal panel could never read. A panel with two
  * escalating fields can therefore spend up to ~16 s, once per chest, each call still bounded by the
@@ -163,28 +167,52 @@ const CARD_BORDER_INSET = 2;
 const CARD_BORDER_LUMA = 65;
 const CARD_BORDER_MIN_COLUMNS = 120;
 
+/**
+ * The measured field geometry — **exported because a recorded corpus must be cut by the same numbers
+ * the parser reads with** (review F4). `scripts/record-readers-corpus.ts` cuts its crops from this
+ * object and `tests/readers-corpus.test.ts` asserts the committed manifest against it, so moving a
+ * band, an inset or the label's height turns the corpus red and forces a re-record instead of leaving
+ * the fixture green against a geometry nobody reads any more.
+ *
+ * - `bandHeight` — a field's band is `[top, top + bandHeight)` rows below the card's top border;
+ * - `trap.detect` / `trap.disarm` — those rows for 陷阱发现 / 陷阱解除;
+ * - `heart.top` — the heart numeral's row;
+ * - `numberLeft` / `numberRightInset` — the numeral window inside the card: `x0 + numberLeft` to
+ *   `x1 - numberRightInset`. The 陷阱 labels end at card x0 + 71 and their numerals start at x0 + 76,
+ *   so 74 clears the CJK;
+ * - `heartLeft` — the heart window starts at `x1 - heartLeft`. The heart numeral is right-aligned in
+ *   the card's right 70 px and the grey heart glyph sits just left of it; the heart numerals are
+ *   yellow, which is what keeps the two apart;
+ * - `labelAbove` / `labelHeight` — the label crop handed to a reader as context, 30 rows tall because
+ *   a 16-row crop clips the CJK. Measured 2026-11-07 (readers spec, R2): the union of this label and
+ *   the numeral band reads 陷阱发现38, while the numeral band alone reads nothing.
+ */
+export const OPENER_FIELD_GEOMETRY = {
+  bandHeight: 16,
+  trap: { detect: 64, disarm: 85 },
+  heart: { top: 1 },
+  numberLeft: 74,
+  numberRightInset: 3,
+  heartLeft: 70,
+  labelAbove: 8,
+  labelHeight: 30,
+} as const;
+
+const GEOMETRY = OPENER_FIELD_GEOMETRY;
+
 /** Field bands, as y offsets from a card's top border (exclusive end). */
-const TRAP_DETECT_BAND: readonly [number, number] = [64, 80];
-const TRAP_DISARM_BAND: readonly [number, number] = [85, 101];
-const HEART_BAND: readonly [number, number] = [1, 17];
+const TRAP_DETECT_BAND: readonly [number, number] = [GEOMETRY.trap.detect, GEOMETRY.trap.detect + GEOMETRY.bandHeight];
+const TRAP_DISARM_BAND: readonly [number, number] = [GEOMETRY.trap.disarm, GEOMETRY.trap.disarm + GEOMETRY.bandHeight];
+const HEART_BAND: readonly [number, number] = [GEOMETRY.heart.top, GEOMETRY.heart.top + GEOMETRY.bandHeight];
 
-/**
- * The numbers' x windows. The 陷阱 labels end at card x0 + 71 and their numerals start at x0 + 76, so
- * 74 clears the CJK. The heart numeral is right-aligned in the card's right 70 px and the grey heart
- * glyph sits just left of it; the heart numerals are yellow, which is what keeps the two apart.
- */
-const TRAP_NUMBER_LEFT = 74;
-const NUMBER_RIGHT_INSET = 3;
-const HEART_LEFT = 70;
+/** The numbers' x windows (see `OPENER_FIELD_GEOMETRY`). */
+const TRAP_NUMBER_LEFT = GEOMETRY.numberLeft;
+const NUMBER_RIGHT_INSET = GEOMETRY.numberRightInset;
+const HEART_LEFT = GEOMETRY.heartLeft;
 
-/**
- * The 陷阱 label's crop, handed to the reader as the hint's label so an escalation has context: the
- * same rows' left TRAP_NUMBER_LEFT px, 30 rows tall because a 16-row crop clips the CJK. Measured
- * 2026-11-07 (readers spec, R2): the union of this label and the numeral band reads 陷阱发现38, while
- * the numeral band alone reads nothing.
- */
-const TRAP_LABEL_ABOVE = 8;
-const TRAP_LABEL_HEIGHT = 30;
+/** The 陷阱 label's crop, handed to the reader as the hint's label so an escalation has context. */
+const TRAP_LABEL_ABOVE = GEOMETRY.labelAbove;
+const TRAP_LABEL_HEIGHT = GEOMETRY.labelHeight;
 
 /**
  * Ink rules. On a card's dark fill (`median` ~45–110) the white numerals are ≥ 55 luma above it; the
@@ -365,11 +393,12 @@ function normaliseGlyph(bytes: Uint8Array): Float64Array {
 export const TRAP_DIGIT_TEMPLATES: readonly DigitTemplate[] = atlasOf(TRAP_DIGITS);
 
 /**
- * The OCR escalation's per-parse budget (ruling R6, 2026-11-07; window R10, 2026-11-07). Twelve fields
- * each waiting out the escalation's 8 s bound would hold a panel for ~96 s inside
- * `parseOpenerDetailed`, which `chest.ts` awaits; the live failure the escalation exists for is one
- * unreadable field, not twelve. Past the budget a field refuses (`null`), which refuses the panel
- * exactly as any other unreadable 陷阱 field always has.
+ * The OCR escalation's budget (ruling R6, 2026-11-07; window R10, 2026-11-07) — one per **panel**
+ * (review F1): `ChestPerceiver` creates it, hands it to every parse while the panel is up, and drops
+ * it when a parse answers `not-panel`. Twelve fields each waiting out the escalation's 8 s bound would
+ * hold a panel for ~96 s inside `parseOpenerDetailed`, which `chest.ts` awaits; the live failure the
+ * escalation exists for is one unreadable field, not twelve. Past the budget a field refuses
+ * (`null`), which refuses the panel exactly as any other unreadable 陷阱 field always has.
  *
  * At most **two calls**, and none starting more than **10 s after the first** — whichever comes first.
  * **The cap is the real budget**: OCR measures ~2.5–5 s per call on this host (Task 4 report), so the
@@ -382,7 +411,7 @@ export const OCR_MAX_CALLS = 2;
 export const OCR_CALL_WINDOW_MS = 10_000;
 
 /**
- * A parse's allowance of OCR escalations. `take()` answers whether one may start now and reserves
+ * One panel's allowance of OCR escalations. `take()` answers whether one may start now and reserves
  * it; the window is measured from the first reserved call. The clock is injectable so a deadline
  * can be proved without waiting on one.
  */
@@ -399,7 +428,7 @@ export interface OcrBudgetOptions {
   readonly now?: () => number;
 }
 
-/** A per-parse budget: at most `maxCalls`, none starting more than `windowMs` after the first. */
+/** A per-panel budget: at most `maxCalls`, none starting more than `windowMs` after the first. */
 export function createOcrBudget(options: OcrBudgetOptions = {}): OcrBudget {
   const maxCalls = options.maxCalls ?? OCR_MAX_CALLS;
   const windowMs = options.windowMs ?? OCR_CALL_WINDOW_MS;
@@ -746,7 +775,16 @@ async function readTrapNumber(
     width: TRAP_NUMBER_LEFT,
     height: TRAP_LABEL_HEIGHT,
   };
-  const read = await trapReader.read(image, region, { label });
+  // The hint carries what the opener already knows about the field (review F6): its length, so an
+  // OCR answer of another length is refused by the reader rather than by the comparison below (which
+  // the escalation never sees), and its plausible range, so a `0` cannot be named for a field that
+  // cannot carry one.
+  const read = await trapReader.read(image, region, {
+    label,
+    digits: atoms.length as 1 | 2 | 3,
+    min: 1,
+    max: 999,
+  });
   if (read === null) return null;
   return String(read.value).length === atoms.length ? read : null;
 }
@@ -770,20 +808,47 @@ async function readTrapNumber(
  * numerals do, which is why those still refuse the panel — so keeping the other five readable is what
  * lets a live panel with one ineligible card be opened.
  */
-type HeartReading =
+export type HeartReading =
   | { readonly kind: 'absent' }
   | { readonly kind: 'unreadable' }
   | { readonly kind: 'read'; readonly value: number };
 
+/**
+ * The heart numeral's read over one crop of the field window (see `OPENER_FIELD_GEOMETRY`), or a
+ * refusal.
+ *
+ * Exported for the heart corpus (review F5): the committed crops are that window, and this is the
+ * matcher that reads them — the record must run through the reader that answers the field, not
+ * through a copy of it. The crop must be the window itself: `heartLeft` columns (so its right edge is
+ * the card's right border, the column the right-alignment check measures against) and
+ * `bandHeight` rows.
+ */
+export function readHeartCrop(image: RgbaImage): HeartReading {
+  return readHeartWindow(image.data, image.width, {
+    x0: 0,
+    x1: image.width - NUMBER_RIGHT_INSET,
+    y0: 0,
+    y1: image.height,
+  }, image.width);
+}
+
+/** The heart field of one card: the window inside the frame, read by the same matcher as the corpus. */
 function readHeartNumber(data: Uint8Array, width: number, slot: number): HeartReading {
-  const x1 = OPENER_SLOTS[slot]!.rect.x1;
+  const { rect } = OPENER_SLOTS[slot]!;
   const band = cardBand(slot, HEART_BAND);
-  const window: PanelBand = {
-    x0: x1 - HEART_LEFT,
-    x1: x1 - NUMBER_RIGHT_INSET,
+  return readHeartWindow(data, width, {
+    x0: rect.x1 - HEART_LEFT,
+    x1: rect.x1 - NUMBER_RIGHT_INSET,
     y0: band.y0,
     y1: band.y1,
-  };
+  }, rect.x1);
+}
+
+/**
+ * The heart matcher over one window: `cardRight` is the card's right border, which the right-alignment
+ * check measures against (it is `window.x1` in the frame, and the crop's width in the corpus).
+ */
+function readHeartWindow(data: Uint8Array, width: number, window: PanelBand, cardRight: number): HeartReading {
   const ink: InkRule = (x, y) => {
     const offset = (y * width + x) * 4;
     const green = data[offset + 1]!;
@@ -796,13 +861,13 @@ function readHeartNumber(data: Uint8Array, width: number, slot: number): HeartRe
   if (located.length === 0) return { kind: 'absent' };
 
   // The numeral is right-aligned and the grey heart sits left of it; the yellow extent is the number.
-  if (x1 - located[located.length - 1]![1] > HEART_RIGHT_INSET_MAX) return { kind: 'unreadable' };
+  if (cardRight - located[located.length - 1]![1] > HEART_RIGHT_INSET_MAX) return { kind: 'unreadable' };
   const readExtent = (runs: ReadonlyArray<readonly [number, number]>): number | null => {
     const extent: PanelBand = {
       x0: runs[0]![0],
       x1: runs[runs.length - 1]![1] + 1,
-      y0: band.y0,
-      y1: band.y1,
+      y0: window.y0,
+      y1: window.y1,
     };
     const background = bandMedianLuma(data, width, extent);
     return readNumber(
@@ -865,7 +930,10 @@ export interface OpenerParseOptions {
    * either way.
    */
   readonly trapReader?: NumeralsReader;
-  /** The parse's OCR budget; default a fresh `createOcrBudget()` (two calls, 10 s — R6/R10). */
+  /**
+   * The panel's OCR budget; default a fresh `createOcrBudget()` (two calls, 10 s — R6/R10). The
+   * composition root passes the same one for every observation of one panel (review F1).
+   */
   readonly ocrBudget?: OcrBudget;
   /**
    * Called **once** for every panel the gates recognised — read or refused — with the tier mix of the

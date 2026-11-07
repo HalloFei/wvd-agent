@@ -2,7 +2,22 @@
   "generatedBy": "scripts/record-readers-corpus.ts",
   "source": "testdata/chest/2026-10-24-opener/panel-00.jpg",
   "measurements": "testdata/chest/2026-10-24-opener/measurements.json",
-  "note": "One committed crop per 陷阱 field (numeral band ∪ label) in both forms: the decoded fixture and the sharpened raw-pixel proxy (img + 1 * (img - 4-neighbour box blur), clamped). The crops are binary PPM (P6), not JPEG: a corpus that re-encodes its own pixels would measure the encoder.",
+  "note": "One committed crop per 陷阱 field (numeral band union label) in both forms: the decoded fixture and the sharpened raw-pixel proxy (img + 1 * (img - 4-neighbour box blur), clamped). The crops are binary PPM (P6), not JPEG: a corpus that re-encodes its own pixels would measure the encoder. The geometry is OPENER_FIELD_GEOMETRY in src/perception/opener.ts; the corpus test asserts this manifest against it.",
+  "geometry": {
+    "bandHeight": 16,
+    "trap": {
+      "detect": 64,
+      "disarm": 85
+    },
+    "heart": {
+      "top": 1
+    },
+    "numberLeft": 74,
+    "numberRightInset": 3,
+    "heartLeft": 70,
+    "labelAbove": 8,
+    "labelHeight": 30
+  },
   "sharpened": {
     "amount": 1,
     "kernel": "4-neighbour box blur, weights centre 2 / each neighbour 1 over 6, img + amount * (img - blur), clamped"

@@ -6,13 +6,13 @@
  * that also carries the label reads the answer (measured 2026-11-07). That measurement is why a read
  * covers `region ∪ hint.label`.
  *
- * The live reads run the operator's RapidOCR: `WVD_OCR_PYTHON` / `WVD_OCR_SCRIPT` when the
- * environment names them, else the repo-local `.tmp/ocr-venv` and `scripts/ocr-readout.py`. Without
- * either pair there is no runtime to measure, so that block **skips**; the refusal tests need none
- * and run everywhere. The stubbed env below only names the pair — it is not a runtime — so an ungated
- * live read fails rather than skips on a machine that never had the venv (found by review).
+ * The live reads run the operator's RapidOCR, and the **environment** is the gate (review F3):
+ * `WVD_OCR_PYTHON` / `WVD_OCR_SCRIPT` must name the interpreter and the script, or there is no runtime
+ * to measure and the block skips. `WVD_OCR_REQUIRED=1` (the proving run) turns that skip into a
+ * named failure instead — a proving run that skipped its OCR proof would be a green run that proved
+ * nothing. The refusal tests need no runtime and run everywhere.
  */
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,15 +22,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RgbaImage } from '../src/contracts.ts';
 import { ocrRunnerFromEnv, readTextsViaOcr } from '../src/perception/ocr-process.ts';
 import { numeralOf, ocrReader } from '../src/perception/readers/ocr.ts';
+import { assertOcrRuntime, OCR_LIVE, OCR_PYTHON, OCR_SCRIPT } from './ocr-runtime.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PANEL = new URL('../testdata/chest/2026-10-24-opener/panel-00.jpg', import.meta.url);
-
-/** The operator's venv and the readout script; env wins, the repo-local pair is the fallback. */
-const PYTHON = process.env.WVD_OCR_PYTHON || join(ROOT, '.tmp', 'ocr-venv', 'Scripts', 'python.exe');
-const SCRIPT = process.env.WVD_OCR_SCRIPT || join(ROOT, 'scripts', 'ocr-readout.py');
-/** Is there a runtime to measure? Gates the live-read block, so a host without it skips, not fails. */
-const OCR_AVAILABLE = existsSync(PYTHON) && existsSync(SCRIPT);
 
 /**
  * Card 1's fields on the 1920 x 1080 panel. `DETECT` / `DISARM` are the measured number bands
@@ -54,11 +49,13 @@ function panel(): Promise<RgbaImage> {
 }
 
 beforeEach(() => {
-  vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
-  vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+  // The host's own environment must not decide what a read is: every test starts with the runtime
+  // unset, and the live block stubs back the pair the proving run exported (review F3).
+  vi.stubEnv('WVD_OCR_PYTHON', '');
+  vi.stubEnv('WVD_OCR_SCRIPT', '');
   // R7's bound is the test's to set: the committed 8 s default is a production bound, and this host's
   // OCR needs the wider one for the live reads below. (The R7 block stubs its own values, including
-  // the unset/fallback case, over this one.) Stubbed here so `pnpm test` is green with no hand-set env.
+  // the unset/fallback case, over this one.)
   vi.stubEnv('WVD_OCR_TIMEOUT_MS', '20000');
 });
 
@@ -110,9 +107,19 @@ describe('the numerals-reader seam, OCR tier', () => {
     expect(numeralOf('38', 1)).toBeNull();
   });
 
-  // These read the operator's RapidOCR and assert its measurement, so they need the runtime
-  // `OCR_AVAILABLE` names; a host without it skips instead of failing 38/49 (review finding I2).
-  describe.skipIf(!OCR_AVAILABLE)('with the OCR runtime on this machine', () => {
+  // These read the operator's RapidOCR and assert its measurement, so they need the runtime the
+  // environment names; without it they skip, and a proving run fails instead (review F3).
+  describe.skipIf(!OCR_LIVE)('with the OCR runtime on this machine', () => {
+    beforeEach(() => {
+      assertOcrRuntime();
+      vi.stubEnv('WVD_OCR_PYTHON', OCR_PYTHON);
+      vi.stubEnv('WVD_OCR_SCRIPT', OCR_SCRIPT);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
     it('reads 陷阱发现 as 38 when the crop also carries its label', async () => {
       const read = await ocrReader.read(await panel(), DETECT, { label: DETECT_LABEL });
       expect(read).not.toBeNull();
@@ -190,6 +197,31 @@ describe('the OCR call bound (R7)', () => {
       await expect(readTextsViaOcr(image, region, ocrRunnerFromEnv())).resolves.toBeNull();
 
       vi.stubEnv('WVD_OCR_TIMEOUT_MS', '5000');
+      await expect(readTextsViaOcr(image, region, ocrRunnerFromEnv())).resolves.toEqual(['38']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("drains the child's stderr, so a chatty reader cannot deadlock its own answer", async () => {
+    // A real process that writes more to stderr than an OS pipe buffers (256 KiB, four pipe loads)
+    // *before* it prints the answer on stdout. With no stderr listener the child blocks on the full
+    // pipe, never prints, and the call times out to a refusal - a correct-looking null for a reader
+    // that worked (review F7). The bound is generous, so only the drain can decide the outcome.
+    const dir = mkdtempSync(join(tmpdir(), 'wvd-ocr-stderr-'));
+    try {
+      const script = join(dir, 'chatty-ocr.mjs');
+      writeFileSync(
+        script,
+        "process.stderr.write('x'.repeat(262144));\n"
+        + "console.log(JSON.stringify({ ok: true, texts: ['38'] }));\n",
+      );
+      vi.stubEnv('WVD_OCR_PYTHON', process.execPath);
+      vi.stubEnv('WVD_OCR_SCRIPT', script);
+      vi.stubEnv('WVD_OCR_TIMEOUT_MS', '8000');
+      const image: RgbaImage = { data: new Uint8Array(8 * 8 * 4).fill(255), width: 8, height: 8 };
+      const region = { x: 0, y: 0, width: 8, height: 8 };
+
       await expect(readTextsViaOcr(image, region, ocrRunnerFromEnv())).resolves.toEqual(['38']);
     } finally {
       rmSync(dir, { recursive: true, force: true });

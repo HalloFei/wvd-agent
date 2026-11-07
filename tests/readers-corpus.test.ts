@@ -27,28 +27,25 @@
  * `scripts/record-readers-corpus.ts`; its README and manifest state each crop and its expected
  * value. Do not edit a crop by hand.
  */
-import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RgbaImage } from '../src/contracts.ts';
-import { TRAP_DIGIT_TEMPLATES } from '../src/perception/opener.ts';
+import {
+  OPENER_FIELD_GEOMETRY,
+  OPENER_SLOTS,
+  readHeartCrop,
+  TRAP_DIGIT_TEMPLATES,
+  type HeartReading,
+} from '../src/perception/opener.ts';
 import type { Numerals, NumeralsReader, Region } from '../src/perception/readers/contract.ts';
 import { ocrReader } from '../src/perception/readers/ocr.ts';
 import { ruleReader } from '../src/perception/readers/rule.ts';
 import { createTemplateReader } from '../src/perception/readers/template.ts';
+import { assertOcrRuntime, OCR_LIVE, OCR_PYTHON, OCR_SCRIPT } from './ocr-runtime.ts';
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CORPUS = new URL('../testdata/readers/trap-numbers/', import.meta.url);
 const MANIFEST = new URL('manifest.json', CORPUS);
 const MEASUREMENTS = new URL('../testdata/chest/2026-10-24-opener/measurements.json', import.meta.url);
-
-/** The operator's venv and the readout script; env wins, the repo-local pair is the fallback. */
-const PYTHON = process.env.WVD_OCR_PYTHON || join(ROOT, '.tmp', 'ocr-venv', 'Scripts', 'python.exe');
-const SCRIPT = process.env.WVD_OCR_SCRIPT || join(ROOT, 'scripts', 'ocr-readout.py');
-/** Is there a runtime to measure? Gates the OCR half, so a host without it skips and does not fail. */
-const OCR_AVAILABLE = existsSync(PYTHON) && existsSync(SCRIPT);
 
 /** One crop: the field it carries, the reader's region and the hint's label inside it. */
 interface CorpusField {
@@ -75,6 +72,8 @@ interface MeasuredMember {
   readonly name: string;
   readonly detect: number;
   readonly disarm: number;
+  /** The heart numeral the panel draws, or null on the card that draws none (card 4). */
+  readonly willpower: number | null;
 }
 
 let loaded: Promise<Manifest> | null = null;
@@ -219,6 +218,151 @@ describe('the numerals corpus', () => {
       }
     }
   });
+
+  it("cuts every crop by the opener's own field geometry (review F4)", async () => {
+    // The corpus is a snapshot of the fields **as the parser reads them**, and the geometry is the
+    // parser's, not the recorder's (review F4): this test and scripts/record-readers-corpus.ts both
+    // take it from OPENER_FIELD_GEOMETRY, so moving a band, an inset or the label's height turns this
+    // red and forces a re-record - the crop no longer covers what the parser reads. Before F4 the
+    // recorder kept its own copy of these numbers and the corpus stayed green through a parser change.
+    const corpus = await manifest();
+    for (const entry of corpus.fields) {
+      const { rect } = OPENER_SLOTS[entry.slot]!;
+      const band = {
+        x: rect.x0 + OPENER_FIELD_GEOMETRY.numberLeft,
+        y: rect.y0 + OPENER_FIELD_GEOMETRY.trap[entry.field],
+        width: rect.x1 - OPENER_FIELD_GEOMETRY.numberRightInset - (rect.x0 + OPENER_FIELD_GEOMETRY.numberLeft),
+        height: OPENER_FIELD_GEOMETRY.bandHeight,
+      };
+      const label = {
+        x: rect.x0,
+        y: band.y - OPENER_FIELD_GEOMETRY.labelAbove,
+        width: OPENER_FIELD_GEOMETRY.numberLeft,
+        height: OPENER_FIELD_GEOMETRY.labelHeight,
+      };
+      const x = Math.min(band.x, label.x);
+      const y = Math.min(band.y, label.y);
+      const width = Math.max(band.x + band.width, label.x + label.width) - x;
+      const height = Math.max(band.y + band.height, label.y + label.height) - y;
+
+      expect([entry.width, entry.height], entry.file).toEqual([width, height]);
+      expect(entry.region, entry.file).toEqual({
+        x: band.x - x, y: band.y - y, width: band.width, height: band.height,
+      });
+      expect(entry.label, entry.file).toEqual({
+        x: label.x - x, y: label.y - y, width: label.width, height: label.height,
+      });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The heart field's corpus (review F5): Durability covers every numeric field, not just the trap pair
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One heart crop: the window the opener's heart matcher reads - the card's right heartLeft px, i.e.
+ * the field window [x1 - heartLeft, x1 - numberRightInset) plus the three columns the right-alignment
+ * check measures against, so the crop ends at the card's right border - in one form. Card 4 is
+ * included: it draws no heart, and its window is how that absence is **proved** rather than asserted
+ * from the measurement file.
+ */
+interface HeartField {
+  readonly file: string;
+  readonly card: number;
+  readonly slot: number;
+  readonly form: 'decoded' | 'sharp';
+  readonly width: number;
+  readonly height: number;
+  readonly region: Region;
+  readonly expected: number | null;
+}
+
+interface HeartManifest {
+  readonly source: string;
+  readonly fields: readonly HeartField[];
+}
+
+const HEART_MANIFEST = new URL('../testdata/readers/heart/manifest.json', import.meta.url);
+const HEART_CORPUS = new URL('../testdata/readers/heart/', import.meta.url);
+
+let loadedHeart: Promise<HeartManifest> | null = null;
+function heartManifest(): Promise<HeartManifest> {
+  loadedHeart ??= readFile(HEART_MANIFEST, 'utf8').then((text) => JSON.parse(text) as HeartManifest);
+  return loadedHeart;
+}
+
+const heartImages = new Map<string, Promise<RgbaImage>>();
+/** The committed crop, decoded once: the same PPM decoder the trap corpus uses. */
+function heartCrop(entry: HeartField): Promise<RgbaImage> {
+  let image = heartImages.get(entry.file);
+  if (!image) {
+    image = readFile(new URL(entry.file, HEART_CORPUS)).then((bytes) => decodePpm(bytes, entry.file));
+    heartImages.set(entry.file, image);
+  }
+  return image;
+}
+
+/** A heart matcher's answer, as the corpus pins it: the number, or the kind of refusal. */
+function heartTruth(read: HeartReading): number | 'absent' | 'unreadable' {
+  return read.kind === 'read' ? read.value : read.kind;
+}
+
+describe('the heart corpus', () => {
+  it('records every heart window of panel-00 in both forms, cut by the opener geometry (F4/F5)', async () => {
+    const corpus = await heartManifest();
+    const metadata = (JSON.parse(await readFile(MEASUREMENTS, 'utf8')) as { members: MeasuredMember[] }).members;
+    // The width is the field window **plus the three right-inset columns**: the crop ends at the
+    // card's right border, which is the column the right-alignment check measures against.
+    const width = OPENER_FIELD_GEOMETRY.heartLeft;
+    const height = OPENER_FIELD_GEOMETRY.bandHeight;
+
+    expect(corpus.source).toBe('testdata/chest/2026-10-24-opener/panel-00.jpg');
+    expect(corpus.fields).toHaveLength(12);
+    expect(new Set(corpus.fields.map((entry) => entry.file)).size).toBe(12);
+
+    for (const slot of [0, 1, 2, 3, 4, 5]) {
+      for (const form of ['decoded', 'sharp'] as const) {
+        const entry = corpus.fields.find((candidate) => candidate.slot === slot && candidate.form === form);
+        expect(entry, 'card ' + (slot + 1) + ' heart ' + form).toBeDefined();
+        expect(entry!.card).toBe(slot + 1);
+        expect([entry!.width, entry!.height], entry!.file).toEqual([width, height]);
+        expect(entry!.region, entry!.file).toEqual({ x: 0, y: 0, width, height });
+        // The measurement file's willpower column: null is the card that draws no heart (card 4).
+        expect(entry!.expected, entry!.file).toBe(metadata[slot]!.willpower);
+        const image = await heartCrop(entry!);
+        expect([image.width, image.height], entry!.file).toEqual([width, height]);
+      }
+    }
+  });
+
+  it('reads the decoded hearts: five numerals, and card 4 draws none (absent, never unreadable)', async () => {
+    // R5 keeps the heart on its own matcher; the **record** does not wait for that migration (review
+    // F5). Measured 2026-11-07: the five drawn hearts read exactly, and card 4's window carries no
+    // yellow ink at all - absent (the main character's undrawn willpower, which the policy accepts),
+    // never unreadable (a drawn numeral under the matcher's floor, which makes the card ineligible).
+    const corpus = await heartManifest();
+    const decoded = corpus.fields.filter((entry) => entry.form === 'decoded');
+    const truth: Array<number | 'absent' | 'unreadable'> = [];
+    for (const entry of decoded) truth.push(heartTruth(readHeartCrop(await heartCrop(entry))));
+
+    expect(truth).toEqual([100, 100, 100, 'absent', 90, 100]);
+  });
+
+  it('reads the sharpened proxy as the matcher does - its one refusal recorded, not hidden', async () => {
+    // The raw-pixel proxy (R3), measured 2026-11-07. One drawn heart is refused: its 100 falls to
+    // 0.871 against the 0.95 identity floor. **It is the second card (index 1), not the first** - the
+    // opener's own panel test pins the same order (readers-opener.test.ts, "keeps the heart semantics
+    // on the sharpened proxy"), and R5's prose says "card 1". The value and the score are R5's; the
+    // card attribution is the corpus's, recorded as measured (review F5). The other four drawn hearts
+    // still read, card 4 is still absent, and a change here is a re-record, not a silent pass.
+    const corpus = await heartManifest();
+    const sharp = corpus.fields.filter((entry) => entry.form === 'sharp');
+    const truth: Array<number | 'absent' | 'unreadable'> = [];
+    for (const entry of sharp) truth.push(heartTruth(readHeartCrop(await heartCrop(entry))));
+
+    expect(truth).toEqual([100, 'unreadable', 100, 'absent', 90, 100]);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -326,10 +470,13 @@ const OCR_MISREADS: ReadonlyMap<string, number> = new Map([
   ['card-6-detect-sharp.ppm', 177],
 ]);
 
-describe.skipIf(!OCR_AVAILABLE)('the OCR tier over the corpus', () => {
+describe.skipIf(!OCR_LIVE)('the OCR tier over the corpus', () => {
   beforeEach(() => {
-    vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
-    vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+    // The environment is the gate (review F3): unset means the plain gate skips this half, and a
+    // proving run (WVD_OCR_REQUIRED=1) fails here instead of passing without its OCR proof.
+    assertOcrRuntime();
+    vi.stubEnv('WVD_OCR_PYTHON', OCR_PYTHON);
+    vi.stubEnv('WVD_OCR_SCRIPT', OCR_SCRIPT);
     // R7's bound is the test's to set: the committed default (8 s) is a production bound and this
     // host's OCR needs the wider one under the suite's real reads. Stubbed here, so `pnpm test`
     // (plain vitest) is green with no hand-set environment.

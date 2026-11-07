@@ -41,7 +41,7 @@
  * device pixels, so a caller never does the offset arithmetic itself.
  */
 import type { Frame, Observation, Perceiver, PixelRect, Point, QteState, RgbaImage } from '../contracts.ts';
-import { parseOpenerDetailed, type OpenerTierSummary } from './opener.ts';
+import { createOcrBudget, parseOpenerDetailed, type OcrBudget, type OpenerTierSummary } from './opener.ts';
 import type { NumeralsReader } from './readers/index.ts';
 
 // ---------------------------------------------------------------------------------------------
@@ -429,6 +429,15 @@ export interface ChestPerceiverOptions {
  */
 export class ChestPerceiver implements Perceiver {
   readonly #options: ChestPerceiverOptions;
+  /**
+   * The panel's OCR allowance (R6) and whether its tier mix has been reported — **per panel, not per
+   * observation** (review F1). This perceiver is the composite's first, so it looks at a frame every
+   * tick; a panel that stays up undecided used to build a fresh budget and log a fresh line each
+   * time, i.e. two OCR calls (up to 2 x 8 s) and one line per tick. Both are reset when a parse
+   * answers `not-panel`: the screen is no longer the panel, so the next panel is a new one.
+   */
+  #budget: OcrBudget | null = null;
+  #tiersReported = false;
 
   constructor(options: ChestPerceiverOptions = {}) {
     this.#options = options;
@@ -437,8 +446,21 @@ export class ChestPerceiver implements Perceiver {
   async observe(frame: Frame): Promise<Observation> {
     const opener = await parseOpenerDetailed(frame, {
       trapReader: this.#options.trapReader,
-      onTiers: this.#options.onOpenerTiers,
+      // One allowance for the panel, shared by every observation of it (R6, F1).
+      ocrBudget: (this.#budget ??= createOcrBudget()),
+      // At most one line per panel: the same undecided panel observed twice is still one panel.
+      onTiers: (summary) => {
+        if (this.#tiersReported) return;
+        this.#tiersReported = true;
+        this.#options.onOpenerTiers?.(summary);
+      },
     });
+    if (!opener.ok && opener.reason === 'not-panel') {
+      // The screen is not (or is no longer) the panel: the next panel read gets its own allowance
+      // and its own line.
+      this.#budget = null;
+      this.#tiersReported = false;
+    }
     if (opener.ok) {
       return { screen: 'chest-open', atMs: frame.atMs, confidence: 1, opener: opener.panel };
     }

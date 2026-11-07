@@ -1,0 +1,197 @@
+{
+  "generatedBy": "scripts/record-readers-corpus.ts",
+  "source": "testdata/chest/2026-10-24-opener/panel-00.jpg",
+  "measurements": "testdata/chest/2026-10-24-opener/measurements.json",
+  "note": "One committed crop per card's heart window (the card's right OPENER_FIELD_GEOMETRY.heartLeft px, bandHeight rows, ending at the card's right border) in both forms: the decoded fixture and the sharpened raw-pixel proxy. Card 4 draws no heart; its window is committed too, so the absence is proved by the matcher rather than asserted from the measurement file. expected is the measurements.json willpower column: null = no heart drawn.",
+  "geometry": {
+    "heartLeft": 70,
+    "bandHeight": 16,
+    "rightInset": 3
+  },
+  "sharpened": {
+    "amount": 1,
+    "kernel": "4-neighbour box blur, weights centre 2 / each neighbour 1 over 6, img + amount * (img - blur), clamped"
+  },
+  "fields": [
+    {
+      "file": "card-1-heart-decoded.ppm",
+      "card": 1,
+      "slot": 0,
+      "form": "decoded",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 100
+    },
+    {
+      "file": "card-1-heart-sharp.ppm",
+      "card": 1,
+      "slot": 0,
+      "form": "sharp",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 100
+    },
+    {
+      "file": "card-2-heart-decoded.ppm",
+      "card": 2,
+      "slot": 1,
+      "form": "decoded",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 100
+    },
+    {
+      "file": "card-2-heart-sharp.ppm",
+      "card": 2,
+      "slot": 1,
+      "form": "sharp",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 100
+    },
+    {
+      "file": "card-3-heart-decoded.ppm",
+      "card": 3,
+      "slot": 2,
+      "form": "decoded",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 100
+    },
+    {
+      "file": "card-3-heart-sharp.ppm",
+      "card": 3,
+      "slot": 2,
+      "form": "sharp",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 100
+    },
+    {
+      "file": "card-4-heart-decoded.ppm",
+      "card": 4,
+      "slot": 3,
+      "form": "decoded",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": null
+    },
+    {
+      "file": "card-4-heart-sharp.ppm",
+      "card": 4,
+      "slot": 3,
+      "form": "sharp",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": null
+    },
+    {
+      "file": "card-5-heart-decoded.ppm",
+      "card": 5,
+      "slot": 4,
+      "form": "decoded",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 90
+    },
+    {
+      "file": "card-5-heart-sharp.ppm",
+      "card": 5,
+      "slot": 4,
+      "form": "sharp",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 90
+    },
+    {
+      "file": "card-6-heart-decoded.ppm",
+      "card": 6,
+      "slot": 5,
+      "form": "decoded",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 100
+    },
+    {
+      "file": "card-6-heart-sharp.ppm",
+      "card": 6,
+      "slot": 5,
+      "form": "sharp",
+      "width": 70,
+      "height": 16,
+      "region": {
+        "x": 0,
+        "y": 0,
+        "width": 70,
+        "height": 16
+      },
+      "expected": 100
+    }
+  ]
+}

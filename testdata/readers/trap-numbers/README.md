@@ -2,23 +2,28 @@
 
 Recorded by `scripts/record-readers-corpus.ts` from
 `testdata/chest/2026-10-24-opener/panel-00.jpg` (the 由谁打开? opener panel); the expected values
-are that fixture's `measurements.json`. There are twelve 陷阱 fields — six cards × 陷阱发现 /
-陷阱解除 — and each is committed in **both** forms, so 24 crops.
+are that fixture's `measurements.json`. There are twelve 陷阱 fields - six cards x 陷阱发现 /
+陷阱解除 - and each is committed in **both** forms, so 24 crops.
 
 ## What each crop is
 
-Each crop is the exact rectangle the opener hands its reader: the numeral band ∪ its label. The
-label is the OCR tier's context — a context-free 87 × 16 band of this panel reads nothing while the
-crop that carries 陷阱发现 reads `陷阱发现38` (measured 2026-11-07) — and the fast tiers ignore it
+Each crop is the exact rectangle the opener hands its reader: the numeral band union its label. The
+label is the OCR tier's context - a context-free 87 x 16 band of this panel reads nothing while the
+crop that carries 陷阱发现 reads `陷阱发现38` (measured 2026-11-07) - and the fast tiers ignore it
 except for the containment check.
 
-- `*-decoded.ppm` — the fixture as `panel-00.jpg` decodes. This is the form the fast tiers answer.
-- `*-sharp.ppm` — the **sharpened proxy**: `img + amount·(img − boxBlur)`, a 4-neighbour box blur,
+The crop geometry is not written here by hand: `OPENER_FIELD_GEOMETRY` in
+`src/perception/opener.ts` is the parser's own, and `tests/readers-corpus.test.ts` asserts this
+manifest against it (review F4). A band that moves in the parser makes the corpus red until it is
+re-recorded.
+
+- `*-decoded.ppm` - the fixture as `panel-00.jpg` decodes. This is the form the fast tiers answer.
+- `*-sharp.ppm` - the **sharpened proxy**: `img + amount * (img - boxBlur)`, a 4-neighbour box blur,
   amount 1, clamped. It is the unsharp helper the tests use and the raw-capture stand-in plan ruling
   R3 keeps until the game is launched: sharpening the decoded pixels moves them off the digit atlases
   the same way a raw capture does.
 
-The crops are binary PPM (P6: header `P6\n<width> <height>\n255\n` then RGB), not JPEG — a
+The crops are binary PPM (P6: header `P6\n<width> <height>\n255\n` then RGB), not JPEG - a
 corpus that re-encodes its own pixels would measure the encoder. Node has no PNG codec here; view one
 with `ffmpeg -i card-1-detect-decoded.ppm card-1-detect-decoded.png`.
 
@@ -53,8 +58,8 @@ with `ffmpeg -i card-1-detect-decoded.ppm card-1-detect-decoded.png`.
 
 `manifest.json` is the machine-readable record: each crop's card slot, field, form, size, the
 reader region and hint label inside the crop, and the expected value. The plausible range is
-**1–999** — a 陷阱 bonus is a positive number of at most three digits (the widest numeral field the
-seam names) — and no tier may answer outside it.
+**1-999** - a 陷阱 bonus is a positive number of at most three digits (the widest numeral field the
+seam names) - and no tier may answer outside it.
 
 ## How it is used
 

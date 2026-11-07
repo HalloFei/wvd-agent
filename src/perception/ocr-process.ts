@@ -91,7 +91,22 @@ export async function readTextsViaOcr(
   }
 }
 
-/** The script's answer, parsed: its `texts`, or null when it did not succeed. */
+/**
+ * How long the call waits for a killed child to close, after the bound expired. The kill's own `close`
+ * is the answer; this is the fence for a child whose stdio never settles (review F7).
+ */
+const REAP_GRACE_MS = 1_000;
+
+/**
+ * The script's answer, parsed: its `texts`, or null when it did not succeed, failed, or timed out.
+ *
+ * **The child is drained and reaped** (review F7). Its stderr is discarded, not merely piped: an
+ * unread stderr pipe fills at the OS buffer and the child blocks before it can print its answer, so
+ * the call would time out to a plausible-looking refusal for a reader that worked (measured: 256 KiB
+ * of stderr hung the call for its whole bound). And a timed-out child is killed and its `close`
+ * awaited — up to `REAP_GRACE_MS` past the kill — instead of being left to the OS while its stdio
+ * still holds the temp file open.
+ */
 function run(options: OcrRunner, file: string, region: PixelRect): Promise<string[] | null> {
   return new Promise((resolve) => {
     const child = spawn(
@@ -101,17 +116,36 @@ function run(options: OcrRunner, file: string, region: PixelRect): Promise<strin
       { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
     );
     let out = '';
-    const timer = setTimeout(() => { try { child.kill(); } catch { /* already gone */ } resolve(null); }, options.timeoutMs ?? DEFAULT_OCR_TIMEOUT_MS);
+    let settled = false;
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let reapTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: string[] | null): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      if (reapTimer !== undefined) clearTimeout(reapTimer);
+      resolve(value);
+    };
+    // The child's stderr is its log, not its answer: discard it as it arrives (F7).
+    child.stderr?.resume();
+    timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill(); } catch { /* already gone */ }
+      // The kill ends the pipes, so 'close' follows; the fence covers a child that will not die.
+      reapTimer = setTimeout(() => finish(null), REAP_GRACE_MS);
+    }, options.timeoutMs ?? DEFAULT_OCR_TIMEOUT_MS);
     child.stdout?.on('data', (chunk: Buffer) => { out += chunk.toString('utf8'); });
-    child.on('error', () => { clearTimeout(timer); resolve(null); });
+    child.on('error', () => finish(null));
     child.on('close', () => {
-      clearTimeout(timer);
+      // A killed child's partial output is not an answer: the bound already refused the call.
+      if (timedOut) return finish(null);
       try {
         const answer = JSON.parse(out.trim().split('\n').filter(Boolean).at(-1) ?? 'null') as { ok?: boolean; texts?: unknown } | null;
-        if (answer === null || answer.ok !== true || !Array.isArray(answer.texts)) return resolve(null);
-        resolve(answer.texts.map((item) => String(item)));
+        if (answer === null || answer.ok !== true || !Array.isArray(answer.texts)) return finish(null);
+        finish(answer.texts.map((item) => String(item)));
       } catch {
-        resolve(null);
+        finish(null);
       }
     });
   });

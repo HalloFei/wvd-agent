@@ -16,16 +16,15 @@
  *    frame outright (unreadable).
  * 3. The negatives still refuse: the QTE bar and the 3-D view are not the panel.
  * 4. The **escalation is the OCR tier directly** (ruling R9): on the amount-2 proxy the rule tier
- *    would name a refused field 93 where the screen says 92, so the config-built reader is never
- *    the opener's escalation.
+ *    would name a refused field 93 where the screen says 92, so an `auto` chain is never the opener's
+ *    escalation. (The config row that used to build that chain was removed by R12 / review F2; the
+ *    chain is still constructible, which is what the R9 case pins.)
  *
  * The heart's absent / unreadable distinction is covered where it lives, by the existing
  * tests/opener.test.ts cases (a card that draws no heart is null; a drawn numeral the atlas cannot
  * identify is NaN and costs its own card only).
  */
-import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Frame, RgbaImage } from '../src/contracts.ts';
@@ -39,11 +38,9 @@ import {
   type OpenerTierSummary,
 } from '../src/perception/opener.ts';
 import { ChestPerceiver } from '../src/perception/chest.ts';
-import { WVD_DEFAULTS } from '../src/config.ts';
-import { createNumeralsReaderFromConfig } from '../src/main.ts';
-import { createNumeralsReader, ocrReader, type NumeralsReader } from '../src/perception/readers/index.ts';
+import { createNumeralsReader, ocrReader, type NumeralsReader, type ReadHint } from '../src/perception/readers/index.ts';
+import { assertOcrRuntime, OCR_LIVE, OCR_PYTHON, OCR_SCRIPT } from './ocr-runtime.ts';
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FIXTURES = new URL('../testdata/chest/2026-10-24-opener/', import.meta.url);
 const MEASUREMENTS = new URL('measurements.json', FIXTURES);
 /** The QTE bar (2026-10-24 01:41): a real frame with no panel on it. */
@@ -51,18 +48,14 @@ const QTE_FIXTURES = new URL('../testdata/chest/2026-10-24-qte-0141/', import.me
 /** The 3-D view: HUD and map, no modal panel. */
 const NAV_FIXTURES = new URL('../testdata/nav-1024-0213/', import.meta.url);
 
-/** The operator's venv and the readout script; env wins, the repo-local pair is the fallback. */
-const PYTHON = process.env.WVD_OCR_PYTHON || ROOT + '/.tmp/ocr-venv/Scripts/python.exe';
-const SCRIPT = process.env.WVD_OCR_SCRIPT || ROOT + '/scripts/ocr-readout.py';
-/** Is there a runtime to measure? Gates the sharpened panel, so a host without it skips, not fails. */
-const OCR_AVAILABLE = existsSync(PYTHON) && existsSync(SCRIPT);
-
 /**
  * The most one OCR call may take for the two-call amount-2 read to be measurable here: the read needs
- * both calls under the tier's 8 s bound with the second starting inside the budget's 10 s window, so a
- * single call over 5 s leaves no headroom (this host measures ~2.5–5 s per call; a loaded one has
- * already taken 8 070 ms, the Task 4 flake). Above it the measured read skips, with the reason; the
- * always-run invariant beside it covers the same panel, and the 92 assertion itself is not weakened.
+ * both calls under the bound this file stubs (20 s, ruling R7 — the committed production default is
+ * 8 s) with the second starting inside the budget's 10 s window, so a single call over 5 s leaves no
+ * headroom for the second (this host measures ~2.5–5 s per call; a loaded one has already taken
+ * 8 070 ms, the Task 4 flake). Above it the measured read skips, with the reason (the skip is named
+ * in docs/status.md, review F9); the always-run invariant beside it covers the same panel, and the 92
+ * assertion itself is not weakened.
  */
 const MEASURED_READ_PROBE_MAX_MS = 5_000;
 
@@ -311,10 +304,11 @@ describe('a recognised panel refused before a numeral is read still reports its 
  * (vitest.config.ts, `fileParallelism: false`), so this file's calls are not queued behind the
  * corpus's 24 reads — the load that once made a call take 10-13 s and pushed a 20 s deadline.
  */
-describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () => {
+describe.skipIf(!OCR_LIVE)('the sharpened panel (the raw-pixel proxy)', () => {
   beforeEach(() => {
-    vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
-    vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+    assertOcrRuntime();
+    vi.stubEnv('WVD_OCR_PYTHON', OCR_PYTHON);
+    vi.stubEnv('WVD_OCR_SCRIPT', OCR_SCRIPT);
   });
 
   afterEach(() => {
@@ -397,13 +391,14 @@ describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
     return sharpenedTwo;
   }
 
-  it('the config-built chain answers the amount-2 refusals from the rules — the hazard R9 removes', async () => {
-    // What the pre-R9 wiring passed as the escalation (the factory, default 'auto'). The OCR runtime
-    // is unset here, so this is the rule tier alone: card 4's 陷阱发现 comes back 93, not the measured
+  it('an auto chain answers the amount-2 refusals from the rules — the hazard R9 removes', async () => {
+    // What the pre-R9 wiring passed as the escalation: a reader built with the config's former
+    // default, `auto` (the config row itself was removed by R12 / review F2). The OCR runtime is
+    // unset here, so this is the rule tier alone: card 4's 陷阱发现 comes back 93, not the measured
     // 92. If `number.ts`'s 4/3 fix (board card t-mw65nlh4-lfoik7) lands, this expectation is the one
     // to revisit — it pins the misname R9 keeps out of the panel's ranking.
     const expected = await measured();
-    const observation = await new ChestPerceiver({ trapReader: createNumeralsReaderFromConfig(WVD_DEFAULTS) })
+    const observation = await new ChestPerceiver({ trapReader: createNumeralsReader({ strategy: 'auto' }) })
       .observe(frameOf(await sharpenedTwoPanel()));
 
     expect(observation.screen).toBe('chest-open');
@@ -429,9 +424,10 @@ describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
     // name card 4's 陷阱发现 93 where the screen says 92. A read is the other legal outcome and must
     // be the measured twelve. The runtime, when this host has one, is what the composition root
     // passes; without it the refusal branch is the answer.
-    if (OCR_AVAILABLE) {
-      vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
-      vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+    if (OCR_LIVE) {
+      assertOcrRuntime();
+      vi.stubEnv('WVD_OCR_PYTHON', OCR_PYTHON);
+      vi.stubEnv('WVD_OCR_SCRIPT', OCR_SCRIPT);
     }
     const expected = await measured();
     const parsed = await parseOpenerImage(await sharpenedTwoPanel(), { trapReader: ocrReader });
@@ -450,10 +446,11 @@ describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
     expect(detects).not.toContain(93);
   }, 40_000);
 
-  describe.skipIf(!OCR_AVAILABLE)('with the OCR runtime', () => {
+  describe.skipIf(!OCR_LIVE)('with the OCR runtime', () => {
     beforeEach(() => {
-      vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
-      vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+      assertOcrRuntime();
+      vi.stubEnv('WVD_OCR_PYTHON', OCR_PYTHON);
+      vi.stubEnv('WVD_OCR_SCRIPT', OCR_SCRIPT);
     });
 
     afterEach(() => {
@@ -469,10 +466,11 @@ describe('the escalation is the OCR tier, never the rule chain (R9)', () => {
       // a host whose OCR starts the second call past 10 s the panel refuses at the second take() (the
       // safe R9 outcome, never a rule's 93); the always-run invariant above holds on that host.
       //
-      // The read is gated by one call's latency first: it needs **two** calls under the 8 s bound with
-      // the second starting inside the window, and a loaded host (the full suite's parallel forks made
-      // one call take 8 070 ms) would turn the 92 into a host measurement. Over the threshold this
-      // case skips with the reason; under it the 92 below is asserted unchanged.
+      // The read is gated by one call's latency first: it needs **two** calls under this file's
+      // stubbed 20 s bound (R7) with the second starting inside the 10 s window, and a loaded host
+      // (the full suite's parallel forks made one call take 8 070 ms) would turn the 92 into a host
+      // measurement. Over the threshold this case skips with the reason, named in docs/status.md
+      // (review F9); under it the 92 below is asserted unchanged.
       const probeStart = Date.now();
       const probe = await ocrReader.read(await jpegImage('panel-00.jpg'), PROBE_BAND, { label: PROBE_LABEL });
       const probeMs = Date.now() - probeStart;
@@ -596,8 +594,8 @@ describe('the OCR escalation is budgeted per parse', () => {
   });
 
   it('carries the reader and the tier log through ChestPerceiver, the composition root\'s own entry', async () => {
-    // main.ts builds the reader from `worlds.wvd.readers.numerals` and hands it to ChestPerceiver,
-    // which must pass it to the parse as the escalation and the tier log up as the callback (R8, R6).
+    // main.ts builds ChestPerceiver with the package's OCR tier and the tier log; the perceiver must
+    // pass the reader into the parse as the escalation and the log up as the callback (R9, R6).
     const fake = countingEscalation();
     const summaries: OpenerTierSummary[] = [];
     const observation = await new ChestPerceiver({
@@ -635,6 +633,113 @@ describe('the OCR escalation is budgeted per parse', () => {
     expect(explicit.take()).toBe(true);
     explicitClock = 2_001;
     expect(explicit.take()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// One allowance and one log line per panel, not per observation (review F1)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The budget and the tier log belong to the **panel**, not to the observation (review F1).
+ * `ChestPerceiver` is the composite's first perceiver, so it observes a frame on every tick; when the
+ * opener stayed up undecided it used to build a fresh `OcrBudget` and fire `onTiers` per call — two
+ * OCR calls (up to 2 x 8 s) and one log line **every tick**. The allowance and the reported flag now
+ * live in the perceiver and are reset when a parse answers `not-panel`: the screen is no longer the
+ * panel, so the next panel is a new one.
+ */
+describe('the OCR allowance and the tier log belong to the panel, not the observation (F1)', () => {
+  let sharpenedThree: Promise<RgbaImage> | null = null;
+  function sharpenedThreePanel(): Promise<RgbaImage> {
+    sharpenedThree ??= jpegImage('panel-00.jpg').then((base) => sharpened(base, 3));
+    return sharpenedThree;
+  }
+
+  function countingEscalation(): { reader: NumeralsReader; state: { calls: number } } {
+    const state = { calls: 0 };
+    const reader: NumeralsReader = {
+      read: async () => {
+        state.calls += 1;
+        return { value: 11, confidence: 0.9, tier: 'ocr' };
+      },
+    };
+    return { reader, state };
+  }
+
+  it('spends one panel allowance and logs once across two observes of the same panel', async () => {
+    const image = await sharpenedThreePanel();
+    const fake = countingEscalation();
+    const summaries: OpenerTierSummary[] = [];
+    const perceiver = new ChestPerceiver({
+      trapReader: fake.reader,
+      onOpenerTiers: (summary) => summaries.push(summary),
+    });
+
+    const first = await perceiver.observe(frameOf(image, 1_000));
+    const second = await perceiver.observe(frameOf(image, 1_100));
+
+    expect(first).toMatchObject({ screen: 'unknown', confidence: 0.3 });
+    expect(second).toMatchObject({ screen: 'unknown', confidence: 0.3 });
+    // One panel's two-call cap in total, not two per observation.
+    expect(fake.state.calls).toBe(2);
+    // One line for the panel: the second observation is the same undecided panel, not a new one.
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({ ocr: 2 });
+  });
+
+  it('starts a fresh allowance and a fresh line once the screen is no longer the panel', async () => {
+    const image = await sharpenedThreePanel();
+    const bar = await jpegImage('frame-3.jpg', QTE_FIXTURES);
+    const fake = countingEscalation();
+    const summaries: OpenerTierSummary[] = [];
+    const perceiver = new ChestPerceiver({
+      trapReader: fake.reader,
+      onOpenerTiers: (summary) => summaries.push(summary),
+    });
+
+    await perceiver.observe(frameOf(image, 1_000));
+    // The bar: the parse answers `not-panel`, so the panel's allowance and its reported flag are done.
+    const between = await perceiver.observe(frameOf(bar, 1_100));
+    expect(between.screen).not.toBe('chest-open');
+    const again = await perceiver.observe(frameOf(image, 1_200));
+
+    expect(again).toMatchObject({ screen: 'unknown', confidence: 0.3 });
+    // Two panels: two allowances, two lines.
+    expect(fake.state.calls).toBe(4);
+    expect(summaries).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The read's hint carries what the opener knows about the field (review F6)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Every 陷阱 read hands the reader the field's length and its plausible bounds (review F6), so an
+ * escalation cannot answer something the field cannot carry: an OCR `0` on a two-digit field is
+ * refused by the hint's `digits`/`min` instead of relying on the opener's length comparison
+ * afterwards. The bounds are the corpus's range: a 陷阱 bonus is a positive number of at most three
+ * digits.
+ */
+describe("the trap read's hint carries the field's length and bounds (F6)", () => {
+  it('names the expected digits, the plausible range and the label on every escalation', async () => {
+    const hints: Array<ReadHint | undefined> = [];
+    const answering: NumeralsReader = {
+      read: async (_image, _region, hint) => {
+        hints.push(hint);
+        return { value: 11, confidence: 0.9, tier: 'ocr' };
+      },
+    };
+    // The amount-3 proxy refuses three two-digit fields; the default two-call budget lets two reach
+    // the escalation and refuses the third before it is asked (R6), which refuses the panel.
+    const parsed = await parseOpenerImage(sharpened(await jpegImage('panel-00.jpg'), 3), { trapReader: answering });
+
+    expect(parsed).toEqual({ ok: false, reason: 'unreadable' });
+    expect(hints).toHaveLength(2);
+    for (const hint of hints) {
+      expect(hint).toMatchObject({ digits: 2, min: 1, max: 999 });
+      expect(hint!.label).toBeDefined();
+    }
   });
 });
 
