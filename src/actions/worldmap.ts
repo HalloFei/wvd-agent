@@ -1,3 +1,5 @@
+/** The pan loop is done once the place is within this of the target: half the 80 px confirmation window. */
+const PAN_CONVERGED_PX = 40;
 /**
  * Opening the world map and travelling to a catalogued node — the entry's two gestures. The map's
  * zoom steps are primitives of their own (`zoomWorldMap`), so the travel action and the operator's
@@ -903,7 +905,10 @@ export async function travelViaAtlas(
     const deltaX = desired.x - offset.x;
     const deltaY = desired.y - offset.y;
     // 16 atlas px is 38 strip px at max zoom-in — well inside the 80 px confirmation window.
-    if (Math.abs(deltaX) <= 16 && Math.abs(deltaY) <= 16) break;
+    // The confirmation looks in an 80 px window (see the comment above), so a place within half of it is
+    // a place: a 16 px tolerance made the loop chase a delta the pointer clamp cannot deliver and it
+    // limit-cycled at ~14 px forever (live 2026-11-07 23:02: asked +15, moved -2, asked +14, moved -13).
+    if (Math.abs(deltaX) <= PAN_CONVERGED_PX && Math.abs(deltaY) <= PAN_CONVERGED_PX) break;
     if (step >= corrections) {
       return finish({ ok: false, reason: 'location-not-found', detail: 'the map stayed ' + deltaX + ',' + deltaY + ' px from the planned offset' });
     }
