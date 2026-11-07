@@ -1,0 +1,281 @@
+/**
+ * The numerals-reader seam's fast tiers and its selector (Task 2).
+ *
+ * The rule tier reads the **shape** of a numeral (`number.ts`) out of the pixels; the template tier
+ * matches the same glyph geometry against an atlas the caller hands in (R1: the opener is not
+ * imported, its atlases are), and `auto` orders the tiers and reports **which one answered**.
+ *
+ * The selector is exercised with fake tiers, so it needs no OCR runtime: a `fast` read must never
+ * spawn one, and an `ocr` read must never touch the fast tiers. What is proved here is the seam's
+ * behaviour; the real atlases are proved by the opener's own tests (Task 3).
+ *
+ * The synthetic strips are drawn at the game's glyph scale (12 px tall, 2 px strokes, 3–4 px gaps)
+ * because both fast tiers were measured on that scale: three columns is the narrowest digit and
+ * twelve the widest (opener's `MIN_GLYPH_COLUMNS` / `MAX_GLYPH_COLUMNS`).
+ */
+import { describe, expect, it } from 'vitest';
+import type { RgbaImage } from '../src/contracts.ts';
+import type { Numerals, NumeralsReader, Region } from '../src/perception/readers/contract.ts';
+import { createAutoReader } from '../src/perception/readers/auto.ts';
+import { createNumeralsReader } from '../src/perception/readers/index.ts';
+import { ruleReader } from '../src/perception/readers/rule.ts';
+import {
+  createTemplateReader,
+  templateFeatureOf,
+  type DigitTemplate,
+} from '../src/perception/readers/template.ts';
+
+/*
+ * ---------------------------------------------------------------------------------------------
+ * A synthetic frame: one luma value for the fill, one for the numeral ink, no anti-aliasing.
+ * ---------------------------------------------------------------------------------------------
+ */
+const FILL_LUMA = 20;
+const INK_LUMA = 220;
+
+type Bitmap = readonly string[];
+
+/** A frame of uniform fill, opaque. */
+function blank(width: number, height: number): RgbaImage {
+  const data = new Uint8Array(width * height * 4).fill(FILL_LUMA);
+  for (let index = 0; index < width * height; index += 1) data[index * 4 + 3] = 255;
+  return { data, width, height };
+}
+
+/** Paint a bitmap's '#' cells as ink at (atX, atY); '.' cells are left alone. */
+function stamp(image: RgbaImage, rows: Bitmap, atX: number, atY: number): void {
+  rows.forEach((row, y) => {
+    for (let x = 0; x < row.length; x += 1) {
+      if (row[x] !== '#') continue;
+      const offset = ((atY + y) * image.width + atX + x) * 4;
+      image.data[offset] = INK_LUMA;
+      image.data[offset + 1] = INK_LUMA;
+      image.data[offset + 2] = INK_LUMA;
+      image.data[offset + 3] = 255;
+    }
+  });
+}
+
+/**
+ * A `1` the rules can name: a three-column stem with a flag, so the glyph's box is not solid (a
+ * full box is `number.ts`'s "not a glyph" refusal). Bounding box 3 x 12, no counter.
+ */
+const ONE: Bitmap = [
+  '..#.',
+  '.##.',
+  '###.',
+  '.##.',
+  '.##.',
+  '.##.',
+  '.##.',
+  '.##.',
+  '.##.',
+  '.##.',
+  '.##.',
+  '.##.',
+];
+
+/**
+ * A `6` the rules can name: one counter low in the glyph (`holeY >= 0.55`), and the right edge
+ * stops short of a stem so the `4`/`9` branches cannot claim it. Bounding box 5 x 12.
+ */
+const SIX: Bitmap = [
+  '.##...',
+  '.##...',
+  '.##...',
+  '.##...',
+  '.##...',
+  '.###..',
+  '.#####',
+  '.##..#',
+  '.##..#',
+  '.##..#',
+  '.#####',
+  '.###..',
+];
+
+/** A solid 6 x 12 box: `number.ts` refuses a full glyph ("total >= width * height * 0.9"). */
+const BLOCK: Bitmap = Array.from({ length: 12 }, () => '######');
+
+/** A 12 x 2 bar: shorter than the six rows `number.ts` needs, and unlike any template. */
+const BAR: Bitmap = ['############', '############'];
+
+/** The read's rectangle: the same box for every synthetic frame (a 20 x 16 frame's left 16 px). */
+const REGION: Region = { x: 0, y: 0, width: 16, height: 16 };
+
+const STRIP = blank(20, 16);
+stamp(STRIP, ONE, 2, 2);
+stamp(STRIP, SIX, 8, 2);
+
+const BLOCK_IMAGE = blank(20, 16);
+stamp(BLOCK_IMAGE, BLOCK, 4, 2);
+
+const BAR_IMAGE = blank(20, 16);
+stamp(BAR_IMAGE, BAR, 4, 7);
+
+const ONE_IMAGE = blank(20, 16);
+stamp(ONE_IMAGE, ONE, 2, 2);
+
+const SIX_IMAGE = blank(20, 16);
+stamp(SIX_IMAGE, SIX, 8, 2);
+
+/** An atlas records a digit by the tier's own feature — the caller's job (R1), not the reader's. */
+function templateOf(digit: string, image: RgbaImage): DigitTemplate {
+  const values = templateFeatureOf(image, REGION);
+  expect(values, 'the synthetic frame must carry exactly one glyph').not.toBeNull();
+  return { digit, values: values! };
+}
+
+const BLOCK_TEMPLATE = templateOf('8', BLOCK_IMAGE);
+const ONE_TEMPLATE = templateOf('1', ONE_IMAGE);
+const SIX_TEMPLATE = templateOf('6', SIX_IMAGE);
+const STRIP_ATLAS = [ONE_TEMPLATE, SIX_TEMPLATE];
+
+/*
+ * ---------------------------------------------------------------------------------------------
+ * Fake tiers for the selector: they prove which tier was asked, without an OCR runtime.
+ * ---------------------------------------------------------------------------------------------
+ */
+
+/** A tier that must never be called: calling it fails the test, rather than returning a value. */
+function failingReader(name: string): NumeralsReader {
+  return {
+    read: async () => {
+      throw new Error(`the ${name} tier must not be asked`);
+    },
+  };
+}
+
+/** A tier that answers a fixed read (`null` when it refuses). */
+function fixedReader(read: Numerals | null): NumeralsReader {
+  return { read: async () => read };
+}
+
+describe('the numerals-reader seam, the rule tier', () => {
+  it('reads a plain numeral strip out of the pixels', async () => {
+    const read = await ruleReader.read(STRIP, REGION);
+    expect(read?.value).toBe(16);
+    expect(read?.tier).toBe('rule');
+    expect(read!.confidence).toBeGreaterThan(0);
+    expect(read!.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it('applies the hint: the expected length and the sanity bounds', async () => {
+    await expect(ruleReader.read(STRIP, REGION, { digits: 2 })).resolves.not.toBeNull();
+    await expect(ruleReader.read(STRIP, REGION, { digits: 1 })).resolves.toBeNull();
+    await expect(ruleReader.read(STRIP, REGION, { max: 15 })).resolves.toBeNull();
+    await expect(ruleReader.read(STRIP, REGION, { min: 16, max: 16 })).resolves.not.toBeNull();
+  });
+
+  it('refuses a flat band, a region outside the frame and a clip through the label', async () => {
+    await expect(ruleReader.read(blank(16, 16), { x: 0, y: 0, width: 16, height: 16 })).resolves.toBeNull();
+    await expect(ruleReader.read(STRIP, { x: 10, y: 0, width: 20, height: 16 })).resolves.toBeNull();
+    await expect(ruleReader.read(STRIP, REGION, { label: { x: -4, y: 0, width: 10, height: 10 } })).resolves.toBeNull();
+  });
+});
+
+describe('the numerals-reader seam, the template tier', () => {
+  it('names a shape the rule cannot, when its atlas carries it', async () => {
+    // The premise: the box is a full glyph, which `number.ts` refuses by design.
+    await expect(ruleReader.read(BLOCK_IMAGE, REGION)).resolves.toBeNull();
+    const read = await createTemplateReader({ templates: [BLOCK_TEMPLATE] }).read(BLOCK_IMAGE, REGION);
+    expect(read?.value).toBe(8);
+    expect(read?.tier).toBe('template');
+    expect(read!.confidence).toBeGreaterThan(0.99);
+  });
+
+  it('refuses a glyph below its match floor, and an atlas with no templates', async () => {
+    await expect(createTemplateReader({ templates: STRIP_ATLAS }).read(BAR_IMAGE, REGION)).resolves.toBeNull();
+    await expect(createTemplateReader({ templates: [] }).read(BLOCK_IMAGE, REGION)).resolves.toBeNull();
+  });
+
+  it('rejects an atlas whose feature is not the tier geometry', () => {
+    expect(() => createTemplateReader({ templates: [{ digit: '8', values: new Float64Array(12) }] }))
+      .toThrow(TypeError);
+  });
+});
+
+describe('the numerals-reader seam, the selector', () => {
+  it('answers from the rule tier when the region is a plain numeral strip', async () => {
+    const reader = createAutoReader({
+      // A template tier that could answer too: the rule tier has to answer first.
+      template: createTemplateReader({ templates: STRIP_ATLAS }),
+      ocr: failingReader('ocr'),
+    });
+    const read = await reader.read(STRIP, REGION);
+    expect(read?.value).toBe(16);
+    expect(read?.tier).toBe('rule');
+  });
+
+  it('falls to the template tier when the rule refuses a shape the atlas carries', async () => {
+    const reader = createAutoReader({
+      template: createTemplateReader({ templates: [BLOCK_TEMPLATE] }),
+      ocr: failingReader('ocr'),
+    });
+    const read = await reader.read(BLOCK_IMAGE, REGION);
+    expect(read?.value).toBe(8);
+    expect(read?.tier).toBe('template');
+  });
+
+  it('falls to OCR when both fast tiers refuse the glyph', async () => {
+    // The premise is the refusals, not just the OCR answer.
+    await expect(ruleReader.read(BAR_IMAGE, REGION)).resolves.toBeNull();
+    await expect(createTemplateReader({ templates: STRIP_ATLAS }).read(BAR_IMAGE, REGION)).resolves.toBeNull();
+    const reader = createAutoReader({
+      template: createTemplateReader({ templates: STRIP_ATLAS }),
+      ocr: fixedReader({ value: 5, confidence: 0.9, tier: 'ocr' }),
+    });
+    const read = await reader.read(BAR_IMAGE, REGION);
+    expect(read).toEqual({ value: 5, confidence: 0.9, tier: 'ocr' });
+  });
+
+  it('fast never calls the OCR tier', async () => {
+    const fast = createAutoReader({ strategy: 'fast', ocr: failingReader('ocr') });
+    const read = await fast.read(STRIP, REGION);
+    expect(read?.tier).toBe('rule');
+    // Both fast tiers refuse: the read is a refusal, not an escalation.
+    await expect(fast.read(BAR_IMAGE, REGION)).resolves.toBeNull();
+  });
+
+  it('ocr skips the fast tiers', async () => {
+    const reader = createAutoReader({
+      strategy: 'ocr',
+      rule: failingReader('rule'),
+      template: failingReader('template'),
+      ocr: fixedReader({ value: 38, confidence: 0.9, tier: 'ocr' }),
+    });
+    expect(await reader.read(STRIP, REGION)).toEqual({ value: 38, confidence: 0.9, tier: 'ocr' });
+    // An OCR refusal is the read's refusal; the fast tiers are not tried after it.
+    const refusing = createAutoReader({
+      strategy: 'ocr',
+      rule: failingReader('rule'),
+      template: failingReader('template'),
+      ocr: fixedReader(null),
+    });
+    await expect(refusing.read(STRIP, REGION)).resolves.toBeNull();
+  });
+});
+
+describe('the numerals-reader factory', () => {
+  it('builds the selector from the strategy and the templates it is handed', async () => {
+    const auto = createNumeralsReader({ templates: [BLOCK_TEMPLATE], ocr: failingReader('ocr') });
+    expect((await auto.read(STRIP, REGION))?.tier).toBe('rule');
+    expect((await auto.read(BLOCK_IMAGE, REGION))?.tier).toBe('template');
+
+    const fast = createNumeralsReader({ strategy: 'fast', ocr: failingReader('ocr') });
+    await expect(fast.read(BLOCK_IMAGE, REGION)).resolves.toBeNull();
+
+    const ocr = createNumeralsReader({
+      strategy: 'ocr',
+      ocr: fixedReader({ value: 38, confidence: 0.9, tier: 'ocr' }),
+    });
+    expect(await ocr.read(STRIP, REGION)).toEqual({ value: 38, confidence: 0.9, tier: 'ocr' });
+  });
+
+  it('has no template tier when no templates are handed in', async () => {
+    const reader = createNumeralsReader({
+      ocr: fixedReader({ value: 8, confidence: 0.9, tier: 'ocr' }),
+    });
+    expect(await reader.read(BLOCK_IMAGE, REGION)).toEqual({ value: 8, confidence: 0.9, tier: 'ocr' });
+  });
+});
