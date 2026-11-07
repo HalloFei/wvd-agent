@@ -82,8 +82,12 @@ export function screenStandings(facts: FrameFacts): readonly ScreenStanding[] {
     { screen: 'combat', support: buttons ? (strong ? 1 : 0.8) : 0, ruledOut: arrow || title || glyphs },
     // The 3-D view is the screen with the minimap; it has no title bar of its own.
     { screen: 'dungeon', support: arrow ? 0.8 : 0, ruledOut: title },
-    // The map is the screen with a floor title; it draws no minimap.
-    { screen: 'dungeonmap', support: title ? 0.5 : 0, ruledOut: arrow },
+    // The map is the screen with a floor title. Its **player marker is arrow-shaped too**, so an arrow
+    // alone is not the 3-D view: the live 1920 map frame carries both the title and the marker, and each
+    // rule used to rule the other out — dungeon out on the title, dungeonmap out on the arrow — so a
+    // plainly drawn map read 'unknown' (live 2026-11-08 00:24, and the stall of runs 22/23). The title
+    // is decisive; the arrow only decides when there is no title.
+    { screen: 'dungeonmap', support: title ? 0.6 : 0, ruledOut: arrow && !title },
     { screen: 'town', support: 0, ruledOut: arrow },
     { screen: 'worldmap', support: 0, ruledOut: arrow },
     // The chest screens carry no unique corner ink and no title band; only their own recognisers
