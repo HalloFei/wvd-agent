@@ -289,6 +289,14 @@ function fallbackWord(intent: Intent): string {
     case 'loot': return 'collected the loot card';
     case 'fight': return 'stayed in the battle';
     case 'exit': return 'leaves the dungeon and restarts the route';
+    case 'recover': {
+      switch (intent.step.kind) {
+        case 'exit-page': return 'left the page by its exit';
+        case 'collapse-party-panel': return 'collapsed the party panel to reveal the world map';
+        case 'back': return 'pressed Esc once';
+        case 'done': return 'waited and looked again';
+      }
+    }
     case 'run-script': return 'runs the task script';
     case 'wait': return 'waited and looked again';
     case 'stop': return 'stopped the session';

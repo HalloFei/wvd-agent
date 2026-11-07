@@ -42,10 +42,11 @@ import { createTaskPolicy } from '../src/tasks/policy.ts';
 import { tileOnScreen } from '../src/perception/map.ts';
 import { classify } from '../src/policy/session.ts';
 import { WvdWorld, type WvdSession } from '../src/world.ts';
+import { PARTY_PANEL_COLLAPSE } from '../src/policy/recover.ts';
 
 const CTX = {} as ToolCallContext;
 /** The Windows set-1 codes the World's receipts report; the commands' own are in `actions/`. */
-const SCAN = { W: 0x11, R: 0x13, F: 0x21, G: 0x22 };
+const SCAN = { W: 0x11, R: 0x13, F: 0x21, G: 0x22, ESC: 0x01 };
 
 // ---------------------------------------------------------------------------------------------
 // The fakes the brief asks for: a source, a perceiver and an actuator
@@ -1806,8 +1807,8 @@ describe('the escalation exchange', () => {
     expect(stuck[0]!.event.text).toContain('Question:');
     // the snapshot is a second capture at the configured width, not a re-encode of the verdict frame
     expect(snapshotCalls).toEqual([cfg.escalationImageWidth]);
-    // nobody answered, so the loop took its own recovery: the map first, never `F` blind
-    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    // nobody answered, so the loop took its own recovery: an unnamed screen is one Esc
+    expect(actuator.calls).toEqual([`key ${SCAN.ESC} 60`]);
     // exactly one question, counting pushes: the hourly budget is the loop's
     expect(world.escalationsThisHour()).toBe(1);
   });
@@ -2010,7 +2011,7 @@ describe('the escalation exchange', () => {
     const start = Date.now();
     await world.tick();
     expect(Date.now() - start).toBeLessThan(2000);
-    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.ESC} 60`]);
   });
 
   it('a stop during the snapshot capture asks nothing and sends nothing', async () => {
@@ -2041,7 +2042,7 @@ describe('the escalation exchange', () => {
 
     await world.tick();
 
-    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.ESC} 60`]);
   });
 
   it('treats a discarded question as undelivered and takes the fallback', async () => {
@@ -2055,7 +2056,7 @@ describe('the escalation exchange', () => {
     world.onEventsSettled([envelope], 'discarded');
     await tick;
 
-    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.ESC} 60`]);
   });
 
   it('resumes with the answer\'s intent, and refuses a second answer', async () => {
@@ -2088,8 +2089,8 @@ describe('the escalation exchange', () => {
     const late = outcome(await tool(world, 'wvd_resume').handler({}, CTX));
     expect(late.failed).toBe(true);
     expect(late.text).toContain('expired');
-    // the fallback is screen-chosen: an unknown screen is opened, not left (F is 調査 there)
-    expect(late.text).toContain('opened the map');
+    // the fallback is screen-chosen: an unnamed screen takes one Esc (policy/recover.ts)
+    expect(late.text).toContain('pressed Esc once');
   });
 });
 
@@ -3420,5 +3421,93 @@ describe("the inn's rest", () => {
 
     expect(actuator.calls).toEqual(['tap 1114,660']);
     expect(host.logRecords.some((line) => line.message.includes('the inn: leave at 离开'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The recovery policy in the loop (operator, 2026-11-07)
+// ---------------------------------------------------------------------------------------------
+
+describe('the recovery', () => {
+  /** The named page the stepper leaves by its own exit; the frame carries the measured point. */
+  const records: Observation = {
+    screen: 'ui-menu',
+    atMs: 100,
+    confidence: 0.93,
+    page: 'records',
+    title: '记录 (records menu)',
+    exit: { x: 960, y: 870 },
+  };
+  const townView: Observation = { screen: 'town', atMs: 100, confidence: 0.9 };
+
+  it('leaves a named page by its exit step, and records the intent', async () => {
+    const { world, host, actuator } = makeWorld({ observation: records });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['tap 960,870']);
+    expect(host.logRecords.some((line) => line.message.includes('记录 (records menu): leaving by its exit'))).toBe(true);
+    // The page's close is now the recovery intent, not a private tap in the tick.
+    const status = outcome(await tool(world, 'wvd_status').handler({}, CTX));
+    expect(status.text).toContain('last intent recover');
+  });
+
+  it('collapses the party panel when the town page is the lost screen', async () => {
+    // The route on town says exit, and the exit is the map's own command — but the town's world map
+    // is behind the party panel (operator, 2026-11-07). The lost path is answered by the same
+    // fallback the question's timeout takes: the collapse control, not a blind G.
+    const { world, host, actuator } = makeWorld({ observation: townView });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['tap ' + PARTY_PANEL_COLLAPSE.x + ',' + PARTY_PANEL_COLLAPSE.y]);
+    expect(host.logRecords.some((line) => line.message.includes('party panel'))).toBe(true);
+  });
+
+  it('takes one Esc on an unnamed screen when the question times out', async () => {
+    // The stepper's answer for a screen nothing named: one Esc, the transition's own key. The map
+    // press this used to take belongs to the dungeon-like frame, not to a lost screen.
+    const { world, host, actuator } = makeWorld({ observation: unknownButSeen, cfg: { escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['key ' + SCAN.ESC + ' 60']);
+    expect(host.logRecords.some((line) => line.message.includes('has no name'))).toBe(true);
+  });
+
+  it('does not recover the same screen more than three times', async () => {
+    // Six stalled reads of one page: the first three leave it, the rest wait for the stall clock.
+    const { world, host, actuator, clock } = makeWorld({ observation: records });
+    await started(world, host);
+
+    for (let tick = 0; tick < 6; tick += 1) {
+      await world.tick();
+      clock.advance(1_200);
+    }
+
+    expect(actuator.calls).toEqual(['tap 960,870', 'tap 960,870', 'tap 960,870']);
+    expect(host.logRecords.some((line) => line.message.includes('did not recover after 3 steps'))).toBe(true);
+  });
+
+  it('sends nothing of its own when the stepper is done: the existing fallback stands', async () => {
+    // The 3-D view is a screen the route can act on, so the stepper is `done`: no tap, no Esc — the
+    // loop's own fallback (open the map) is what happens.
+    const { world, host, actuator, clock } = makeWorld({
+      observation: dungeonView,
+      cfg: { stallStopSeconds: 2, escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+
+    clock.advance(600);
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['key ' + SCAN.G + ' 60', 'key ' + SCAN.G + ' 60']);
+    // Not a recover intent at all: the loop's own fallback is the last decision it took.
+    expect(host.logRecords.some((line) => line.message.includes('no step to press'))).toBe(false);
+    const status = outcome(await tool(world, 'wvd_status').handler({}, CTX));
+    expect(status.text).toContain('last intent open-map');
   });
 });

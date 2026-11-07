@@ -325,6 +325,18 @@ export type EngineEvent =
 
 // §6 Policy
 
+/**
+ * The recovery policy's next control (`src/policy/recover.ts`): a page leaves by its own exit, a
+ * screen nothing named takes one `Esc`, the town page reveals the world map its party panel covers,
+ * and a screen the route can act on is `done` — the caller's route decides from there. Carried by
+ * the `recover` intent, so what the loop presses and what the model is told are one decision.
+ */
+export type RecoveryStep =
+  | { readonly kind: 'exit-page'; readonly at: Point; readonly page: string; readonly label: string }
+  | { readonly kind: 'back' }
+  | { readonly kind: 'collapse-party-panel'; readonly at: Point }
+  | { readonly kind: 'done'; readonly why: string };
+
 export type Intent =
   | { kind: 'open-map' }
   | { kind: 'move'; target: Point }
@@ -332,6 +344,7 @@ export type Intent =
   | { kind: 'loot' }
   | { kind: 'fight' }
   | { kind: 'exit' }
+  | { kind: 'recover'; step: RecoveryStep }
   | { kind: 'run-script'; name: ScriptId }
   | { kind: 'wait'; ms: number }
   | { kind: 'stop'; reason: string };

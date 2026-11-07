@@ -36,6 +36,16 @@ export function fallbackPhrase(intent: Intent): string {
     case 'loot': return 'collects the loot card';
     case 'fight': return 'keeps resolving the battle';
     case 'exit': return 'leaves the dungeon and restarts the route';
+    case 'recover': {
+      // The stepper's own words: the model is told the control the loop will press, not a category.
+      // `done` is not one the loop hands over (the route's fallback is), but say it rather than throw.
+      switch (intent.step.kind) {
+        case 'exit-page': return 'leaves the ' + intent.step.page + ' page by ' + intent.step.label;
+        case 'collapse-party-panel': return 'collapses the party panel to reveal the world map';
+        case 'back': return 'presses Esc once';
+        case 'done': return 'waits, having no step to press';
+      }
+    }
     case 'run-script': return 'runs the task script';
     case 'wait': return 'waits and looks again';
     case 'stop': return 'stops the session';

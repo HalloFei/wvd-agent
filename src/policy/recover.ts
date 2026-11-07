@@ -9,14 +9,11 @@
  * does not know is one `Esc` (a transition may clear on its own), and a screen it cannot leave is
  * `done` — the caller's route decides from there.
  */
-import type { Observation, Point } from '../contracts.ts';
+import type { Observation, Point, RecoveryStep } from '../contracts.ts';
 import { UI_CATALOG } from '../ui/pages.ts';
 
-export type RecoveryStep =
-  | { readonly kind: 'exit-page'; readonly at: Point; readonly page: string; readonly label: string }
-  | { readonly kind: 'back' }
-  | { readonly kind: 'collapse-party-panel'; readonly at: Point }
-  | { readonly kind: 'done'; readonly why: string };
+/** The step union is contracts §6's, because §6's `recover` intent carries it. */
+export type { RecoveryStep };
 
 /**
  * The town page's party-panel collapse control: pressing it reveals the world map the panel covers

@@ -90,6 +90,7 @@ import { openerCardCentre, openerSlot } from './perception/opener.ts';
 import { openerFor } from './actions/battle.ts';
 import { chooseOpener } from './policy/chest.ts';
 import { nextOrientStep, type OrientCommand } from './policy/orient.ts';
+import { recoverStep } from './policy/recover.ts';
 import { chooseInnRest } from './policy/inn.ts';
 import { restAtInn } from './actions/inn.ts';
 import { WORLD_SCREENS } from './tasks/steps.ts';
@@ -256,11 +257,6 @@ const MIN_ACT_HOLD_MS = 40;
 /** Windows set-1 scan codes for the WASD keys; the model names letters, the engine gets integers. */
 const MOVEMENT_SCAN: Readonly<Record<string, number>> = { w: 0x11, a: 0x1e, s: 0x1f, d: 0x20 };
 /**
- * What the loop does when nobody answers: reach for the map, the only surface the route can act
- * from — `F` is 移動至出口 only on the map, and 調査 in the 3D view (navigation §3d), so a blind
- * `F` is not a recovery. On the map the recovery is the exit itself (contracts §6).
- */
-/**
  * Screens that can only be on screen while the party stands at something: the chest prompt, the
  * opener panel, the loot card, a battle. They answer a walk by themselves, because the stillness
  * rule cannot: the chest prompt animates its highlight (live 2026-11-01: two captures 0.5 s apart
@@ -271,12 +267,24 @@ const ARRIVAL_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
   'chest-prompt', 'chest-open', 'drop-item-claim', 'combat',
 ]);
 
-function fallbackIntent(screen: ScreenId | null): Intent {
+/**
+ * The recovery the loop takes when a screen is lost: what nobody's answer leaves it doing.
+ *
+ * The recovery policy (policy/recover.ts, operator 2026-11-07) is asked first. Its actionable steps
+ * are the loop's answer — a page by its own exit, one Esc on an unnamed screen, the town page's
+ * party panel collapsed so the world map behind it is revealed. A `done` step is a screen the route
+ * can act on, so the loop's own fallback stands: on the map the exit itself (contracts §6), anywhere
+ * else the map — `F` is 移動至出口 only on the map, and 調査 in the 3D view (navigation §3d), so a
+ * blind `F` is not a recovery.
+ */
+function fallbackFor(observation: Observation): Intent {
   // On the main character's death there is nothing to press: the question is Coo's (operator rule
   // 2026-11-05), and the game's own transition is the screen's business. A key here could skip a
   // revive prompt or land on a menu nobody named.
-  if (screen === 'main-character-dead') return { kind: 'wait', ms: 1_000 };
-  return screen === 'dungeonmap' ? { kind: 'exit' } : { kind: 'open-map' };
+  if (observation.screen === 'main-character-dead') return { kind: 'wait', ms: 1_000 };
+  const step = recoverStep(observation);
+  if (step.kind !== 'done') return { kind: 'recover', step };
+  return observation.screen === 'dungeonmap' ? { kind: 'exit' } : { kind: 'open-map' };
 }
 
 /**
@@ -351,6 +359,17 @@ const PARTY_DOWN_FRAMES = 2;
 
 /** How many X 关闭 taps a character page may take before the loop leaves it to the stall clock. */
 const PAGE_CLOSE_TRIES = 3;
+
+/**
+ * How many recovery steps one screen gets before the loop leaves it to the stall clock (operator,
+ * 2026-11-07). Three, the same bound the character page's close has: a page exits in one step, an
+ * unnamed screen clears in one Esc, the town page reveals its map in one collapse — a screen still
+ * there after three is not a step the recovery can take, and a tenth tap is the loop fighting itself.
+ */
+const RECOVER_STEP_CAP = 3;
+
+/** Windows set-1 scan code for Esc: the one key the recovery stepper presses (`back`). */
+const ESC_SCAN = 0x01;
 
 /**
  * How many ticks a readable map that carries no 楼梯-门 icon gets before the orientation stops. The
@@ -677,6 +696,11 @@ export class WvdWorld implements World {
   #lastMapRead: MapRead | null = null;
   #lastIntent: { readonly intent: Intent; readonly atMs: number } | null = null;
   #lastObservation: Observation | null = null;
+  /** The recovery's bound: the screen (and page) the steps were spent on, and how many so far. */
+  #recoverEpoch: string | null = null;
+  #recoverSteps = 0;
+  /** The one warning a capped screen gets, so a lost screen does not log every tick. */
+  #recoverCapped = false;
   #ticks = 0;
   #captureFailures = 0;
   #willpower: readonly number[] = [];
@@ -1054,6 +1078,9 @@ export class WvdWorld implements World {
       this.#lastMapRead = null;
       this.#lastIntent = null;
       this.#lastObservation = null;
+      this.#recoverEpoch = null;
+      this.#recoverSteps = 0;
+      this.#recoverCapped = false;
       this.#qteRerolls = 0;
       this.#lootTapAtMs = null;
       this.#lootTaps = 0;
@@ -1284,16 +1311,14 @@ export class WvdWorld implements World {
     // one command and lets the frame answer. It runs before the rest gate on purpose: a menu over the
     // town is exactly what would otherwise hold the cycle's rest open until the gate timed out.
     if (!waiting && observation.screen === 'ui-menu') {
-      if (!this.#pacer.ready(now)) return;
-      this.#pacer.act(now);
-      const tapped = await this.#commands.tapPoint(observation.exit);
-      if (tapped.ok) {
-        this.#host?.log.info(
-          `wvd: ${observation.title}: leaving by its exit (${observation.exit.x},${observation.exit.y})`,
-        );
-      } else {
-        this.#host?.log.warn(`wvd: the ${observation.title} exit was refused (${tapped.reason})`);
-      }
+      // The page's own exit is the recovery stepper's first step (policy/recover.ts), so the close
+      // is one `recover` intent: `#execute` paces it, bounds it and logs it like every other press.
+      await this.#execute({ kind: 'recover', step: recoverStep(observation) }, observation.screen, {
+        session,
+        frame,
+        observation,
+        now,
+      });
       return;
     }
 
@@ -1493,11 +1518,13 @@ export class WvdWorld implements World {
     // testdata/screens/2026-11-03-gmenu/gmenu-3d-view.jpg: minimap arrow 35 px, title-band ink 5 119 px,
     // t-mvy23qe2). The map states the floor in text and is one command away, so that command is sent
     // once per unnamed episode; only a frame still unnamed afterwards becomes a question. This is the
-    // same recovery the question's own timeout already takes, moved in front of the 90 s.
+    // same recovery the question's own timeout would otherwise take, moved in front of the 90 s.
+    // The frame's own evidence says dungeon, so the map is the surface it is asking about — this is
+    // not a lost screen and the recovery stepper's `back` is not its answer.
     if (verdict === 'escalate' && dungeonLike && !this.#askedForMap && !waiting) {
       this.#askedForMap = true;
       this.#host?.log.info('wvd: the frame is unnamed; opening the map to ask the game before the question');
-      await this.#execute(fallbackIntent(observation.screen), observation.screen, {
+      await this.#execute({ kind: 'open-map' }, observation.screen, {
         session,
         frame,
         observation,
@@ -2023,8 +2050,9 @@ export class WvdWorld implements World {
     const id = `esc-${this.#nextEscalationId++}`;
     const timeoutMs = this.#cfg.escalateTimeoutMs;
     // The recovery the model is told about, and the one the loop takes, are the same decision:
-    // on the map it is the exit; anywhere else it is opening the map — never `F` blind (§3d).
-    const fallback = fallbackIntent(observation.screen);
+    // the recovery stepper's next step when it is one to press, else the loop's own fallback (the
+    // exit on the map, the map anywhere else — never `F` blind, §3d).
+    const fallback = fallbackFor(observation);
 
     const envelope = stuckEvent({
       timezone: this.#timezone,
@@ -2487,13 +2515,92 @@ export class WvdWorld implements World {
       case 'exit':
         if (fromScreen !== 'dungeonmap') {
           // F on the 3D view is 調査: walking to the exit needs the map, so the recovery is to open
-          // it and let the next tick press F from the only screen where it is 移動至出口.
+          // it and let the next tick press F from the only screen where it is 移動至出口. A screen
+          // whose own recovery is a step is the exception, and it is the fallback's answer: the town
+          // page's world map is behind its party panel, so a map key pressed there is the loop lost
+          // on a screen the exit cannot reach (operator, 2026-11-07).
+          const seen = context?.observation;
+          const answer = seen === undefined ? null : fallbackFor(seen);
+          if (answer !== null && answer.kind === 'recover') {
+            await this.#execute(answer, fromScreen, context);
+            return;
+          }
           this.#host?.log.info(`wvd: exit needs the map (screen is ${fromScreen ?? 'unknown'}); opening it first`);
           await this.#press('open-map', fromScreen, () => this.#commands.openMap());
           return;
         }
         await this.#press('exit', fromScreen, () => this.#commands.automoveToExit());
         return;
+      case 'recover': {
+        // One step of the recovery policy (policy/recover.ts). It is the loop's fallback for a screen
+        // it is lost on, and the close of a named page: one press, paced like every other direct
+        // operation, on a frame that has stopped moving (operator rule 2026-11-03).
+        const step = intent.step;
+        if (step.kind === 'done') {
+          // `fallbackFor` never hands one over — a screen the route can act on keeps the loop's own
+          // fallback — so this is the guard that keeps a future caller honest, not a press.
+          this.#host?.log.info(`wvd: recovery: no step to press (${step.why})`);
+          return;
+        }
+        const pressedAt = this.#now();
+        if (!this.#pacer.ready(pressedAt)) return;
+        // Bounded per screen (and per page): a screen that does not leave after a few steps is the
+        // stall clock's, never a ten-taps-a-second loop on one frame.
+        const epoch = `${fromScreen ?? 'none'}:${step.kind === 'exit-page' ? step.page : ''}`;
+        if (this.#recoverEpoch !== epoch) {
+          this.#recoverEpoch = epoch;
+          this.#recoverSteps = 0;
+          this.#recoverCapped = false;
+        }
+        if (this.#recoverSteps >= RECOVER_STEP_CAP) {
+          if (!this.#recoverCapped) {
+            this.#recoverCapped = true;
+            this.#host?.log.warn(`wvd: the screen did not recover after ${RECOVER_STEP_CAP} steps; leaving it to the stall clock`);
+          }
+          return;
+        }
+        if (this.#cfg.dryRun) {
+          this.#host?.log.info('wvd: dry run, would take the recovery step');
+          return;
+        }
+        this.#recoverSteps += 1;
+        this.#pacer.act(pressedAt);
+        if (step.kind === 'exit-page') {
+          // The page's title is the frame's, when this is the page the World read: the log names the
+          // page the operator sees, not the catalog id.
+          const name = context?.observation?.screen === 'ui-menu' ? context.observation.title : step.page;
+          const tapped = await this.#commands.tapPoint(step.at);
+          if (tapped.ok) {
+            this.#host?.log.info(`wvd: ${name}: leaving by ${step.label} at ${step.at.x},${step.at.y}`);
+          } else {
+            this.#host?.log.warn(`wvd: the ${name} exit was refused (${tapped.reason})`);
+          }
+          return;
+        }
+        if (step.kind === 'collapse-party-panel') {
+          const tapped = await this.#commands.tapPoint(step.at);
+          if (tapped.ok) {
+            this.#host?.log.info(
+              `wvd: recovery: collapsing the party panel to reveal the world map at ${step.at.x},${step.at.y}`,
+            );
+          } else {
+            this.#host?.log.warn(`wvd: the party-panel collapse was refused (${tapped.reason})`);
+          }
+          return;
+        }
+        // `back`: one Esc through the key primitive every other press takes. The engine refuses a
+        // press while the game window does not hold the foreground (§4), so it cannot land in the
+        // operator's own work.
+        const session = context?.session;
+        if (session === undefined) {
+          this.#host?.log.warn('wvd: recovery: no session to press Esc in');
+          return;
+        }
+        this.#host?.log.info('wvd: recovery: the screen has no name; pressing Esc once');
+        const pressed = await session.actuator.holdKey(ESC_SCAN, this.#cfg.pressHoldMs);
+        if (!pressed.ok) this.#host?.log.warn(`wvd: the Esc press was refused (${pressed.reason})`);
+        return;
+      }
       case 'open-chest': {
         // The chest is two screens: the 打开 prompt, then the 由谁打开? panel. The prompt is a single
         // tap at a fixed point; the panel is a choice among cards.
