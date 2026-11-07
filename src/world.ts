@@ -72,6 +72,7 @@ import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
 import { advanceMode, INITIAL_MODE, type ModeMemory } from './policy/mode.ts';
 import { nextPageCloseTries } from './policy/page-episode.ts';
+import { isExpectedFloor } from './tasks/steps.ts';
 import { OPERATION_PACE_MS, Pacer } from './policy/pacing.ts';
 import { BattleSequence } from './policy/battle-sequence.ts';
 import {
@@ -1333,6 +1334,16 @@ export class WvdWorld implements World {
     // One command at a time: a sent command owns the loop until its own effect answers it. The
     // verdict is still taken — a stalled action has to be able to escalate — but nothing is sent.
     const waiting = await this.#advanceInFlight(observation, frame, now);
+    // The floor is judged **after a move**, not on every frame (operator rule 2026-11-08: measure again
+    // after each action, never continuously — it is the arrival that can leave the party elsewhere). A
+    // map off the task floor re-arms the orientation, whose stairs/climb/fallback is the only actor that
+    // knows how to get back: without that, the task gate stops a session that is merely on the stairs
+    // (live 2026-11-08 00:44, run 24: 'the map is not the task floor', read 0c0280… vs 0000…).
+    if (!waiting && this.#task?.orient !== undefined && observation.screen === 'dungeonmap'
+      && !isExpectedFloor(this.#task.orient.floor, observation.map.titleKey)) {
+      if (!this.#orienting) this.#host?.log.info('wvd: off the task floor; the orientation is re-armed');
+      this.#orienting = true;
+    }
 
     // A page of the knowledge base (operator rule 2026-11-06: a named page can always be left). The
     // reader named it and the catalog carries the measured tap that leaves it, so the tick sends that
@@ -1612,6 +1623,18 @@ export class WvdWorld implements World {
     // recogniser: the skill panel a cast opens reads `unknown`, and this gate used to answer it with
     // its own wait, so the owed confirm was never dispatched (live 2026-11-07 22:13: 45 s under the
     // panel, the press only after the recovery's Esc named the screen again).
+    // A **map frame is the result of an action** (open-map, a walk landing on a floor, a travel): judge it
+    // once, here. If it is not the task floor the orientation takes over again — the operator's rule
+    // (2026-11-08): check after an action, stop checking on arrival. Live 00:42-00:44 (run 24): the farm
+    // walked onto the stair floor after the orientation had retired on arrival, and the task's floor gate
+    // stopped the session where the only sensible next order was 'go to the farm floor'.
+    const orientTask = this.#task?.orient;
+    if (!this.#orienting && orientTask !== undefined && observation.screen === 'dungeonmap'
+      && !isExpectedFloor(orientTask.floor, observation.map.titleKey)) {
+      this.#orienting = true;
+      this.#host?.log.info('wvd: not on the farm floor; the orientation takes over again');
+    }
+
     if (this.#orienting && this.#mode.mode !== 'battle') {
       const orient = this.#task?.orient;
       if (orient === undefined) {
