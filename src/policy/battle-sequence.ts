@@ -120,6 +120,22 @@ export class BattleSequence {
     return phase.speedOn === true && phase.autoOn !== true;
   }
 
+  /**
+   * The opener whose skill panel is waiting for its **確定**, or null when no cast is half-done.
+   *
+   * The slot has been sent and the resolving press has not: the operation is owed, and it needs
+   * **nothing** from the frame — the panel covers the toggles, and the press is on the panel's own
+   * button. That is why the fact is stated here, without a frame: the loop only dispatches the battle
+   * branch when the route says `fight`, and the route's rule is that an unnamed screen is a wait, never
+   * a click — so a caller that asks the sequence only on frames it can name would never send this press
+   * (live 2026-11-07 22:00:11: the panel for 拉巴迪奥斯的秘术, 48 s, the run stopped).
+   */
+  pendingConfirm(): BattleOpener | null {
+    if (this.#opener === undefined || this.#opener === null) return null;
+    if (!this.#slotSent || this.#confirmSent) return null;
+    return this.#opener;
+  }
+
   /** One decision for this tick. The caller sends at most one tap and reports its return. */
   next(phase: BattlePhase, nowMs: number): BattleStep {
     this.#sent = null;
@@ -132,14 +148,15 @@ export class BattleSequence {
     const paced = this.#lastTapAtMs === null || nowMs - this.#lastTapAtMs >= this.#options.stepMs;
     if (!paced) return { kind: 'wait', why: 'paced' };
 
-    // The slot tap opens the skill's detail panel, and the skill does not resolve until 确定 is pressed:
+    // The slot tap opens the skill's detail panel, and the skill does not resolve until 確定 is pressed:
     // the confirmation is owed whatever this frame says about the toggles — the panel covers them
     // (operator, 2026-11-07: *a full team damage skill needs press confirmation after selection*).
     // Live 2026-11-07 01:05: the slot tap opened the panel, the frame stopped being `combat`, and the
     // confirm was never sent — 453 ticks, the run stopped.
-    if (this.#opener !== undefined && this.#opener !== null && this.#slotSent && !this.#confirmSent) {
+    const owed = this.pendingConfirm();
+    if (owed !== null) {
       this.#sent = 'confirm';
-      return { kind: 'confirm', opener: this.#opener };
+      return { kind: 'confirm', opener: owed };
     }
 
     // 1. 倍速: the battle's clock, and everything after it rides on it.

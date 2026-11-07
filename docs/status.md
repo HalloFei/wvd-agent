@@ -1220,6 +1220,28 @@ first real consumer, the map readout migration, pinned on the board as `t-mw6chg
 `tests/readers-wiring.test.ts` keeps R9's half — the composition root still hands `ChestPerceiver` the
 OCR tier and the tier log.
 
+## The battle panel's confirm is dispatched without a frame (2026-11-07)
+
+The first acceptance run that started on the **town** page (`.tmp/runs/2026-11-07-3-cycles-12`) got
+all the way in: town → panel collapse → world map → atlas travel → the 4F floor at 21:59:47 → a walk
+→ a battle at 22:00:01 → 爱丽丝's opener cast at 22:00:11. Then 拉巴迪奥斯的秘术's skill panel came up
+(取消 / 確定, MP 161 ▸ 136) and the run sat on it for 482 ticks. The frame reads `unknown` 0.20, and
+**the confirm was never sent**.
+
+The sequence was not at fault: `BattleSequence.next` answers the panel's frame with
+`{kind:'confirm'}`, and the 01:05 fix that made that the first branch is still tested and passing.
+The tick never asked it. `world.ts`'s fight branch is written to own unnamed frames, but the branch
+is only entered when the route's `Intent` is `fight`, and `policy/route.ts` answers an unnamed screen
+with `wait` — *a screen we did not identify is a wait, never a click*. The panel is unnamed, so every
+tick was a wait: the owed operation had no dispatcher above it.
+
+Fix: `BattleSequence.pendingConfirm()` states the owed press without a frame, and `#decide` turns a
+route `wait` into `fight` when the mode is `battle` and that press is owed — narrow on purpose (any
+other unnamed frame still waits; the fight branch still refuses a named non-combat screen). The
+confirm logs its press, because its silence was unreadable in the 22:00 log. Proved red-first in
+`tests/world.test.ts` (the panel's frame presses it; a panel with nothing owed presses nothing) and
+`tests/battle-sequence.test.ts`; the amendment is in
+`docs/specs/2026-11-04-battle-sequencing-design.md`.
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

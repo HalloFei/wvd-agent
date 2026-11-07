@@ -57,6 +57,24 @@ describe('the battle operation sequence', () => {
     expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 3_100)).toEqual({ kind: 'auto' });
   });
 
+  it('says which confirm it owes, so a caller that only acts on named frames can still ask', () => {
+    // The panel is a frame the recognisers do not name, and the loop's own rule is that an unnamed
+    // screen is a wait, never a click — so the confirm above is only ever sent if the caller can ask
+    // the sequence *without* a frame (live 2026-11-07 22:00: the panel starved the cast's second half
+    // for 48 s). The answer names the opener whose panel is up.
+    const s = make();
+    s.enter(0);
+    expect(s.pendingConfirm()).toBeNull();                    // nothing decided yet
+    expect(s.next(speedUp, 1_000)).toEqual({ kind: 'slot', opener: alice });
+    expect(s.pendingConfirm()).toBeNull();                    // the slot was decided, not sent
+    s.completed(1_000);
+    expect(s.pendingConfirm()).toBe(alice);                   // the panel is up: the confirm is owed
+    const panel: BattlePhase = { speedOn: null, autoOn: null, activeMember: null };
+    expect(s.next(panel, 2_000)).toEqual({ kind: 'confirm', opener: alice });
+    s.completed(2_000);
+    expect(s.pendingConfirm()).toBeNull();                    // the cast is resolved
+  });
+
   it('measures the pace from the tap\'s return, not its start', () => {
     // The defect this pins: the old World stamped the pace with the frame the cast STARTED on, so
     // 自動 could follow the confirming tap ~100 ms later, inside the skill's resolution.

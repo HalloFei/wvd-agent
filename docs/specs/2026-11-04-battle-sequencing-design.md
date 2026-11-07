@@ -132,3 +132,33 @@ already exist, and config keys live in `config.ts` with their table in contracts
 The World command names, the exact step-state fields, and the test names. Nothing in the shape above
 is open: the operator picked A and made the timings configurable; the two defaults the proposal left
 open (turn-card gate; skip the opener when auto is on) are recorded above as calls.
+
+## Amendment 2026-11-07: the owed confirm is dispatched from the mode, not from the frame
+
+Live 2026-11-07 22:00:11, the first acceptance run that started in town: the slot tap was sent, the
+detail panel for 拉巴迪奥斯的秘术 (取消 / 確定, MP 161 ▸ 136) came up over the battle, and the screen
+read `unknown` for 48 s until the stall clock stopped the run. The confirm was never pressed.
+
+The sequence was not the failure. `next` already answers the panel's frame with
+`{kind:'confirm'}` — the 01:05 defect, fixed and tested — and this run proves it was never asked.
+The failure sat one layer above: `#execute`'s fight branch was written to own the whole battle
+*including* unnamed frames, but that branch is only reached when the **decision** says `fight`, and
+`src/policy/route.ts` answers an unnamed screen (`unknown`, or below its 0.5 floor) with
+`{kind:'wait'}` — *a screen we did not identify is a wait, never a click*. So no tick ever asked the
+sequence, and the cast's second half starved.
+
+The rule that resolves it: **an operation the sequence already owes needs no evidence from the
+frame**, so it must not be gated by a decision whose purpose is to keep blind clicks off unknown
+screens. Two narrow changes:
+
+- `BattleSequence.pendingConfirm()` — the opener whose panel is up, or null, stated without a frame,
+  so a caller that only acts on named screens can still ask. `next` reads the same method.
+- `src/world.ts` `#decide`: a route `wait` becomes the battle branch's `fight` when the mode is
+  `battle` and the sequence owes that confirm. Every other unnamed frame still waits, and the fight
+  branch's own gate still refuses a **named** non-combat screen, so the exception can never become a
+  click into an unknown page.
+
+The confirm now logs (*pressed the skill panel's 確定 …*): its silence was indistinguishable from a
+missing step in the 22:00 log. Proved by `tests/battle-sequence.test.ts` (the owed fact) and
+`tests/world.test.ts` (the unnamed frame presses it; an unnamed frame with nothing owed presses
+nothing).

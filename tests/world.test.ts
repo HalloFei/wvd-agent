@@ -1101,6 +1101,46 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(actuator.calls).toEqual(['tap 1231,708']);
   });
 
+  it("presses the panel's confirm on an unnamed frame: the cast it owes is not a click into an unknown screen", async () => {
+    // Live 2026-11-07 22:00:11: the slot tap was sent, the skill panel (拉巴迪奥斯的秘术, 取消 / 確定)
+    // came up over the battle, and the screen read 'unknown'. The route's own rule — an unnamed screen
+    // is a wait, never a click — turned every tick into a wait, so the battle branch below never ran
+    // and the confirm the sequence still owed was never dispatched: 48 s on the panel, run stopped.
+    const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const { world, host, perceiver, slotCalls, confirmCalls, clock } = makeWorld({
+      observation: combatView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
+    await started(world, host);
+
+    await world.tick();                              // the first read: one frame, not confirmed
+    await world.tick();                              // the same name again: the slot
+    expect(slotCalls).toEqual(['爱丽丝']);
+
+    perceiver.observation = refusedPanel;            // the skill panel: above a blank frame, below the act floor
+    clock.advance(1_000);
+    await world.tick();                              // the owed confirm, on the panel's own frame
+    expect(confirmCalls).toEqual(['爱丽丝']);
+    expect(host.logRecords.some((line) => line.message.includes('確定'))).toBe(true);
+  });
+
+  it('still waits on an unnamed frame when the battle owes no operation', async () => {
+    // The exception is the cast's own second half, not every unnamed frame: before the slot is sent,
+    // the route's rule stands and nothing is pressed into a frame the loop cannot name.
+    const reader: BattleMemberReader = { readActiveMember: async () => '爱丽丝' };
+    const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };
+    const { world, host, perceiver, slotCalls, confirmCalls, clock } = makeWorld({
+      observation: combatView, battle, cfg: { battleSettleMs: 0, battleStepMs: 1_000 },
+    });
+    await started(world, host);
+
+    await world.tick();                              // one frame of the turn card, not confirmed
+    perceiver.observation = refusedPanel;            // the screen is lost before the command phase
+    clock.advance(1_000);
+    await world.tick();
+    expect(slotCalls).toEqual([]);
+    expect(confirmCalls).toEqual([]);
+  });
   it('does nothing but auto when the ACTIVE member is not on the opener list', async () => {
     const reader: BattleMemberReader = { readActiveMember: async () => '本杰明' };
     const battle = { openers: [{ name: '爱丽丝', slot: '左下' as const, target: 'enemy' as const }], reader };

@@ -1584,7 +1584,17 @@ export class WvdWorld implements World {
       }
     }
 
-    const intent = this.#policy.next(state);
+    let intent = this.#policy.next(state);
+    // The skill panel a slot tap opens is a frame the recognisers do not name, and the route's rule is
+    // that an unnamed screen is a wait, never a click — so the battle branch inside `#execute` would
+    // never be reached to send the second half of the cast the loop itself started (live 2026-11-07
+    // 22:00:11: the panel for 拉巴迪奥斯的秘术, 48 s, the run stopped on the stall clock). This is not
+    // a decision about an unknown frame: it is the operation the sequence already owes, which needs no
+    // evidence from the frame at all — the panel covers the toggles and the press is on its own button.
+    // Only that one obligation outranks the wait; every other unnamed screen still waits.
+    if (intent.kind === 'wait' && this.#mode.mode === 'battle' && this.#battleSequence?.pendingConfirm() != null) {
+      intent = { kind: 'fight' };
+    }
     if (COMMAND_KINDS.has(intent.kind) && this.#failed.has(intent.kind)) {
       // A blind retry is not a decision: `openMap`'s second `G` on an already-open map is
       // 移动至目的地. The stall clock turns this into an escalation instead.
@@ -2815,7 +2825,12 @@ export class WvdWorld implements World {
             return;
           }
           case 'confirm': {
-            await send(`${step.opener.name}'s opener confirm`, this.#commands.battleConfirm(step.opener));
+            const pressed = await send(`${step.opener.name}'s opener confirm`, this.#commands.battleConfirm(step.opener));
+            if (pressed.ok) {
+              // Said out loud because its absence was unreadable in a live log: a cast whose panel never
+              // resolved looked exactly like a cast with no confirmation step at all (2026-11-07 22:00).
+              this.#host?.log.info(`wvd: pressed the skill panel's 確定 for ${step.opener.name}'s opener`);
+            }
             return;
           }
           case 'auto': {
