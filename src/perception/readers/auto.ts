@@ -24,7 +24,10 @@ import { ocrReader } from './ocr.ts';
 import type { NumeralsReader } from './contract.ts';
 import { ruleReader } from './rule.ts';
 
-/** The `worlds.wvd.readers.numerals` strategies (spec 2026-11-07, Config; `template` is R4). */
+/**
+ * The strategies a caller may name (spec 2026-11-07; `template` is R4). A constructor argument, not a
+ * config value: ruling R12 removed the config row until a real consumer reads it.
+ */
 export type NumeralsStrategy = 'auto' | 'fast' | 'template' | 'ocr';
 
 /**

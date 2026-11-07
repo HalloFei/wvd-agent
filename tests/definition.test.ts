@@ -98,11 +98,11 @@ describe('WVD World definition', () => {
     expect(host.events).toEqual([]);
   });
 
-  it('declares all forty contracts §8 keys with defaults the console can render', () => {
+  it('declares all thirty-nine contracts §8 keys with defaults the console can render', () => {
     const properties = WVD_CONFIG_GROUP.schema.properties;
     const prefix = 'worlds.wvd.';
-    // The section is a tree: `readers.numerals` is its first nested row, so the defaults are
-    // flattened the way the config's own paths are dotted.
+    // The section is flat again (review F2/R12: the numerals-reader strategy is a constructor
+    // argument, not a config row until a consumer exists), so every default path is one key.
     const defaultPaths = (value: Record<string, unknown>, at = ''): string[] =>
       Object.entries(value).flatMap(([key, item]) => (
         item !== null && typeof item === 'object'
@@ -110,8 +110,8 @@ describe('WVD World definition', () => {
           : [`${at}${key}`]
       ));
     const defaults = defaultPaths(WVD_DEFAULTS as unknown as Record<string, unknown>);
-    expect(Object.keys(properties)).toHaveLength(40);
-    expect(defaults).toHaveLength(40);
+    expect(Object.keys(properties)).toHaveLength(39);
+    expect(defaults).toHaveLength(39);
     for (const path of Object.keys(properties)) {
       expect(path.startsWith(prefix)).toBe(true);
       expect(defaults).toContain(path.slice(prefix.length));
