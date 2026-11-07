@@ -8,7 +8,7 @@
   },
   "rest": { "at": [916, 488], "timeoutMs": 90000 },
   "exit": {
-    "timeoutMs": 180000,
+    "timeoutMs": 300000,
     "steps": [
       { "op": "tap", "at": [1787, 96] },
       { "op": "expect", "screen": "dungeonmap", "timeoutMs": 8000 },
