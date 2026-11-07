@@ -71,6 +71,7 @@ import type {
 import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
 import { advanceMode, INITIAL_MODE, type ModeMemory } from './policy/mode.ts';
+import { nextPageCloseTries } from './policy/page-episode.ts';
 import { OPERATION_PACE_MS, Pacer } from './policy/pacing.ts';
 import { BattleSequence } from './policy/battle-sequence.ts';
 import {
@@ -1693,10 +1694,10 @@ export class WvdWorld implements World {
       this.#qteSpinWarned = false;
     }
     if (observation.screen !== 'chest-open') this.#openerRefusal = null;
-    if (observation.screen !== 'character-page') {
-      this.#pageCloseTries = 0;
-      this.#pageCloseWarned = false;
-    }
+    // The budget is per page episode: a frame the page was not named on does not end it (live
+    // 2026-11-07 22:42 and 22:54: the counter reset on every flicker and the Esc never went out).
+    this.#pageCloseTries = nextPageCloseTries(observation.screen, this.#pageCloseTries);
+    if (this.#pageCloseTries === 0) this.#pageCloseWarned = false;
     // The battle's sequence lives as long as the battle **mode** does (operator rule 2026-11-04): an
     // unnamed frame inside a battle (a skill's resolution, a fade) is still the battle, and re-arming
     // there would let the opener be cast a second time.
