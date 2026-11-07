@@ -67,3 +67,34 @@ untouched: the machine consumes their facts, it does not replace them.
   in-flight gate, no escalation — the three things that made seven attempts at this line untestable.
 - Live: a three-cycle run where a heal's page is closed and the loop continues to the map within
   `GRACE_MS`, with `page: closed after 1 press` in the log, and no escalation.
+
+## Why not a hierarchy of states, or a per-state action vector
+
+(The operator's question, 2026-11-08: *dungeon is the outer, highest level; inside it you can open pages,
+fight, open a chest, heal — plus a normal state with no page open. But I don't really see the benefit of
+levels of states, or a vector of which actions are available in each.*)
+
+Agreed, and tonight's failures are the evidence — each was **one-dimensional**:
+
+- a page was named as the scene: the status page read `dungeon` 0.80, so the route pressed `open-map` from
+  a page frame and the loop alternated page → dungeon → page for 20 s at a time (run 22; the same on
+  `12977d2`, so it is not a regression — it needs a level-up page, which needs a fight);
+- a counter was reset by a one-frame misread (runs 17/18);
+- two owners pressed in the same tick (the heal and the route, run 21).
+
+None of them needed a lattice. They needed **one owner, a stable frame, and a rule-out between pages**.
+
+A state × action matrix would duplicate what the commands already check (two sources of truth), and each
+cell is another test to keep in sync. Three facts do the work:
+
+1. **scene** — dungeon / town / worldmap / battle / chest (the existing `mode`, with hysteresis);
+2. **overlay** — which page is on top or none, with its lifecycle; outer and inner are two *fields*, not
+   two levels: closing a page means the same whatever is underneath, and a scene's commands are suspended
+   while an overlay owns the tick;
+3. **owner** — the sequence, chest step or page that owns the tick, or none. Exactly one.
+
+Each command then declares its preconditions as data, and a test reads them: `open-map` requires
+`overlay === none && stable === 2`; `close-page` requires `overlay === that page`; `press-confirm`
+requires the owed panel and nothing else. Recognition carries the mutual exclusion — a frame that shows
+the page's tile is not the scene — which is the one new table worth writing, tested as: for every page, a
+frame of every other page must not name it.
