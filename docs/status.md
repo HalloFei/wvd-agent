@@ -4,8 +4,8 @@ Where the plan stands. The plan file is the specification of the work, not the r
 is the record, updated at each milestone, and `docs/plans/2026-10-24-wvd-world-v1.md` stays the
 authority on *what* each task requires.
 
-Last updated 2026-11-07, on `feat/vision-module` (Tasks 3–7 of the vision module; the live
-acceptance is Task 8, and the test count below predates this branch's full-suite run).
+Last updated 2026-11-07, on `feat/readers` (the numerals-reader seam, Tasks 1–5; Task 6 is the live
+acceptance).
 
 ## Task table
 
@@ -23,7 +23,7 @@ acceptance is Task 8, and the test count below predates this branch's full-suite
 | 10 | The loop and the composition root | done, final fix wave reviewed clean | `b7ad52b`, `2cff58c`, `61b341b` |
 | 11 | Recognise the 3D view | done, reviewed clean | `2be0357`, `6df13ff` |
 
-421 tests across 28 files, `pnpm typecheck` clean.
+859 tests across 65 files, `pnpm typecheck` clean (the suite's serial run is below).
 
 ## What runs
 
@@ -1129,6 +1129,47 @@ panel stayed unnamed for 46 s (`wvd.stuck`; snapshot
 `testdata/screens/2026-11-07-opener-stuck/opener-panel-1280.jpeg`). That is the battle/opener area, not
 the vision module; the three-cycle live acceptance is still owed, as is the live kill of the child with
 the restart observed.
+
+## The numerals corpus, and the suite's OCR bound (2026-11-07, `feat/readers`)
+
+The readers seam's durability is now committed: `testdata/readers/trap-numbers/` holds the opener
+fixture's twelve 陷阱 fields — six cards × 陷阱发现 / 陷阱解除 — each as the exact crop the opener hands
+its reader (numeral band ∪ label, so the OCR tier has its context), in **both** forms: the decoded
+`panel-00.jpg` crop and the sharpened proxy's (`img + (img − boxBlur)`, 4-neighbour box blur, amount
+1 — ruling R3's raw-capture stand-in until the game is launched). The 24 crops are binary PPM (P6,
+161–164 × 30 px, lossless; Node has no PNG codec) with a `manifest.json` (card, field, form, reader
+region, hint label, expected value) and a README, recorded by `scripts/record-readers-corpus.ts`.
+`tests/readers-corpus.test.ts` runs the rule, template and OCR tiers over every crop: the template
+tier reads all twelve decoded values and eleven of the twelve proxy crops (refusing card 1's
+陷阱解除 49 — the field the live panel escalated — rather than naming a different number), and no
+tier ever answers outside the field's plausible range (1–999).
+
+The corpus recorded the tiers' measured defeats instead of hiding them; **none is fixed here** (this
+task is testdata, a script, tests and docs — no `src/` change):
+
+- **The rule tier is wrong on more of this font than its 4-as-3.** Board card
+  `t-mw65nlh4-lfoik7` pins the 4/3; the corpus measured 2 named 3, 7 named 3, 0 named 4, and on the
+  proxy 6 named 5, plus four refusals (105 twice, 77 once, 50 once). All its wrong answers are
+  plausible numbers, so only the per-field pins catch them. The tier stays out of the opener's chain
+  (R4/R9), so nothing live depends on it.
+- **The OCR tier refuses two corpus crops whose answer RapidOCR splits into two boxes**
+  (`["陷阱解除1", "105"]` on the decoded card 4, `["陷阱发现9", "92"]` on its proxy; `numeralOf`
+  refuses two runs by design) **and names the sharpened card 6's 77 as 177** — inside the plausible
+  range, so only the field pin catches it. The full panel never escalates those fields (the template
+  tier answers them), so the live acceptance is unaffected.
+
+Pinned answers mean a fix is a deliberate re-record, not a silent pass. **The suite's OCR bound:** on
+this host the full suite runs with `WVD_OCR_TIMEOUT_MS=20000` (ruling R7) and
+`--no-file-parallelism`. The committed 8 s default times the OCR tests out under vitest's parallel
+forks, and with the corpus's 24 real OCR reads the default forks also push the suite's timing tests
+over their assertions: the three default-parallel runs on 2026-11-07 had one or two reds each, all of
+them deadlines or timing ratios — readers-opener's sharpened-heart case (a 20 s deadline, raised to
+60 s with its assertions untouched), engine-child-snapshot's capture aged under 200 ms (twice, a
+different case each time) and once qte-band's decode-time ratio. Excluding the corpus makes the same
+parallel run green (852 passed, 1 skipped, 80 s), which attributes the extra load to the corpus.
+Serially the whole suite is green: **859 passed, 0 failed (65 files, 364 s)**, with
+`npx tsc --noEmit` clean. The flag changes no assertion; it gives the host the idle machine these
+measurements were taken on.
 
 ## Open work — the task board is the authority
 

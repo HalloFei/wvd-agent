@@ -37,6 +37,13 @@ Commit per task, staged by explicit path.
   report, not a ruling to make.
 - Every command through `node ~/.dsh/tools/check-digest.mjs --timeout 300 -- "<command>"`; the full
   suite in the final task and before the fast-forward.
+- **The suite's OCR bound (R7 in practice, 2026-11-07):** run the full suite with
+  `WVD_OCR_TIMEOUT_MS=20000 node ~/.dsh/tools/check-digest.mjs --timeout 900 -- "node ../Coopanion/node_modules/vitest/vitest.mjs run --no-file-parallelism"`.
+  At the committed 8 s default the OCR tests time out under vitest's parallel forks on this host, and
+  with the Task 5 corpus's 24 real OCR reads the default forks also push two timing tests
+  (`engine-child-snapshot`, `qte-band`) over their assertions; serially the suite is green
+  (859/859, 364 s). The flag changes no assertion. The bound is the run's, not the committed
+  default's: unset, production keeps the 8 s bound.
 
 ## File Structure
 
@@ -106,9 +113,18 @@ Commit per task, staged by explicit path.
 
 ### Task 5 — The regression corpus and the whole-suite proof
 
-- [ ] `testdata/readers/trap-numbers/` (decoded + sharpened crops, recorded by a script under
-      `scripts/`), a corpus test running every tier over each crop, `docs/status.md` entry.
-- [ ] Full suite + `tsc` clean; commit: `feat(readers): the numerals corpus and the full-suite proof`.
+- [x] `testdata/readers/trap-numbers/`: the twelve 陷阱 fields of `panel-00.jpg` (six cards ×
+      陷阱发现 / 陷阱解除) as the exact crop the opener hands a reader (numeral band ∪ label), in both
+      forms — the decoded fixture and the sharpened proxy (R3's raw-capture stand-in) — as 24 lossless
+      PPM crops with `manifest.json` and a README, recorded by `scripts/record-readers-corpus.ts`.
+- [x] `tests/readers-corpus.test.ts`: the rule, template and OCR tiers over every crop. The template
+      tier reads all twelve decoded values (and the proxy's twelve as eleven values + one refusal, never
+      a different number); the OCR tier reads both forms with its two box-split refusals and its
+      77-as-177 misread **recorded**; the rule tier's known 4-vs-3 misname is recorded beside its other
+      measured defeats and four refusals (board card `t-mw65nlh4-lfoik7`); no tier answers outside the
+      field's plausible range (1–999). `docs/status.md` records the corpus and the measured defects.
+- [x] Full suite (`WVD_OCR_TIMEOUT_MS=20000`, above) + `tsc` clean; commit:
+      `feat(readers): the numerals corpus and the full-suite proof`.
 
 ### Task 6 — Live acceptance (controller)
 

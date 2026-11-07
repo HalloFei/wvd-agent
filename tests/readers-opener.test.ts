@@ -300,6 +300,14 @@ describe('a recognised panel refused before a numeral is read still reports its 
 // The sharpened panel — the raw-pixel proxy of the live failure
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * These deadlines are 60 s, not the suite's 20 s, because each case waits out one **real** OCR call:
+ * the numerals corpus (Task 5) runs 24 of them beside this file, and under the parallel forks a call
+ * measured 10-13 s (2026-11-07; one heart case crossed the 20 s deadline, and the amount-2 probe
+ * skipped for the same load). The call's own bound decides the read — `WVD_OCR_TIMEOUT_MS`, 20 s in
+ * the suite (R7) — so the deadline only decides how long the test waits for an answer it does not
+ * weaken: a call that returns null still fails the content assertion.
+ */
 describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () => {
   beforeEach(() => {
     vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
@@ -322,7 +330,7 @@ describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () 
     if (!parsed.ok) return;
     expect(parsed.panel.members.map((member) => member.detect)).toEqual(expected.map((member) => member.detect));
     expect(parsed.panel.members.map((member) => member.disarm)).toEqual(expected.map((member) => member.disarm));
-  }, 20_000);
+  }, 60_000);
 
   it('refuses the same frame when the OCR runtime is absent — the escalation is what answers it', async () => {
     // Not a loosened floor and not a second atlas: with no runtime named, the field the template tier
@@ -333,7 +341,7 @@ describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () 
     const image = sharpened(await jpegImage('panel-00.jpg'), 1);
 
     expect(await parseOpenerDetailed(frameOf(image))).toEqual({ ok: false, reason: 'unreadable' });
-  }, 20_000);
+  }, 60_000);
 
   it('keeps the heart semantics on the sharpened proxy: one unread numeral costs its own card', async () => {
     // The heart field is the one numeral whose atlas the template tier cannot reproduce: the heart
@@ -351,7 +359,7 @@ describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () 
     const willpower = parsed.panel.members.map((member) =>
       member.willpower === null ? 'absent' : Number.isNaN(member.willpower) ? 'unread' : member.willpower);
     expect(willpower).toEqual([100, 'unread', 100, 'absent', 90, 100]);
-  }, 20_000);
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------------------------

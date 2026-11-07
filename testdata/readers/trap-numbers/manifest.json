@@ -1,0 +1,544 @@
+{
+  "generatedBy": "scripts/record-readers-corpus.ts",
+  "source": "testdata/chest/2026-10-24-opener/panel-00.jpg",
+  "measurements": "testdata/chest/2026-10-24-opener/measurements.json",
+  "note": "One committed crop per 陷阱 field (numeral band ∪ label) in both forms: the decoded fixture and the sharpened raw-pixel proxy (img + 1 * (img - 4-neighbour box blur), clamped). The crops are binary PPM (P6), not JPEG: a corpus that re-encodes its own pixels would measure the encoder.",
+  "sharpened": {
+    "amount": 1,
+    "kernel": "4-neighbour box blur, weights centre 2 / each neighbour 1 over 6, img + amount * (img - blur), clamped"
+  },
+  "range": {
+    "min": 1,
+    "max": 999
+  },
+  "fields": [
+    {
+      "file": "card-1-detect-decoded.ppm",
+      "card": 1,
+      "slot": 0,
+      "field": "detect",
+      "form": "decoded",
+      "width": 161,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 87,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 38
+    },
+    {
+      "file": "card-1-detect-sharp.ppm",
+      "card": 1,
+      "slot": 0,
+      "field": "detect",
+      "form": "sharp",
+      "width": 161,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 87,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 38
+    },
+    {
+      "file": "card-1-disarm-decoded.ppm",
+      "card": 1,
+      "slot": 0,
+      "field": "disarm",
+      "form": "decoded",
+      "width": 161,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 87,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 49
+    },
+    {
+      "file": "card-1-disarm-sharp.ppm",
+      "card": 1,
+      "slot": 0,
+      "field": "disarm",
+      "form": "sharp",
+      "width": 161,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 87,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 49
+    },
+    {
+      "file": "card-2-detect-decoded.ppm",
+      "card": 2,
+      "slot": 1,
+      "field": "detect",
+      "form": "decoded",
+      "width": 164,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 90,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 28
+    },
+    {
+      "file": "card-2-detect-sharp.ppm",
+      "card": 2,
+      "slot": 1,
+      "field": "detect",
+      "form": "sharp",
+      "width": 164,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 90,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 28
+    },
+    {
+      "file": "card-2-disarm-decoded.ppm",
+      "card": 2,
+      "slot": 1,
+      "field": "disarm",
+      "form": "decoded",
+      "width": 164,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 90,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 50
+    },
+    {
+      "file": "card-2-disarm-sharp.ppm",
+      "card": 2,
+      "slot": 1,
+      "field": "disarm",
+      "form": "sharp",
+      "width": 164,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 90,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 50
+    },
+    {
+      "file": "card-3-detect-decoded.ppm",
+      "card": 3,
+      "slot": 2,
+      "field": "detect",
+      "form": "decoded",
+      "width": 160,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 86,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 34
+    },
+    {
+      "file": "card-3-detect-sharp.ppm",
+      "card": 3,
+      "slot": 2,
+      "field": "detect",
+      "form": "sharp",
+      "width": 160,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 86,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 34
+    },
+    {
+      "file": "card-3-disarm-decoded.ppm",
+      "card": 3,
+      "slot": 2,
+      "field": "disarm",
+      "form": "decoded",
+      "width": 160,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 86,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 38
+    },
+    {
+      "file": "card-3-disarm-sharp.ppm",
+      "card": 3,
+      "slot": 2,
+      "field": "disarm",
+      "form": "sharp",
+      "width": 160,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 86,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 38
+    },
+    {
+      "file": "card-4-detect-decoded.ppm",
+      "card": 4,
+      "slot": 3,
+      "field": "detect",
+      "form": "decoded",
+      "width": 161,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 87,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 92
+    },
+    {
+      "file": "card-4-detect-sharp.ppm",
+      "card": 4,
+      "slot": 3,
+      "field": "detect",
+      "form": "sharp",
+      "width": 161,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 87,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 92
+    },
+    {
+      "file": "card-4-disarm-decoded.ppm",
+      "card": 4,
+      "slot": 3,
+      "field": "disarm",
+      "form": "decoded",
+      "width": 161,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 87,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 105
+    },
+    {
+      "file": "card-4-disarm-sharp.ppm",
+      "card": 4,
+      "slot": 3,
+      "field": "disarm",
+      "form": "sharp",
+      "width": 161,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 87,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 105
+    },
+    {
+      "file": "card-5-detect-decoded.ppm",
+      "card": 5,
+      "slot": 4,
+      "field": "detect",
+      "form": "decoded",
+      "width": 164,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 90,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 62
+    },
+    {
+      "file": "card-5-detect-sharp.ppm",
+      "card": 5,
+      "slot": 4,
+      "field": "detect",
+      "form": "sharp",
+      "width": 164,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 90,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 62
+    },
+    {
+      "file": "card-5-disarm-decoded.ppm",
+      "card": 5,
+      "slot": 4,
+      "field": "disarm",
+      "form": "decoded",
+      "width": 164,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 90,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 43
+    },
+    {
+      "file": "card-5-disarm-sharp.ppm",
+      "card": 5,
+      "slot": 4,
+      "field": "disarm",
+      "form": "sharp",
+      "width": 164,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 90,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 43
+    },
+    {
+      "file": "card-6-detect-decoded.ppm",
+      "card": 6,
+      "slot": 5,
+      "field": "detect",
+      "form": "decoded",
+      "width": 160,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 86,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 77
+    },
+    {
+      "file": "card-6-detect-sharp.ppm",
+      "card": 6,
+      "slot": 5,
+      "field": "detect",
+      "form": "sharp",
+      "width": 160,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 86,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 77
+    },
+    {
+      "file": "card-6-disarm-decoded.ppm",
+      "card": 6,
+      "slot": 5,
+      "field": "disarm",
+      "form": "decoded",
+      "width": 160,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 86,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 79
+    },
+    {
+      "file": "card-6-disarm-sharp.ppm",
+      "card": 6,
+      "slot": 5,
+      "field": "disarm",
+      "form": "sharp",
+      "width": 160,
+      "height": 30,
+      "region": {
+        "x": 74,
+        "y": 8,
+        "width": 86,
+        "height": 16
+      },
+      "label": {
+        "x": 0,
+        "y": 0,
+        "width": 74,
+        "height": 30
+      },
+      "expected": 79
+    }
+  ]
+}
