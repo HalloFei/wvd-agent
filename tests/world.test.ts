@@ -1802,6 +1802,10 @@ describe('the character page', () => {
     for (let index = 0; index < 4; index += 1) { clock.advance(800); await world.tick(); }
     expect(actuator.calls.filter((call) => call === 'tap 699,1012')).toHaveLength(3);
     expect(host.logRecords.filter((line) => line.message.includes('did not close after 3 taps')).length).toBe(1);
+    // A page that takes no close is a lost screen, and the measured way out is one Esc — not the
+    // stall clock (live 2026-11-07 22:34: three presses returned ok, the page stayed, and the loop
+    // waited ~45 s for the escalation to do what this press does at once).
+    expect(actuator.calls.filter((call) => call.startsWith('key '))).toEqual(['key 1 60']);
 
     // The page left: nothing more is sent.
     perceiver.observation = dungeonView;

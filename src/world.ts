@@ -1365,9 +1365,17 @@ export class WvdWorld implements World {
       if (!this.#pacer.ready(now)) return;
       this.#pacer.act(now);
       if (this.#pageCloseTries >= PAGE_CLOSE_TRIES) {
+        // The page takes no close: hand it to the measured way out instead of sitting on it until the
+        // stall clock (live 2026-11-07 22:34: three presses at the tile returned ok and the page stayed
+        // — the level-up page the battle's XP draws swallows presses while it arrives — and one Esc
+        // closed the same page class at 22:31). One Esc, once per page episode.
         if (!this.#pageCloseWarned) {
           this.#pageCloseWarned = true;
-          this.#host?.log.warn(`wvd: the character page did not close after ${PAGE_CLOSE_TRIES} taps`);
+          this.#host?.log.warn(
+            `wvd: the character page did not close after ${PAGE_CLOSE_TRIES} taps; pressing Esc once`,
+          );
+          const pageSession = this.#session;
+          if (pageSession !== null) await pageSession.actuator.holdKey(ESC_SCAN, this.#cfg.pressHoldMs);
         }
         return;
       }
