@@ -31,11 +31,32 @@
  * three shapes would snap an unseen `6` onto a `0` or `9`. A digit below that floor is unread, never
  * rounded to a plausible number; more captures extend the atlas.
  *
+ * **The numerals read through the numerals-reader seam** (2026-11-07). The 陷阱 fields go through
+ * `createNumeralsReader`: their atlas is the template tier, the field's label is the read's context,
+ * and the opener's floors are passed in. A field whose atlas a capture-pipeline change has
+ * invalidated therefore escalates to OCR instead of refusing the panel — the live failure of
+ * 2026-11-07 was exactly that refusal. What stays the opener's is everything the reader cannot name:
+ * the band, the floors, the structural refusals, `unreadable`, and the heart's `absent` /
+ * `unreadable` distinction (contracts §0.6).
+ *
+ * The **heart** field is the seam's measured exception: its atlas was recorded from a
+ * chroma-segmented crop normalised against that crop's own median (chroma is what separates the
+ * yellow numeral from the grey heart glyph beside it), while the template tier segments by luma
+ * against the region's median. On a numeral-tight crop those disagree — measured 2026-11-07, three of
+ * the five hearts refuse — so the heart keeps its own matcher until the atlas is re-recorded in the
+ * tier's geometry or the tier takes an ink mode (task-3 report).
+ *
  * The parser sits behind `ChestPerceiver`, which tries this panel before the QTE bar: a chest with no
  * trap goes from the panel straight to loot, so the loop must act while the bar may never exist.
  * Geometry: 1920×1080 device pixels; another size is unsupported, not re-scaled (contracts §0.5).
  */
 import type { Frame, OpenerMember, OpenerPanel, Point, RgbaImage } from '../contracts.ts';
+import {
+  createNumeralsReader,
+  type DigitTemplate,
+  type Numerals,
+  type Region,
+} from './readers/index.ts';
 
 /** The only frame size the anchors were measured at (contracts §0.5). */
 const REFERENCE_WIDTH = 1920;
@@ -139,6 +160,15 @@ const HEART_BAND: readonly [number, number] = [1, 17];
 const TRAP_NUMBER_LEFT = 74;
 const NUMBER_RIGHT_INSET = 3;
 const HEART_LEFT = 70;
+
+/**
+ * The 陷阱 label's crop, handed to the reader as the hint's label so an escalation has context: the
+ * same rows' left TRAP_NUMBER_LEFT px, 30 rows tall because a 16-row crop clips the CJK. Measured
+ * 2026-11-07 (readers spec, R2): the union of this label and the numeral band reads 陷阱发现38, while
+ * the numeral band alone reads nothing.
+ */
+const TRAP_LABEL_ABOVE = 8;
+const TRAP_LABEL_HEIGHT = 30;
 
 /**
  * Ink rules. On a card's dark fill (`median` ~45–110) the white numerals are ≥ 55 luma above it; the
@@ -265,12 +295,6 @@ const HEART_DIGITS: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
-interface DigitTemplate {
-  readonly digit: string;
-  /** Mean-subtracted, unit-norm 8 × 10 values. */
-  readonly values: Float64Array;
-}
-
 const ATLASES = new WeakMap<object, readonly DigitTemplate[]>();
 
 /** One template per digit (the 陷阱 atlas's means). */
@@ -316,6 +340,26 @@ function normaliseGlyph(bytes: Uint8Array): Float64Array {
   if (norm > 0) for (let i = 0; i < values.length; i += 1) values[i]! /= norm;
   return values;
 }
+
+/**
+ * The 陷阱 atlas as the seam's templates. Exported because the template tier **takes its templates as
+ * an input** (plan ruling R1): the data is the opener's, and the reader is built here from it, so the
+ * readers module never imports this one.
+ */
+export const TRAP_DIGIT_TEMPLATES: readonly DigitTemplate[] = atlasOf(TRAP_DIGITS);
+
+/**
+ * The 陷阱 fields' reader: the seam's **template** strategy over that atlas, with the opener's own
+ * floors. 'template' is template -> ocr (ruling R4, 2026-11-07): the rule tier is not in the chain
+ * because its general shapes name this font's 4 as a 3, and OCR is the escalation for the day the
+ * atlas stops matching — which is exactly what a raw capture does to it.
+ */
+const TRAP_READER = createNumeralsReader({
+  strategy: 'template',
+  templates: TRAP_DIGIT_TEMPLATES,
+  matchFloor: DIGIT_MATCH_MIN,
+  marginFloor: DIGIT_MARGIN_MIN,
+});
 
 const pixelLuma = (data: Uint8Array, width: number, x: number, y: number): number => {
   const offset = (y * width + x) * 4;
@@ -472,6 +516,12 @@ function glyphFeature(
 /**
  * Read a run of glyph atoms as a decimal number, or null at the first unreadable digit.
  *
+ * This is the **heart field's** matcher (2026-11-07): the 陷阱 fields read through the seam, and the
+ * heart keeps this one because its atlas was recorded in this function's geometry — chroma ink
+ * against the numeral crop's own median — which the seam's template tier cannot reproduce (see the
+ * header). The heart's identity floor, the trim search and the absent/unreadable answers around this
+ * function are the opener's semantics and did not move with the other field.
+ *
  * The atlas may hold several instances of one digit (the heart atlas), so scores are grouped by
  * digit before the margin is taken: the runner-up is the best *other* digit, never another instance
  * of the winner.
@@ -559,8 +609,29 @@ function isOpenerPanel(data: Uint8Array, width: number): boolean {
   return ink >= TITLE_INK_MIN;
 }
 
-/** 陷阱发现 / 陷阱解除: white numerals on the card's dark fill. */
-function readTrapNumber(data: Uint8Array, width: number, slot: number, field: 'detect' | 'disarm'): number | null {
+/**
+ * 陷阱发现 / 陷阱解除: white numerals on the card's dark fill, read through the numerals-reader seam.
+ *
+ * The **region**, the **floors** and the **refusal** stay the opener's: the band is the measured one,
+ * the reader is built with DIGIT_MATCH_MIN / DIGIT_MARGIN_MIN, and a field with no answer is null —
+ * which refuses the whole panel, because that numeral ranks every card. What moved into the reader is
+ * only *which module names the digits*: the template tier first, and the OCR escalation when the
+ * atlas stops matching (a raw capture does exactly that to an atlas recorded through the old JPEG
+ * decode — the live failure of 2026-11-07).
+ *
+ * Two of the opener's own facts survive the seam:
+ *
+ * - **Structure before recognition**: a truncated number is still a number, and must be refused. The
+ *   numerals are left-aligned and pitch-separated, so the atoms must start where numerals start and
+ *   be no more than a digit's pitch apart (NUMBER_START_TOLERANCE / MAX_DIGIT_START_GAP).
+ * - **The field drew one glyph per atom**: an answer of another length (an OCR answer to a field
+ *   whose glyphs were overpainted, say) is a misread, not a shorter number.
+ */
+async function readTrapNumber(
+  image: RgbaImage,
+  slot: number,
+  field: 'detect' | 'disarm',
+): Promise<Numerals | null> {
   const { rect } = OPENER_SLOTS[slot]!;
   const card = cardBand(slot, field === 'detect' ? TRAP_DETECT_BAND : TRAP_DISARM_BAND);
   const band: PanelBand = {
@@ -569,10 +640,25 @@ function readTrapNumber(data: Uint8Array, width: number, slot: number, field: 'd
     y0: card.y0,
     y1: card.y1,
   };
-  const background = bandMedianLuma(data, width, band);
-  const ink: InkRule = (x, y) => pixelLuma(data, width, x, y) - background >= INK_LUMA_DELTA;
-  const atoms = glyphAtoms(columnRuns(data, width, band, ink));
-  return readNumber(data, width, band, ink, background, atlasOf(TRAP_DIGITS), atoms, DIGIT_MATCH_MIN, DIGIT_MARGIN_MIN);
+  const background = bandMedianLuma(image.data, image.width, band);
+  const ink: InkRule = (x, y) => pixelLuma(image.data, image.width, x, y) - background >= INK_LUMA_DELTA;
+  const atoms = glyphAtoms(columnRuns(image.data, image.width, band, ink));
+  if (atoms.length === 0 || atoms.length > MAX_GLYPH_DIGITS) return null;
+  if (atoms[0]![0] - band.x0 > NUMBER_START_TOLERANCE) return null;
+  for (let index = 1; index < atoms.length; index += 1) {
+    if (atoms[index]![0] - atoms[index - 1]![0] > MAX_DIGIT_START_GAP) return null;
+  }
+
+  const region: Region = { x: band.x0, y: band.y0, width: band.x1 - band.x0, height: band.y1 - band.y0 };
+  const label: Region = {
+    x: rect.x0,
+    y: band.y0 - TRAP_LABEL_ABOVE,
+    width: TRAP_NUMBER_LEFT,
+    height: TRAP_LABEL_HEIGHT,
+  };
+  const read = await TRAP_READER.read(image, region, { label });
+  if (read === null) return null;
+  return String(read.value).length === atoms.length ? read : null;
 }
 
 /**
@@ -660,7 +746,8 @@ function readHeartNumber(data: Uint8Array, width: number, slot: number): HeartRe
   return value === null ? { kind: 'unreadable' } : { kind: 'read', value };
 }
 
-function parseOpenerImage(image: RgbaImage): OpenerParse {
+/** async because the numerals are read through the seam, whose OCR tier leaves the process. */
+async function parseOpenerImage(image: RgbaImage): Promise<OpenerParse> {
   const { data, width, height } = image;
   if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) return { ok: false, reason: 'not-panel' };
   if (!isOpenerPanel(data, width)) return { ok: false, reason: 'not-panel' };
@@ -677,10 +764,10 @@ function parseOpenerImage(image: RgbaImage): OpenerParse {
   const traps: Array<{ detect: number; disarm: number }> = [];
   const hearts: HeartReading[] = [];
   for (let slot = 0; slot < count; slot += 1) {
-    const detect = readTrapNumber(data, width, slot, 'detect');
-    const disarm = readTrapNumber(data, width, slot, 'disarm');
+    const detect = await readTrapNumber(image, slot, 'detect');
+    const disarm = await readTrapNumber(image, slot, 'disarm');
     if (detect === null || disarm === null) return { ok: false, reason: 'unreadable' };
-    traps.push({ detect, disarm });
+    traps.push({ detect: detect.value, disarm: disarm.value });
     hearts.push(readHeartNumber(data, width, slot));
   }
 
@@ -727,7 +814,7 @@ export async function parseOpenerDetailed(frame: Frame): Promise<OpenerParse> {
   } catch {
     return { ok: false, reason: 'not-panel' };
   }
-  return parseOpenerImage(image);
+  return await parseOpenerImage(image);
 }
 
 /** The brief's shape: the panel, or `null` for every refusal. */

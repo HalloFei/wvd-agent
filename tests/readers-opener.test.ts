@@ -1,0 +1,232 @@
+/**
+ * The opener's numerals through the numerals-reader seam (Task 3).
+ *
+ * The failure this exists for: the 由谁打开? panel was **recognised and then refused by its own
+ * reader** live on 2026-11-07, because a 陷阱 numeral's atlas match fell under its floor on the
+ * vision module's raw pixels. The atlases are means of glyphs recorded through the old JPEG decode,
+ * so perception was encoding a property of the capture pipeline (readers spec 2026-11-07).
+ *
+ * What this file pins:
+ *
+ * 1. panel-00.jpg reads measurements.json's 陷阱发现 / 陷阱解除 and 心 values — the same measurement
+ *    tests/opener.test.ts asserts, loaded from the JSON rather than re-typed.
+ * 2. The **sharpened** panel — img + 1.0 * (img - boxBlur), the raw-pixel proxy the diagnosis used —
+ *    reads the same 陷阱 values, the template tier answering where it can and the **OCR tier**
+ *    answering where it refuses. That is the live failure reproduced: the old opener refuses this
+ *    frame outright (unreadable).
+ * 3. The negatives still refuse: the QTE bar and the 3-D view are not the panel.
+ *
+ * The heart's absent / unreadable distinction is covered where it lives, by the existing
+ * tests/opener.test.ts cases (a card that draws no heart is null; a drawn numeral the atlas cannot
+ * identify is NaN and costs its own card only).
+ */
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import jpeg from 'jpeg-js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Frame, RgbaImage } from '../src/contracts.ts';
+import { parseOpener, parseOpenerDetailed, TRAP_DIGIT_TEMPLATES } from '../src/perception/opener.ts';
+import { createNumeralsReader } from '../src/perception/readers/index.ts';
+
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const FIXTURES = new URL('../testdata/chest/2026-10-24-opener/', import.meta.url);
+const MEASUREMENTS = new URL('measurements.json', FIXTURES);
+/** The QTE bar (2026-10-24 01:41): a real frame with no panel on it. */
+const QTE_FIXTURES = new URL('../testdata/chest/2026-10-24-qte-0141/', import.meta.url);
+/** The 3-D view: HUD and map, no modal panel. */
+const NAV_FIXTURES = new URL('../testdata/nav-1024-0213/', import.meta.url);
+
+/** The operator's venv and the readout script; env wins, the repo-local pair is the fallback. */
+const PYTHON = process.env.WVD_OCR_PYTHON || ROOT + '/.tmp/ocr-venv/Scripts/python.exe';
+const SCRIPT = process.env.WVD_OCR_SCRIPT || ROOT + '/scripts/ocr-readout.py';
+/** Is there a runtime to measure? Gates the sharpened panel, so a host without it skips, not fails. */
+const OCR_AVAILABLE = existsSync(PYTHON) && existsSync(SCRIPT);
+
+// ---------------------------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------------------------
+
+/** Decoded once per fixture: jpeg-js spends ~150 ms on a 1080p frame and the tests share them. */
+const imageCache = new Map<string, Promise<RgbaImage>>();
+
+function jpegImage(name: string, dir = FIXTURES): Promise<RgbaImage> {
+  const key = dir.href + name;
+  let image = imageCache.get(key);
+  if (!image) {
+    image = readFile(new URL(name, dir)).then((bytes) => {
+      const decoded = jpeg.decode(bytes, { useTArray: true });
+      return { data: decoded.data, width: decoded.width, height: decoded.height };
+    });
+    imageCache.set(key, image);
+  }
+  return image;
+}
+
+function frameOf(image: RgbaImage, atMs = 1_000): Frame {
+  return { atMs, width: image.width, height: image.height, toRgba: async () => image };
+}
+
+/**
+ * The sharpened panel: img + amount * (img - boxBlur) with a 4-neighbour box blur, exactly the
+ * helper the 2026-11-07 diagnosis used (settled: .tmp/opener-sharpen.ts). It is the committed
+ * stand-in for a raw capture until the game is launched (plan ruling R3): sharpening the decoded
+ * pixels moves them off the atlas the same way raw pixels do.
+ */
+function sharpened(image: RgbaImage, amount: number): RgbaImage {
+  const { data, width, height } = image;
+  const out = new Uint8Array(data.length);
+  const at = (x: number, y: number): number[] => {
+    const offset = (y * width + x) * 4;
+    return [data[offset]!, data[offset + 1]!, data[offset + 2]!];
+  };
+  const clamp = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const centre = at(x, y);
+      const neighbours = [
+        at(Math.max(0, x - 1), y),
+        at(Math.min(width - 1, x + 1), y),
+        at(x, Math.max(0, y - 1)),
+        at(x, Math.min(height - 1, y + 1)),
+      ];
+      for (let channel = 0; channel < 3; channel += 1) {
+        const blur = (centre[channel]! * 2 + neighbours.reduce((sum, n) => sum + n[channel]!, 0)) / 6;
+        out[offset + channel] = clamp(centre[channel]! + amount * (centre[channel]! - blur));
+      }
+      out[offset + 3] = data[offset + 3]!;
+    }
+  }
+  return { data: out, width, height };
+}
+
+/** What measurements.json says the six cards carry. willpower: null = the card draws no heart. */
+interface MeasuredMember {
+  readonly name: string;
+  readonly detect: number;
+  readonly disarm: number;
+  readonly willpower: number | null;
+}
+
+let measuredMembers: Promise<readonly MeasuredMember[]> | null = null;
+function measured(): Promise<readonly MeasuredMember[]> {
+  measuredMembers ??= readFile(MEASUREMENTS, 'utf8').then(
+    (text) => (JSON.parse(text) as { members: MeasuredMember[] }).members,
+  );
+  return measuredMembers;
+}
+
+/** The JSON's willpower column as the parser records it: null = no heart drawn, a number = read. */
+function expectedWillpower(members: readonly MeasuredMember[]): Array<number | null> {
+  return members.map((member) => member.willpower);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The seam, on the fixture
+// ---------------------------------------------------------------------------------------------
+
+describe('the opener reads its numerals through the seam', () => {
+  it("reads the fixture's 陷阱 and heart values from panel-00", async () => {
+    const expected = await measured();
+    const panel = await parseOpener(frameOf(await jpegImage('panel-00.jpg'), 7_654));
+
+    expect(panel).not.toBeNull();
+    expect(panel!.members.map((member) => member.detect)).toEqual(expected.map((member) => member.detect));
+    expect(panel!.members.map((member) => member.disarm)).toEqual(expected.map((member) => member.disarm));
+    expect(panel!.members.map((member) => member.willpower)).toEqual(expectedWillpower(expected));
+  });
+
+  it("names the number and the tier that answered a field's atlas read", async () => {
+    // The 陷阱 atlas through the seam's own factory: the fast tier answers the fixture, the tier
+    // travels with the number (the health metric Task 4 logs), and the bands are the opener's.
+    const reader = createNumeralsReader({
+      strategy: 'template',
+      templates: TRAP_DIGIT_TEMPLATES,
+      matchFloor: 0.7,
+      marginFloor: 0.1,
+    });
+    const image = await jpegImage('panel-00.jpg');
+    // Card 1's 陷阱发现 band, and its label as the read's context (the crop OCR needs).
+    const band = { x: 778, y: 793, width: 87, height: 16 };
+    const label = { x: 704, y: 785, width: 74, height: 30 };
+
+    const read = await reader.read(image, band, { label });
+    expect(read?.value).toBe(38);
+    expect(read?.tier).toBe('template');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The sharpened panel — the raw-pixel proxy of the live failure
+// ---------------------------------------------------------------------------------------------
+
+describe.skipIf(!OCR_AVAILABLE)('the sharpened panel (the raw-pixel proxy)', () => {
+  beforeEach(() => {
+    vi.stubEnv('WVD_OCR_PYTHON', PYTHON);
+    vi.stubEnv('WVD_OCR_SCRIPT', SCRIPT);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('reads the same 陷阱 values, the OCR tier answering where the template refuses', async () => {
+    // The old opener refuses this frame outright (unreadable): the 陷阱 atlas scores fell under the
+    // floor, which is the live failure. Through the seam the template tier answers eleven of the
+    // twelve fields and the OCR tier answers the one it refuses — and the answer is the measured one.
+    const expected = await measured();
+    const image = sharpened(await jpegImage('panel-00.jpg'), 1);
+    const parsed = await parseOpenerDetailed(frameOf(image));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.panel.members.map((member) => member.detect)).toEqual(expected.map((member) => member.detect));
+    expect(parsed.panel.members.map((member) => member.disarm)).toEqual(expected.map((member) => member.disarm));
+  }, 20_000);
+
+  it('refuses the same frame when the OCR runtime is absent — the escalation is what answers it', async () => {
+    // Not a loosened floor and not a second atlas: with no runtime named, the field the template tier
+    // refuses stays refused, and a refused 陷阱 field refuses the panel. This is the premise of the
+    // test above, asserted.
+    vi.stubEnv('WVD_OCR_PYTHON', '');
+    vi.stubEnv('WVD_OCR_SCRIPT', '');
+    const image = sharpened(await jpegImage('panel-00.jpg'), 1);
+
+    expect(await parseOpenerDetailed(frameOf(image))).toEqual({ ok: false, reason: 'unreadable' });
+  }, 20_000);
+
+  it('keeps the heart semantics on the sharpened proxy: one unread numeral costs its own card', async () => {
+    // The heart field is the one numeral whose atlas the template tier cannot reproduce: the heart
+    // atlas was recorded from a chroma-segmented crop normalised against that crop's own median, and
+    // the tier's luma-median ink splits the numeral differently (measured 2026-11-07; see the task
+    // report). So readHeartNumber keeps the opener's matcher, and this proxy — not the tier — decides
+    // which hearts survive it. Card 1's 100 falls to 0.871 against the identity floor of 0.95 and is
+    // unreadable (NaN), which must never be recorded as absent (null): the card still stands, the
+    // other five cards still rank, and the panel is not refused.
+    const image = sharpened(await jpegImage('panel-00.jpg'), 1);
+    const parsed = await parseOpenerDetailed(frameOf(image));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const willpower = parsed.panel.members.map((member) =>
+      member.willpower === null ? 'absent' : Number.isNaN(member.willpower) ? 'unread' : member.willpower);
+    expect(willpower).toEqual([100, 'unread', 100, 'absent', 90, 100]);
+  }, 20_000);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The negatives
+// ---------------------------------------------------------------------------------------------
+
+describe('frames that are not the opener panel still refuse', () => {
+  it('refuses the QTE bar and the 3-D view as not-panel, without reading a numeral', async () => {
+    const qte = await jpegImage('frame-3.jpg', QTE_FIXTURES);
+    const nav = await jpegImage('minimap-and-hud.jpg', NAV_FIXTURES);
+
+    expect(await parseOpenerDetailed(frameOf(qte))).toEqual({ ok: false, reason: 'not-panel' });
+    expect(await parseOpenerDetailed(frameOf(nav))).toEqual({ ok: false, reason: 'not-panel' });
+    expect(await parseOpener(frameOf(qte))).toBeNull();
+    expect(await parseOpener(frameOf(nav))).toBeNull();
+  });
+});
