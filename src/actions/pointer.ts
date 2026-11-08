@@ -25,9 +25,24 @@ export interface PointerEnv {
   readonly log?: (line: string) => void;
 }
 
+/**
+ * The map's zoom level (0 = max zoom-out, 2 = max zoom-in). The pointer's speed is **not** one number:
+ * the game moves the cursor in map/screen space, and the same key hold moves it a different distance at
+ * each level (operator, 2026-11-09: *the moving rate needs to be adjusted with zoom level as well*).
+ */
+export type MapLevel = 0 | 1 | 2;
+
 export interface PointerOptions {
-  /** Measured pointer travel per millisecond of hold, per direction. */
-  readonly pxPerMs?: Partial<Record<PointerDirection, number>>;
+  /** Which level the rates below were measured at. The caller states it; nothing infers it. */
+  readonly level?: MapLevel;
+  /**
+   * Pointer travel per millisecond of hold, per direction **at `level`** — and, when several levels
+   * are given, keyed by level too. A rate measured at another level is not a smaller truth, it is a
+   * different one: the caller re-measures after every zoom.
+   */
+  readonly pxPerMs?: Partial<Record<PointerDirection, number>> | Readonly<Record<MapLevel, Partial<Record<PointerDirection, number>>>>;
+  /** The map's scroll per millisecond of edge push, at `level` (the coarse scan's rate). */
+  readonly pushPxPerMs?: number;
   /** How close to the target counts as there (client pixels). */
   readonly tolerancePx?: number;
   /** The shortest hold that is worth sending. */
@@ -44,6 +59,13 @@ export type PointerOutcome =
   | { readonly ok: true; readonly at: Point; readonly steps: number }
   | { readonly ok: false; readonly reason: 'lost' | 'refused' | 'stalled' | 'overshot'; readonly detail?: string };
 
+/**
+ * Measured, 2026-11-09, in three levels: a W/A/S/D hold moves the cursor **1.0–1.1 px per ms** at every
+ * zoom level (L0: S 300 ms → 301 px, 600 → 639; D 300 → 337, 600 → 639. L1: W 300 → 300, A 300 → 301,
+ * 600 → 675. L2: A 600 → 639). The pointer is screen-space: it does **not** scale with the map's zoom —
+ * what scales is the *map* the pointer pushes at the edge, which is why \`pushMap\` needs a per-level rate
+ * and this loop does not.
+ */
 const DEFAULT_PX_PER_MS = 1;
 const DEFAULTS = { tolerancePx: 12, minHoldMs: 40, maxHoldMs: 900, stallPx: 3, maxSteps: 12 } as const;
 
@@ -71,7 +93,17 @@ export async function steerPointer(env: PointerEnv, target: Point, options: Poin
   const maxHold = options.maxHoldMs ?? DEFAULTS.maxHoldMs;
   const stall = options.stallPx ?? DEFAULTS.stallPx;
   const maxSteps = options.maxSteps ?? DEFAULTS.maxSteps;
-  const speed = (direction: PointerDirection): number => options.pxPerMs?.[direction] ?? DEFAULT_PX_PER_MS;
+  // A per-level table when the caller has one, a bare direction table when it was measured at the
+  // level it is steering at, and the plain default only as a last resort.
+  const table = options.pxPerMs;
+  const speed = (direction: PointerDirection): number => {
+    if (table === undefined) return DEFAULT_PX_PER_MS;
+    const byLevel = table as Readonly<Record<MapLevel, Partial<Record<PointerDirection, number>>>>;
+    const level = options.level;
+    if (level !== undefined && byLevel[level] !== undefined) return byLevel[level]![direction] ?? DEFAULT_PX_PER_MS;
+    const byDirection = table as Partial<Record<PointerDirection, number>>;
+    return byDirection[direction] ?? DEFAULT_PX_PER_MS;
+  };
 
   let at = await look(env);
   if (at === null) return { ok: false, reason: 'lost', detail: 'the frame does not draw the pointer' };

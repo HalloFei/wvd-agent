@@ -17,8 +17,13 @@
  */
 import type { Point, RgbaImage } from '../contracts.ts';
 
-/** Near-white: the cursor's ink is drawn over parchment, which is far below this. */
-export const POINTER_LUMA = 242;
+/**
+ * Near-white: the cursor is drawn in pure white, and the map's own bright art (labels, banners) stops
+ * just short of it. Measured on a live world-map frame (2026-11-09): bright cells at luma 240 = **17**
+ * (the labels join the arrow), at 250 = 10, at 252 = 8, at 254 = 6 (the arrow alone). 252 is where the
+ * cursor is separable from the map — the first cut's 242 refused the arrow on every map frame.
+ */
+export const POINTER_LUMA = 252;
 /** The cell grid the bright pixels are counted in (client pixels). */
 export const POINTER_CELL = 8;
 /** A 3×3 cell cluster must carry at least this many bright pixels to be the arrow. */
