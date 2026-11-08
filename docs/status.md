@@ -1351,6 +1351,26 @@ chest opened, the QTE fired and the farm went on.
 the fast loop should not carry. The atlas needs re-recording from a **lossless raw** capture (board
 t-mw7cj4ex-y6g0q4); the JPEG fixtures must keep parsing when it lands.
 
+## The raw era's opener atlas (2026-11-08)
+
+`perception/opener.ts` now carries the 陷阱 digit templates for **both** codecs: the q75-era means
+recorded 2026-10-24 (unchanged) and every instance observed through the **raw** capture the vision
+module delivers — kept apart per instance, because the raw glyph's sub-pixel phase differs card by
+card and a mean blurs the detail that makes it match.
+
+Measured on one live panel frame, raw pixels: the JPEG atlas answered **0 of 12** fields (`unreadable`,
+with no OCR tier configured the loop then sat on 由谁打开 for seven minutes); the same frame re-encoded
+q75 answered 12/12, q90 0/12. With the raw templates: **12/12 on the template tier, zero escalation** —
+and the 2026-10-24 JPEG fixtures still read 12/12 with their own means.
+
+Regression: `tests/opener.test.ts > the raw capture of 2026-11-08` reads the committed crop
+(`testdata/screens/2026-11-08-opener-raw/panel-crop-680-590-1240-1000.rgba`, that frame's panel region,
+lossless) and requires the panel's own values and `{ template: 12, ocr: 0 }` — the tier that answers in
+milliseconds, which is what keeps the page inside the operator's 4 s.
+
+To extend the atlas after a UI or capture change:
+`node scripts/extract-opener-raw-atlas.mjs --crop <crop.rgba> --rect x0,y0,x1,y1 --values <values.json>`.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

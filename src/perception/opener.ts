@@ -316,6 +316,72 @@ const TRAP_DIGITS: Readonly<Record<string, string>> = {
   '8': 'Axs9Q0IwDAAWc4xOWHc3Ay6npRschVIFG5LKhWZqJAEFRLbs1HUWAAxJgqTg0FcFN4lQIWfRnQ4+k0UHL6SYDx5kWTxPgFAGAQsSExMQBwA=',
   '9': 'AQkZHB0WCAASW4ljb4JJBi2wliMroYsOMrqYKiGdqxMop7xhRra8FQ5QoaiXyqIQAw4gMIKtYAcEBA0/m3glAgEQL1tOHwUAAAQICwQBAAA=',
 };
+/**
+ * The same digits, observed through the **raw** capture the vision module delivers now — **every
+ * instance, kept apart**, because the raw glyph's sub-pixel phase differs card by card and a mean
+ * blurs exactly the detail that makes it match (the heart atlas is built this way for the same
+ * reason).
+ *
+ * The atlas above is a q75 JPEG-era mean (2026-10-24 fixtures) and a raw frame's crisper glyphs miss
+ * it: live 2026-11-08 the 由谁打开 panel refused all twelve fields (template 0 — and the OCR tier that
+ * answers it was not configured, which stalled the run for seven minutes). Measured on one frame:
+ * raw 0/12, the same frame re-encoded q75 12/12, q90 0/12.
+ *
+ * These come from the raw capture committed as
+ * `testdata/screens/2026-11-08-opener-raw/panel-crop-680-590-1240-1000.rgba` (that panel's values:
+ * 38 49 28 50 34 38 96 111 62 43 84 91 — it draws no 7, which the JPEG atlas still supplies). Both
+ * eras are kept: the tier groups scores by digit, so a second instance of a digit can only help, and
+ * the runner-up margin that separates digits is unchanged.
+ *
+ * Regenerate with `node scripts/extract-opener-raw-atlas.mjs --crop <crop.rgba> --rect x0,y0,x1,y1
+ * --values <values.json>`.
+ */
+const TRAP_DIGITS_RAW: Readonly<Record<string, readonly string[]>> = {
+  '0': [
+    'AAgbIiASAgAHX5Fof30lARK0ih1LrF8EGtd4EDexjwoc4HAKMK6sDxzfcAsxrqoOGdR4EDqyjgoSso4gUKpfBAZdhE5rdigCAAgVFhcQAwA=',
+  ],
+  '1': [
+    'AAQWKBUDAAAAGYPjeRIAAAAUg/GBEwAAAApp6oETAAAACmrqgRQAAAAKauqCFQAAAAtq6oQWAAAADXHsiRoAAAAYfceQLgAAAAQRGRQHAAA=',
+    'AAQUJRADAAAAGHXYWhAAAAAUbO9hEQAAAApO62ERAAAACk7rYhEAAAAKTutiEQAAAApP62MSAAAADVfsaxYAAAAYbsSIKQAAAAMQGRMGAAA=',
+    'AAAHGSIOAAAAAC2Xx1AAAAAAHZLjVQAAAAAFdeNVAAAAAAV141UAAAAABXXjVQAAAAAGduRVAAAAAAx95loAAAAAKYvHYwAAAAAHExkNAAA=',
+    'AAAOIiEFAAAAAFbMtx8AAAAAWOjCIQAAAABJ4MMhAAAAAEngwyIAAAAASeDDIgAAAABJ4MMiAAAAAE7jxycAAAAAUsS2PAAAAAALGRgJAAA=',
+  ],
+  '2': [
+    'ARtVe28yBgAFQHKdzZ0YAAISEyqKyCkAAAIBHYCrGwAAAwQ4k2ULAAADGWeRGQMAABVWbC8VEAAET5uDZXAqAAlqn6CihRwAAREUFRUPAgA=',
+    'AA4iLywWAwAFQHGcypccAAIXERmUvy8AAAAACoSoIwAAAAA8mm8JAAABG4GCJQAAABFXazQYCwAFTpZuSWErAAt9tbGuhiIAAQsPDw4LAgA=',
+  ],
+  '3': [
+    'AAssaoZnJwIBGUturdN0CAAJEA0wu4MKAAQOKHagTQQACS5/18lmCAACAwdn2tAXAhAIARSR1RoITD4OFoOqFAdRbUVIcU4HAAgTFBQRBgA=',
+    'ARVJe3tBDAADLFmC1ro4AQAJCxGazEMBAAQWRKZ5HgAAE1Or25szAgAABCKv6Y0MAQsEBVDRphAIRCQKS759CgpbVj1ocSwCAQ0TEhQLAgA=',
+    'ABBAcWctBwADLmyk3aUtAQESFx+jzEQBAAMOLZ9+IAAAE0qizIAkAQAGFj693HoKAQoHClvRng8HNxkFQsKHCwxoUzJsiToDARIWEhgQBAA=',
+    'AAkbKigUAgADMGykzY4YAAIYGiqltyYAAAELPZR7EgABHG/M23sSAAALJ2nF1UMAAQcBDm/dXAAIMAoFT7tUAA95UjpufCIAAhITERMPAwA=',
+  ],
+  '4': [
+    'AAAAAAUcFAEAAAABUbluCAAABS+37XYIAAMbaKLhdggAEEtXf9d2CAQ8fSd3234JCmJuT57soA4DJDEzl+uYDQAFBhGIx4ILAAEBBRogGAI=',
+    'AAAABy5QDQAAAAAlpq4cAAAAHn7lux4AAA5Bf723HgACKU5GrrYeAAteTz22viQADm9YZsrQMQACFBY/x8goAAAABjKZlCQAAAABCBQTBgA=',
+    'AAAAAxMZAgAAAAAqkpMOAAAAGXPapxAAAAtDi8enEAABJkxWs6cQAApYRUm5rRUAEYBgds3EKQABCwtBvK4WAAAEC0iwnx8AAAACChcVBQA=',
+    'AAAAAxMeBQAAAAAjnqUbAAAAGW7atBwAAAw9eLmxHAABJExAqbAdAAtfT0CyuCMAD3lqdMvPNQAAAgIst7kiAAAABzafmSYAAAAABQ0NAwA=',
+  ],
+  '5': [
+    'EC1kdG43DgAXYrPFuE0ZAiBfSTYtESYHMJZyORgKQAs3v+DJeCFSDgopcNLtdGAOCgwWUNahWwtBKQwpsYM6BmphO0iCLxABDhYTEhADAQA=',
+  ],
+  '6': [
+    'AAAEERoRBAACD0uLYDMNAAxWtIQcBAEAOrHKZVUvDAB05dWO3LY/A4fggSBfz30JetdqByTHkQxPv4UWPb50CBRnjFB/eSwCAQgRExMLAwA=',
+    'AAACDRcRBAAACT50ZTENAAE1locjAgAADIWqZUMuCQAb3b+JpbZGBB/ngyhTzJMMHdlxDzbCpA8UqX0fQLyICwRFcFFeeTADAAUNEBALAwA=',
+  ],
+  '8': [
+    'CCpTTlk4DwAjipI7UX41Aka/oBESg0UDKaXTg3RrJAEKVcbt4G0YABRZlazrzVMFTIk9G27Njg1YijMJLLCECyVkUztadTkDAQwSEhYOBAA=',
+    'Ag8dGhsXBgAcfZhLU3w6Aj27qy0qfUwCI5PYkHFrJgEHQbTp1XoZAQ9Mha/k2VwFRZZWHWTPog1TnkwMOqyWDCBgXz1XeEADAQkSEhQPBAA=',
+    'AAcZIR4XBAAFTIZgWoA4BA6SnCEZhGEICn7DiEx3MQMCOKvly3EWAAIxfKHn0GIHD35cJ2DPshIWpFEJIKq1EwtkXjJGjmkJAAoTERUWCQA=',
+    'AAwbFRcaCgAIXoxBR4hMBQ6NqSIYkGIICnbGlG13MwICK5nv3XAVAAVCeXvDyXIKDXFMGFDDsBMOeUQLH6WlEgdMVztUgFEHAAYNEBANBQA=',
+  ],
+  '9': [
+    'AQwgIyYPAgAdepJZmn0nAVnAaQdJs18GcM1vCyq+ggpTyKw6Vs6MDBV5zMWo1HAICRElNrCsQAMGAhVftmATAAQZQHw/DwIAAQgQDgMAAAA=',
+    'AxIdGB0UBAAwiYVKfoYpAHLMaQ5XuFgCgdt2FUzDfQdWzrtFetuFCBNcnYut01wDAxAhOqKfLAACBhZsnVIJAAENMlUvCAAAAAAAAAAAAAA=',
+    'AAobGh4UBQAIX5JbfZNEBBOrjA44zJsOFsSTECLQwxQSt9BETt7KFQdctLCl7bERAREsQJbObAgAAwwrt4EeAAETNmpfIAYAAAULDwkDAQA=',
+  ],
+};
+
 const HEART_DIGITS: Readonly<Record<string, readonly string[]>> = {
   '0': [
     'ASmSuLxAAAANlJRMq5sfADzlVgBD6lYAUuNPAB/wdAZw20MAHOOLC2PaRQAd7YgJPd5NADbqUAAUwJlCm8guAAI7kqZ4QAQAAAAMGQkAAAA=',
@@ -390,7 +456,10 @@ function normaliseGlyph(bytes: Uint8Array): Float64Array {
  * an input** (plan ruling R1): the data is the opener's, and the reader is built here from it, so the
  * readers module never imports this one.
  */
-export const TRAP_DIGIT_TEMPLATES: readonly DigitTemplate[] = atlasOf(TRAP_DIGITS);
+export const TRAP_DIGIT_TEMPLATES: readonly DigitTemplate[] = [
+  ...atlasOf(TRAP_DIGITS),
+  ...variantAtlasOf(TRAP_DIGITS_RAW),
+];
 
 /**
  * The OCR escalation's budget (ruling R6, 2026-11-07; window R10, 2026-11-07) — one per **panel**

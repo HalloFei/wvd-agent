@@ -652,3 +652,68 @@ describe('parseOpener — through the native decoder', () => {
       .toEqual([100, 100, 100, null, Number.NaN, 100]);
   });
 });
+// ---------------------------------------------------------------------------------------------
+// The raw capture (2026-11-08): what the vision module actually delivers
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The frame the loop sees is **raw** now (no JPEG encode/decode), and the 2026-10-24 atlas above is a
+ * q75-era mean: live 2026-11-08 the panel refused all twelve fields on raw pixels — `template 0` —
+ * and the run sat on 由谁打开 until the OCR tier answered (which it then was not configured to do).
+ * Re-encoding the same frame at q75 made it parse 12/12, q90 and q100 did not: the codec, not the
+ * geometry.
+ *
+ * The crop is that live frame's own panel region, lossless, byte for byte. It is committed as the
+ * regression: the raw era's templates (`TRAP_DIGITS_RAW`) must answer it with **no escalation** —
+ * the template tier is milliseconds, and an OCR round trip per panel is what the 4 s allowance on
+ * this page cannot afford.
+ */
+describe('the raw capture of 2026-11-08', () => {
+  const RAW_CROP = new URL(
+    '../testdata/screens/2026-11-08-opener-raw/panel-crop-680-590-1240-1000.rgba',
+    import.meta.url,
+  );
+  const CROP = { x0: 680, y0: 590, x1: 1240, y1: 1000 } as const;
+
+  it('reads the panel from raw pixels with the template tier alone', async () => {
+    const bytes = await readFile(RAW_CROP);
+    const width = CROP.x1 - CROP.x0;
+    const height = CROP.y1 - CROP.y0;
+    expect(bytes.length).toBe(width * height * 4);
+
+    // The parser reads absolute 1920×1080 rectangles, so the crop is placed at the rect it was cut at.
+    const data = new Uint8Array(1920 * 1080 * 4);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const from = (y * width + x) * 4;
+        const to = ((CROP.y0 + y) * 1920 + CROP.x0 + x) * 4;
+        data[to] = bytes[from]!;
+        data[to + 1] = bytes[from + 1]!;
+        data[to + 2] = bytes[from + 2]!;
+        data[to + 3] = 255;
+      }
+    }
+    const frame: Frame = {
+      atMs: 0,
+      width: 1920,
+      height: 1080,
+      toRgba: async () => ({ data, width: 1920, height: 1080 }),
+    };
+
+    const tiers: Array<{ template: number; ocr: number }> = [];
+    const parsed = await parseOpenerDetailed(frame, { onTiers: (summary) => tiers.push(summary) });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // The panel's own numbers, as the screen drew them (this party's stats grow run to run).
+    expect(parsed.panel.members.map((member) => [member.detect, member.disarm])).toEqual([
+      [38, 49],
+      [28, 50],
+      [34, 38],
+      [96, 111],
+      [62, 43],
+      [84, 91],
+    ]);
+    expect(tiers).toEqual([{ template: 12, ocr: 0 }]);
+  });
+});
