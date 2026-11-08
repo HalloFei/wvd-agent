@@ -172,7 +172,8 @@ try {
     sleep: wait,
     log,
     atlas: true,
-    pointer: true,
+    // The CLI defaults to the new navigator for testing; WVD_NAV=legacy switches it back.
+    navigation: process.env.WVD_NAV === 'legacy' ? 'legacy' : 'senses',
     focus: () => focusGame(client),
   });
 

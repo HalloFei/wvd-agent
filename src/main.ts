@@ -395,7 +395,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
           // confirmed the same node on the same frames — and seven unmeasured pushes left the map where
           // even the atlas could not place the site). The modules and the machine stay; the default does
           // not depend on them.
-          pointer: false,
+          navigation: process.env.WVD_NAV === 'senses' ? 'senses' : 'legacy',
         });
       },
     },

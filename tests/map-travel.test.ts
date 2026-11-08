@@ -103,14 +103,16 @@ describe('travelling to a site', () => {
     expect(state.taps[0]!.x).toBeLessThanOrEqual(STRIP.x + STRIP.width);
   });
 
-  it('does not tap an icon the game has not made clickable', async () => {
+  it('taps the matched icon directly, with no hover and no ring gate', async () => {
+    // Operator, 2026-11-09: we do not need hover + ring at all. The click places the cursor, exactly as
+    // the legacy navigator presses the matched coordinate; a hover step is a dependency on reading the
+    // pointer, and that is where the live travel failed.
     const { senses, input, state } = toy({ x: 700, y: 300 });
     state.rings = false;
     const result = await travelToSite(senses, input, { railX: 400, railY: 416 });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toBe('no-ring');
-    expect(state.taps).toHaveLength(0);
+    expect(result.ok).toBe(true);
+    expect(state.taps).toHaveLength(1);
+    expect(Math.abs(state.taps[0]!.x - 700)).toBeLessThanOrEqual(12);
   });
 });
 

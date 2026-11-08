@@ -52,7 +52,20 @@ export interface WorldMapEnv {
    * the fallback's own behaviour stays testable unchanged.
    */
   readonly atlas?: boolean;
-  /** Whether the travel may use the new senses (finder + ring + pointer). Off by default. */
+  /**
+   * Which navigator travels (operator, 2026-11-09: *make it configurable — switch between our module and
+   * legacy navigation*).
+   *
+   * - `legacy` — the measured route: open the map, place the site with the stored atlas, pan with the
+   *   drag loop, confirm the node, tap. The path that has been completing travels all night.
+   * - `senses` — the new machine: find the site by its own icon (wide per-site scale bank), put the
+   *   cursor on it, read the game's clickable ring, tap (actions/map-travel.ts). Finder proved live; the
+   *   cursor move is not.
+   *
+   * Default `legacy`: a navigator earns the default by completing travels, not by being newer.
+   */
+  readonly navigation?: 'legacy' | 'senses';
+  /** The older spelling of `navigation: 'senses'`, for a caller that predates the switch. */
   readonly pointer?: boolean;
   /** Bring the game window back to the foreground (the travel re-takes it on a refused press). */
   readonly focus?: () => Promise<boolean>;
@@ -719,7 +732,10 @@ function iconScalesAt(level: number): number[] {
   // (score 0.993), and nowhere in the old 0.51-0.69 bank. That is why the two live runs found nothing:
   // the basis below used to be 0.45 — the *atlas stills'* art — which is about half the live scale. The
   // ladder is the same 1.34 step, anchored on the measurement instead of on the stills.
-  const centre = 0.9 * Math.pow(MAP_ZOOM.stepScale, level - 1);
+  // Back to the atlas's own basis (0.45 at max-out): this ladder serves the **legacy** atlas path, whose
+  // fixtures and live confirms are measured against it. The senses have their own wide bank
+  // (`ICON_SCALES_ANY`), because one ladder cannot serve every site's template size.
+  const centre = 0.45 * Math.pow(MAP_ZOOM.stepScale, level);
   return [0.85, 0.92, 1, 1.08, 1.15].map((fraction) => Math.round(centre * fraction * 100) / 100);
 }
 
@@ -1168,7 +1184,8 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
   // measured and one label banner tells the view where it is, so the spiral below is the fallback
   // for destinations the atlas does not know.
   const atlasSite = env.atlas === true ? siteById(id) : null;
-  if (env.pointer === true) {
+  const navigation = env.navigation ?? (env.pointer === true ? 'senses' : 'legacy');
+  if (navigation === 'senses') {
     const entryForSenses = LOCATIONS.get(id);
     if (entryForSenses !== undefined) {
       const viaSenses = await travelBySenses(entryForSenses, env);

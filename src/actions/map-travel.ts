@@ -159,12 +159,10 @@ export async function travelToSite(
 
     const found = await senses.site(1, true);
     if (found !== null) {
-      // The pointer to the icon, then the game's own ring — the only evidence a tap may rest on.
-      const moved = await moveCursorTo(senses, input, found.at, pointerRate, maxHold);
-      if (!moved.ok) return { ok: false, reason: 'lost', detail: moved.detail };
-      if (!(await senses.ring(found.at))) {
-        return { ok: false, reason: 'no-ring', detail: 'the icon is not clickable on this frame' };
-      }
+      // **Tap the matched point directly** (operator, 2026-11-09: *we do not need hover + ring at all*).
+      // The click itself places the cursor on the icon, which is all the game needs; a hover step and a
+      // ring gate only added a dependency on reading the pointer, and that is exactly where the live
+      // travel failed. Legacy presses the matched coordinate, and so do we.
       const tapped = await input.tap(found.at);
       if (!tapped.ok) return { ok: false, reason: 'refused', detail: tapped.reason };
       return { ok: true, at: found.at, pushes, level: 1 };
