@@ -31,7 +31,7 @@
  * World stops on stallStopSeconds; a **lost process** - the engine's failure stops the session and a
  * harness that dies leaves a non-zero exit code. report.json says which one it was.
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createWvdWorld } from '../src/main.ts';
 import { WVD_DEFAULTS } from '../src/config.ts';
@@ -107,8 +107,25 @@ console.log(ocrWired
   : 'OCR tier: ABSENT (' + OCR_PYTHON + ') — a chest panel the JPEG-era atlas refuses will stall');
 /** Local time of day: the morning reader's clock, not UTC. */
 const stamp = (): string => new Date().toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Shanghai' });
+/**
+ * The run's own console trail, beside its report (`.tmp/runs/<stamp>/console.log`).
+ *
+ * 2026-11-08: two stalls cost their diagnosis because the only copy of the trail was the harness's
+ * stdout, and a `job_output` read consumes it. A run's evidence has to outlive the reader.
+ */
+const CONSOLE_PATH = join(REPORT_DIR, 'console.log');
+mkdirSync(REPORT_DIR, { recursive: true });
+const trail = (line: string): void => {
+  try {
+    appendFileSync(CONSOLE_PATH, line + '\n');
+  } catch {
+    // the console is the primary channel; a failed log file must not stop the run
+  }
+};
 const log = (level: string) => (line: string, data?: unknown): void => {
-  console.log(stamp() + ' ' + level + ' ' + line + (data === undefined ? '' : ' ' + JSON.stringify(data)));
+  const text = stamp() + ' ' + level + ' ' + line + (data === undefined ? '' : ' ' + JSON.stringify(data));
+  console.log(text);
+  trail(text);
   if (STOP_ON_OPENER_MISS && line.includes('the opener was given up')) {
     pausedOnStall = true;
     console.log(stamp() + ' PAUSE-ON-OPENER-MISS; the loop is stopping at this battle');

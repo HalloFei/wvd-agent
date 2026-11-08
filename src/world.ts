@@ -403,6 +403,22 @@ const ORIENT_MAP_ICON_PATIENCE = 20;
 const HEAL_WINDOW_MS = 30_000;
 
 /**
+ * How long a command that changed nothing stays refused before the route may ask again, ms.
+ *
+ * "Not re-sent until the farm advances" is right for a *blind* retry, but the farm can only advance
+ * through a command, so the refusal could freeze the loop until the stall clock (a quarter of
+ * `stallStopSeconds` — 45 s at the default 180) escalated it. Live 2026-11-08 13:30, after a battle:
+ * `open-map` was given up at a 4 667 ms wait because the game was drawing at 21 FPS, the map then
+ * opened *after* the give-up, the route's next ask was refused on that same epoch, and the loop sat
+ * 53 s on a legible frame with one chest left. A re-arm is not that blind retry: the route re-derives
+ * the intent from the frame it holds now, so the ask after this window is a fresh decision.
+ *
+ * 8 s = the 4.7 s open that was measured on a slow frame, with the second chance inside half of the
+ * 45 s the stall clock allows.
+ */
+const COMMAND_REARM_MS = 8_000;
+
+/**
  * How long the game may take to load after an orientation travel or a climb. The travel returns when
  * the world map leaves — or the Dungeon Select row is accepted — and the frames after it are the
  * load's own fade: black, or a flat colour, at confidence 0. The session classifier must stop on
@@ -785,8 +801,10 @@ export class WvdWorld implements World {
   #lootDismissed = false;
   /** Commands sent and waiting for their screen to answer (one at a time). */
   #inFlight: InFlight | null = null;
-  /** Commands that changed nothing on this screen epoch: never re-sent until the farm advances. */
+  /** Commands that changed nothing on this screen epoch: not re-sent until the farm advances. */
   #failed: Set<Intent['kind']> = new Set();
+  /** When each of those failed, so the refusal can expire (see `COMMAND_REARM_MS`). */
+  #failedAtMs: Map<Intent['kind'], number> = new Map();
   /**
    * Why the last parsed opener panel had no usable member, for the question the escalation asks.
    * Set while the panel is on screen and cleared when it leaves (or a choice succeeds).
@@ -1120,7 +1138,7 @@ export class WvdWorld implements World {
       this.#unreachable = [];
       this.#walkFailures = new Map();
       this.#inFlight = null;
-      this.#failed = new Set();
+      this.#failed = new Set(); this.#failedAtMs = new Map();
       this.#openerRefusal = null;
       this.#escalationCooldownUntilMs = 0;
       this.#lastStopReason = null;
@@ -1688,9 +1706,19 @@ export class WvdWorld implements World {
     }
     if (COMMAND_KINDS.has(intent.kind) && this.#failed.has(intent.kind)) {
       // A blind retry is not a decision: `openMap` presses `G` once now, but a `G` on an already-open map is
-      // 移动至目的地. The stall clock turns this into an escalation instead.
-      this.#host?.log.warn(`wvd: ${intent.kind} already changed nothing on this screen; not sending it again`);
-      return;
+      // 移动至目的地. It is not a life sentence either — see `COMMAND_REARM_MS`.
+      const failedAt = this.#failedAtMs.get(intent.kind) ?? now;
+      if (now - failedAt < COMMAND_REARM_MS) {
+        this.#host?.log.warn(`wvd: ${intent.kind} already changed nothing on this screen; not sending it again`);
+        return;
+      }
+      // Re-armed: the route re-derived this intent from the frame in hand, so asking again is a fresh
+      // decision, not a replay of the one that failed.
+      this.#failed.delete(intent.kind);
+      this.#failedAtMs.delete(intent.kind);
+      this.#host?.log.info(
+        `wvd: ${intent.kind} re-armed after ${Math.round((now - failedAt) / 1000)} s; asking again from this frame`,
+      );
     }
     await this.#execute(intent, observation.screen, { session, frame, observation, now });
   }
@@ -1955,7 +1983,7 @@ export class WvdWorld implements World {
         const timeoutMs = Math.max(1, this.#cfg.openerPanelTimeoutMs);
         if (waitedMs >= timeoutMs) {
           this.#inFlight = null;
-          this.#failed.add('open-chest');
+          this.#markFailed('open-chest');
           this.#host?.log.warn(
             `wvd: the chest did not come back after the QTE cancel (${Math.round(waitedMs)} ms); `
               + 'not re-engaging it until the farm advances',
@@ -1974,7 +2002,7 @@ export class WvdWorld implements World {
       const timeoutMs = Math.max(1, this.#cfg.openerPanelTimeoutMs);
       if (waitedMs >= timeoutMs) {
         this.#inFlight = null;
-        this.#failed.add('open-chest');
+        this.#markFailed('open-chest');
         this.#host?.log.warn(
           'wvd: the opener panel never answered the click; not clicking it again until the farm advances',
           { waitedMs, timeoutMs },
@@ -2063,13 +2091,19 @@ export class WvdWorld implements World {
    *   command is *not* recorded failed: the next move is a different chest, not a blind retry.
    * - every other command is recorded failed, as before: it is not re-sent until the farm advances.
    */
+  /** Record a command that changed nothing, with the clock `COMMAND_REARM_MS` measures from. */
+  #markFailed(kind: Intent['kind']): void {
+    this.#failed.add(kind);
+    this.#failedAtMs.set(kind, this.#now());
+  }
+
   #gaveUp(inFlight: InFlight, evidence: Record<string, number>): void {
     const target = inFlight.target;
     if (inFlight.kind === 'move' && target !== null) {
       this.#skip(target, 'the walk never started', evidence);
       return;
     }
-    this.#failed.add(inFlight.kind);
+    this.#markFailed(inFlight.kind);
     this.#host?.log.warn(
       `wvd: ${inFlight.kind} changed nothing; not sending it again until the farm advances`,
       evidence,
@@ -2317,7 +2351,7 @@ export class WvdWorld implements World {
     this.#lastMapRead = null;
     this.#lastScreen = null;
     this.#inFlight = null;
-    this.#failed = new Set();
+    this.#failed = new Set(); this.#failedAtMs = new Map();
     this.#willpower = [];
     this.#openerRefusal = null;
     this.#escalationCooldownUntilMs = 0;
@@ -2729,7 +2763,7 @@ export class WvdWorld implements World {
             ? `${unread} of ${panel.members.length} cards show no willpower, and no member with a readable `
               + `willpower is at or above the ${this.#cfg.willpowerFloor} willpower floor`
             : `no member is at or above the ${this.#cfg.willpowerFloor} willpower floor`;
-          this.#failed.add('open-chest');
+          this.#markFailed('open-chest');
           this.#host?.log.warn(`wvd: not opening the chest: ${this.#openerRefusal}`, {
             members: panel.members.map((member) => ({
               detect: member.detect,
@@ -3169,7 +3203,7 @@ export class WvdWorld implements World {
         this.#skip(target, why);
         return result;
       }
-      this.#failed.add(kind);
+      this.#markFailed(kind);
       this.#host?.log.warn(`wvd: could not ${kind}`, { reason: result.reason, detail: result.detail ?? null });
       return result;
     }

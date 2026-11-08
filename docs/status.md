@@ -1371,6 +1371,25 @@ milliseconds, which is what keeps the page inside the operator's 4 s.
 To extend the atlas after a UI or capture change:
 `node scripts/extract-opener-raw-atlas.mjs --crop <crop.rgba> --rect x0,y0,x1,y1 --values <values.json>`.
 
+## A failed command no longer freezes the loop (2026-11-08)
+
+Live 13:30, after a battle and with the game drawing at **21 FPS** (the 30 FPS cap is the client's,
+not the capture's): `open-map` was given up at a **4 667 ms** wait — longer than `mapOpenTimeoutMs`
+(3 000) — and the map then opened *after* the give-up. The give-up marked `open-map` failed, the route
+re-derived the same intent from the frames after it, and the guard refused it "until the farm
+advances". Nothing else could advance the farm: the loop sat **53 s** (534 ticks) on a legible frame
+with one chest left, until the stall clock escalated it.
+
+The guard's rule is right for a *blind* retry and wrong as a life sentence. A refusal now **expires**
+(`COMMAND_REARM_MS`, 8 s — the measured 4.7 s open plus margin, and still well inside the 45 s the
+stall clock allows): after it the route may ask again, and the ask is a fresh decision because the
+intent was re-derived from the frame in hand. Proved by `tests/world.test.ts` (142, including
+"re-arms a command that changed nothing after the window").
+
+**Evidence now outlives the run.** The harness appends its console trail to
+`.tmp/runs/<stamp>/console.log` beside the report. Two stalls today cost their diagnosis because the
+only copy was the harness's stdout and a `job_output` read consumes it.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

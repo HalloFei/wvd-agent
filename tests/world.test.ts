@@ -543,6 +543,33 @@ describe('the tick', () => {
     expect(actuator.calls).toEqual([...walkOne(), ...walkOne(), `key ${SCAN.F} 60`]);
   });
 
+  it('re-arms a command that changed nothing after the window, so a slow frame cannot freeze the loop', async () => {
+    // Live 2026-11-08 13:30 (after a battle, the game drawing at 21 FPS): open-map was given up at a
+    // 4 667 ms wait, the map opened *after* the give-up, and the route's next ask was refused on the
+    // same screen epoch — 53 s frozen on a legible frame. A fresh ask after this window is the route
+    // re-deriving the intent from the frame in hand, not a replay of the failed press.
+    const { world, host, actuator, clock } = makeWorld({ observation: dungeonView });
+    await started(world, host);
+
+    await world.tick();                                   // one frame of the view: not yet a decision
+    await world.tick();                                   // the second frame: the route may command
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`]);
+
+    clock.advance(3_100);                                 // mapOpenTimeoutMs passes, nothing changed
+    await world.tick();
+    clock.advance(100);
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`]); // refused, not re-sent
+
+    clock.advance(4_000);                                 // still inside the re-arm window
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`]);
+
+    clock.advance(5_000);                                 // past it: ask again from this frame
+    await world.tick();
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+  });
+
   it('sends a command that changed nothing again once the farm advances', async () => {
     // The guard is per screen epoch: a map that never opened is not pressed twice, but a readout that
     // moves is the farm advancing, and a command may be sent again from it.
