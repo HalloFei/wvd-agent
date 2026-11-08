@@ -391,6 +391,14 @@ const HEAL_PAGE_GRACE_MS = 2_500;
 const HEAL_ESCAPE_GRACE_MS = 2_500;
 const HEAL_DEADLINE_MS = 12_000;
 /**
+ * The heal episode's hard wall-clock bound, ms (live 2026-11-09 04:45-04:46 measured the whole cycle:
+ * card 5 s after the start, the page 10 s after the card, sparkle and 恢复 4 s, the toast's unnamed
+ * stretch 5 s, the page again 5 s — 39 s to the close). The old 3 x deadline (36 s) cut the episode
+ * just before its last step, so every heal gave up with the close owed. This is the last resort for a
+ * screen that never comes back, not the budget of the heal's own steps.
+ */
+const HEAL_HARD_DEADLINE_MS = 60_000;
+/**
  * How long the skill panel's 確定 may stay owed before the cast is given up, ms. Measured: the panel
  * is drawn within one frame of the slot tap; four seconds is four chances at it.
  */
@@ -1482,6 +1490,7 @@ export class WvdWorld implements World {
           graceMs: HEAL_PAGE_GRACE_MS,
           escapeGraceMs: HEAL_ESCAPE_GRACE_MS,
           deadlineMs: HEAL_DEADLINE_MS,
+          hardDeadlineMs: HEAL_HARD_DEADLINE_MS,
         });
         this.#heal.enter(now);
         this.#healWaitOn = null;

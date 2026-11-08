@@ -1753,7 +1753,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     // the test is about the debt, not the escalation.
     perceiver.observation = { screen: 'unknown', atMs: 100, confidence: 0.2 };
     const gaveUp = (): boolean => host.logRecords.some((record) => record.message.includes('the debt re-arms'));
-    for (let index = 0; index < 45 && !gaveUp(); index += 1) { clock.advance(1_000); await world.tick(); }
+    for (let index = 0; index < 70 && !gaveUp(); index += 1) { clock.advance(1_000); await world.tick(); }
     expect(gaveUp()).toBe(true);
 
     // The view is back: the debt is still owed, so a fresh attempt starts.
