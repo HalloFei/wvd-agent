@@ -1124,59 +1124,28 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
   // The atlas hint: which way the target lies from the view's own centre (other sites inform, never gate).
   const atlasPoint = siteById(entry.id);
   const senses: MapSenses = {
-    site: async (level, wantTitle) => {
+    site: async () => {
+      // A captured art (perception/site-art.ts) is matched at scale 1 — the legacy rule, and the end of the
+      // scale sweep for any site that has been recorded. Unrecorded sites keep the wide bank.
+      const art = capturedArt(entry.id, 1);
       const current = await image();
       if (current === null) return null;
-      // A captured art (perception/site-art.ts) is matched at scale 1 — the legacy navigator's rule, and
-      // the end of the scale sweep for any site that has been recorded. Unrecorded sites keep the wide
-      // bank, so a new site works before it is captured.
-      const art = capturedArt(entry.id, level);
       const found = findSite(current, art === null ? target : { ...target, template: art.template }, {
         strip: MAP_STRIP,
         iconScales: art === null ? [...ICON_SCALES_ANY] : [0.98, 1, 1.02],
         titleScales: [1],
-        wantTitle,
+        wantTitle: true,
         minIconScore: 0.78,
       });
       return found === null ? null : { at: found.point, confidence: found.confidence };
     },
-    ring: async (at) => {
-      const current = await image();
-      return current === null ? false : isClickable(current, at);
-    },
-    pointer: async () => {
-      const current = await image();
-      return current === null ? null : pointerAt(current);
-    },
-    landmark: async () => {
-      const current = await image();
-      if (current === null) return null;
-      const found = findSites(current, catalogue, {
-        strip: MAP_STRIP, iconScales: [...ICON_SCALES_ANY], wantTitle: false, minIconScore: ATLAS_ICON_FLOOR,
-      });
-      const best = found[0];
-      return best === undefined ? null : { id: best.id, at: best.point };
-    },
-  };
-  // Every press goes through the focus retry: a transient window focus loss must not end a travel
-  // (operator, 2026-11-09: re-take the foreground after 3 s, five attempts).
-  const retry = {
-    sleep: (ms: number) => env.sleep(ms),
-    focus: env.focus,
-    log: (line: string) => env.log?.(line),
   };
   const input: MapInput = {
-    hold: (direction, holdMs) => withForegroundRetry(
-      () => env.actuator.holdKey(POINTER_KEYS[direction], holdMs), retry,
-    ),
-    tap: (at) => withForegroundRetry(() => env.actuator.tap(at), retry),
-    swipe: (direction) => withForegroundRetry(async () => {
+    swipe: (direction) => {
       const [from, to] = SWIPE_VECTORS[direction];
       return env.actuator.drag(from, to, 300);
-    }, retry),
-    zoom: async (direction) => (await withForegroundRetry(
-      () => env.actuator.holdKey(direction === 'in' ? ZOOM_KEY_IN : ZOOM_KEY_OUT, 60), retry,
-    )).ok,
+    },
+    tap: (at) => env.actuator.tap(at),
     sleep: (ms) => env.sleep(ms),
     log: (line) => env.log?.(line),
   };

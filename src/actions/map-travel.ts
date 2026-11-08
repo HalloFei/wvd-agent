@@ -1,47 +1,38 @@
 /**
- * Travelling to one site on the world map, with the four senses the module now has.
+ * Travelling to one site on the world map.
  *
- * The rule (operator, 2026-11-09): a site is found by **its own icon and title**, at any position and
- * any size; the atlas may hint which quadrant we are looking at and must never gate; the map is
- * **coarse at level 0 and fine at level 1**, a site is clickable at levels 1 and 2, and a tap is sent
- * only when the game draws **its white ring** around the icon. The pointer is moved by key holds, and a
- * pointer held at the map's edge pushes the perspective at a rate.
+ * Four steps, one job each (operator, 2026-11-09):
  *
- * That rate is **not** a constant, and it is not fixed per level here either: the same push covers a
- * different amount of map at each zoom, so the loop **measures** it — the displacement of a landmark the
- * finder can see, before and after each push — and plans the next push from what it measured. A learned
- * rate that is wrong for a frame is corrected by the following frame; a constant that is wrong is wrong
- * all night (that is what the 0.49-1.87 gains of the old pan loop were).
+ *  1. **find** the site by its own icon and title (perception/site-finder.ts) at level 1, where every
+ *     title is drawn and every site is clickable;
+ *  2. **tap the matched point** — the click places the cursor, exactly as the legacy navigator's
+ *     Press(matched point) does, so there is no hover step, no ring gate and **no cursor move**;
+ *  3. on a miss, **swipe and look again** (legacy's mover): a fixed drag, then re-look, cycled through the
+ *     four directions. The distance is never used for anything, which is why a non-reproducible drag
+ *     (identical drags moved the map 144-264 px) cannot mislead it;
+ *  4. **a 30 s budget**, so a travel that cannot find its site stops instead of swiping all night.
  *
- * Every dependency is injected, so the machine is testable without a game: the senses (site, ring,
- * pointer, landmark), the input (hold, tap, zoom) and the clock.
+ * What is deliberately absent: any dead reckoning of the map's offset, any rate learnt from a drag, any
+ * cursor position read. Each was a source of failure and none is needed for these four steps — a swipe
+ * parks the pointer where the drag ended, and an earlier version then tried to *move* the cursor from
+ * that wall, could not, and called it "lost".
+ *
+ * Every dependency is injected, so the machine is testable without a game.
  */
-import type { ActionResult, Frame, Point } from '../contracts.ts';
+import type { ActionResult, Point } from '../contracts.ts';
 
-/** What the machine needs to see. The caller binds these to the perception modules. */
+/** What the machine needs to see. The caller binds it to the site finder. */
 export interface MapSenses {
-  /** The target on this frame, if it is drawn: `wantTitle` false at the coarse level. */
-  site(level: 0 | 1 | 2, wantTitle: boolean): Promise<{ readonly at: Point; readonly confidence: number } | null>;
-  /** Whether the game draws its clickable ring around a point. */
-  ring(at: Point): Promise<boolean>;
-  /** Where the pointer is, or null when the frame does not draw it. */
-  pointer(): Promise<Point | null>;
-  /** A site the finder can see, to measure how far a push moved the map. */
-  landmark(): Promise<{ readonly id: string; readonly at: Point } | null>;
+  /** The target on this frame, if it is drawn, at the level the caller has put the map on. */
+  site(): Promise<{ readonly at: Point; readonly confidence: number } | null>;
 }
 
 /** What the machine needs to do. */
 export interface MapInput {
-  hold(direction: 'w' | 'a' | 's' | 'd', holdMs: number): Promise<ActionResult>;
-  /**
-   * One **swipe** in the direction the view should travel (legacy's mover: a fixed 600 px drag, then look).
-   * The distance is not used for anything — that is the point: the loop is right even when the game's
-   * drag is not reproducible (identical drags moved the map 144-264 px, measured).
-   */
+  /** One swipe in the direction the **view** should travel; then look again. */
   swipe(direction: 'w' | 'a' | 's' | 'd'): Promise<ActionResult>;
+  /** A tap at a point of the frame: the click itself places the cursor there. */
   tap(at: Point): Promise<ActionResult>;
-  /** One zoom step. Returns false when the press was refused. */
-  zoom(direction: 'in' | 'out'): Promise<boolean>;
   sleep(ms: number): Promise<void>;
   log?(line: string): void;
 }
@@ -49,41 +40,60 @@ export interface MapInput {
 export interface MapTravelOptions {
   /** The whole travel's bound, ms (operator: 30 s). */
   readonly budgetMs?: number;
-  /** The map's measured pan rail: the coarse views are enumerated inside it. */
-  readonly railX?: number;
-  readonly railY?: number;
-  /** The strip the map is drawn in, in client pixels. */
-  readonly strip?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
-  /** How far a coarse view may be from the target's own point and still count. */
-  readonly findTolerancePx?: number;
-  /** The pointer's travel per hold, measured: 1 px/ms at every level (2026-11-09). */
-  readonly pointerPxPerMs?: number;
-  /** The longest one push or pointer hold may be, ms. */
-  readonly maxHoldMs?: number;
   /**
-   * Which way the next push should go. **The atlas may hint this** (operator, 2026-11-09: other sites
-   * help, never gate): knowing which quadrant the target is in turns a diagonal crawl into one push in
-   * the right direction. Absent, the loop alternates `d`/`s` — which searches right and down only, and
-   * never found a target that was left or up.
+   * Which way the next swipe should go. The atlas may **hint** it (other sites inform, never gate):
+   * knowing which quadrant the target is in turns a blind cycle into one swipe in the right direction.
    */
-  readonly nextDirection?: (push: number) => Promise<'w' | 'a' | 's' | 'd'>;
+  readonly nextDirection?: (swipe: number) => Promise<'w' | 'a' | 's' | 'd'>;
   readonly now?: () => number;
 }
 
 export type MapTravelResult =
-  | { readonly ok: true; readonly at: Point; readonly pushes: number; readonly level: 1 | 2 }
-  | {
-    readonly ok: false;
-    readonly reason: 'not-found' | 'budget' | 'lost' | 'refused' | 'not-clickable' | 'no-ring';
-    readonly detail?: string;
-  };
+  | { readonly ok: true; readonly at: Point; readonly swipes: number }
+  | { readonly ok: false; readonly reason: 'not-found' | 'budget' | 'refused'; readonly detail?: string };
+
+const BUDGET_MS = 30_000;
+const SWIPE_ORDER: ReadonlyArray<'w' | 'a' | 's' | 'd'> = ['d', 's', 'a', 'w'];
+const SWIPE_SETTLE_MS = 600;
+
+/**
+ * The travel: look, tap; on a miss swipe and look again until the budget runs out.
+ */
+export async function travelToSite(
+  senses: MapSenses,
+  input: MapInput,
+  options: MapTravelOptions = {},
+): Promise<MapTravelResult> {
+  const budgetMs = options.budgetMs ?? BUDGET_MS;
+  const now = options.now ?? (() => Date.now());
+  const deadline = now() + budgetMs;
+  let swipes = 0;
+  for (;;) {
+    if (now() >= deadline) {
+      return { ok: false, reason: 'budget', detail: 'no site found in ' + budgetMs + ' ms' };
+    }
+    const found = await senses.site();
+    if (found !== null) {
+      const tapped = await input.tap(found.at);
+      if (!tapped.ok) return { ok: false, reason: 'refused', detail: tapped.reason };
+      return { ok: true, at: found.at, swipes };
+    }
+    const direction = options.nextDirection === undefined
+      ? SWIPE_ORDER[swipes % SWIPE_ORDER.length]!
+      : await options.nextDirection(swipes);
+    const swiped = await input.swipe(direction);
+    if (!swiped.ok) return { ok: false, reason: 'refused', detail: swiped.reason };
+    await input.sleep(SWIPE_SETTLE_MS);
+    swipes += 1;
+    input.log?.('wvd: swiped ' + direction + ' (no site yet, ' + swipes + ' swipes)');
+  }
+}
 
 /**
  * A press the engine refused because the game was not the foreground is not a failed travel: it is a
- * window that lost focus. Retry it — **re-taking the foreground** each time — five times, three seconds
- * apart (operator, 2026-11-09), and only then let the refusal stand. The engine itself tries to focus
- * once per press (`sendInput`), and on 2026-11-09 22:05 that attempt failed twice and the travel aborted
- * on a transient focus loss.
+ * window that lost focus. Retry it — **re-taking the foreground each time** — five times, three seconds
+ * apart (operator, 2026-11-09), and only then let the refusal stand. The engine tries a focus per press;
+ * on 2026-11-09 22:05 and again at 03:24 that attempt failed and a travel aborted on a transient loss.
  */
 export async function withForegroundRetry<T extends ActionResult>(
   send: () => Promise<T>,
@@ -100,7 +110,7 @@ export async function withForegroundRetry<T extends ActionResult>(
   let result = await send();
   for (let tried = 0; !result.ok && lostForeground(result) && tried < attempts; tried += 1) {
     options.log?.('wvd: the press was refused (not-foreground); re-taking the foreground in '
-      + Math.round(waitMs / 1000) + ' s (attempt ' + (tried + 1) + ' of ' + attempts + ')');
+      + Math.round(waitMs / 1_000) + ' s (attempt ' + (tried + 1) + ' of ' + attempts + ')');
     await options.sleep(waitMs);
     await options.focus?.();
     result = await send();
@@ -113,136 +123,4 @@ export function lostForeground(result: ActionResult): boolean {
   if (result.ok) return false;
   const detail = (result as { detail?: string }).detail ?? '';
   return detail.includes('not-foreground');
-}
-
-const DEFAULTS = {
-  budgetMs: 30_000,
-  railX: 400,
-  railY: 416,
-  strip: { x: 480, y: 0, width: 960, height: 1_080 },
-  findTolerancePx: 40,
-  pointerPxPerMs: 1,
-  maxHoldMs: 900,
-} as const;
-
-/** The coarse views: the pan rail is only 400 × 416 px, so four corners are the whole map. */
-const VIEWS: ReadonlyArray<{ readonly x: number; readonly y: number }> = [
-  { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 },
-];
-
-/**
- * The travel. Order: reset to level 0, look; on a hit, level 1 and the ring; on a miss, one push and
- * look again. A push is sent **only** with the pointer at the map's edge, and its distance is planned
- * from the rate the previous push measured.
- */
-export async function travelToSite(
-  senses: MapSenses,
-  input: MapInput,
-  options: MapTravelOptions = {},
-): Promise<MapTravelResult> {
-  const budgetMs = options.budgetMs ?? DEFAULTS.budgetMs;
-  const railX = options.railX ?? DEFAULTS.railX;
-  const railY = options.railY ?? DEFAULTS.railY;
-  const strip = options.strip ?? DEFAULTS.strip;
-  const pointerRate = options.pointerPxPerMs ?? DEFAULTS.pointerPxPerMs;
-  const maxHold = options.maxHoldMs ?? DEFAULTS.maxHoldMs;
-  const now = options.now ?? (() => Date.now());
-  const deadline = now() + budgetMs;
-  const overBudget = (): boolean => now() >= deadline;
-
-  let pushes = 0;
-
-  // **Everything happens at level 1** (operator, 2026-11-09): at level 1 every title is drawn and every
-  // site is clickable, so the pair is the identification and the ring is the confirmation — no level-0
-  // icons-only stage, which is where the first two live runs found nothing. The caller puts the map at
-  // level 1 before calling.
-  for (;;) {
-    if (overBudget()) return { ok: false, reason: 'budget', detail: 'the travel exceeded its ' + budgetMs + ' ms' };
-
-    const found = await senses.site(1, true);
-    if (found !== null) {
-      // **Tap the matched point directly** (operator, 2026-11-09: *we do not need hover + ring at all*).
-      // The click itself places the cursor on the icon, which is all the game needs; a hover step and a
-      // ring gate only added a dependency on reading the pointer, and that is exactly where the live
-      // travel failed. Legacy presses the matched coordinate, and so do we.
-      const tapped = await input.tap(found.at);
-      if (!tapped.ok) return { ok: false, reason: 'refused', detail: tapped.reason };
-      return { ok: true, at: found.at, pushes, level: 1 };
-    }
-
-    // 4. Not on this view: **swipe and look again** — legacy's mover. A fixed swipe whose distance is
-    //    never used, cycled through the four directions, bounded by the budget. This replaces the edge
-    //    push and its rate learning: the loop does not need to know how far it moved, only that it must
-    //    look again afterwards. (The atlas may name which direction to try first; it never decides.)
-    const order: ReadonlyArray<'w' | 'a' | 's' | 'd'> = ['d', 's', 'a', 'w'];
-    const direction = options.nextDirection === undefined
-      ? order[pushes % order.length]!
-      : await options.nextDirection(pushes);
-    const swiped = await input.swipe(direction);
-    if (!swiped.ok) return { ok: false, reason: 'refused', detail: swiped.reason };
-    await input.sleep(600);
-    pushes += 1;
-    input.log?.('wvd: swiped ' + direction + ' (view ' + pushes + ')');
-  }
-}
-
-/** The rate the next push is planned from: a real measurement, bounded to what a pointer can do. */
-function clampRate(value: number): number {
-  return Math.min(4, Math.max(0.05, value));
-}
-
-/**
- * Put the cursor **on** a point of the frame, then stop. That is the whole job: the target is a place,
- * never a distance, and the answer is "done" or "the cursor cannot be read".
- *
- * The loop exists for one reason only: one blind hold cannot be sized exactly (1 px/ms measured, but the
- * game's own frame pacing makes a millisecond of error a pixel of error, and a 900 ms hold crosses most
- * of the strip), so the move is re-read and corrected rather than trusted.
- *
- * It is **not** a navigator: it does not know about the map's edge, the push, or the zoom. A cursor
- * pinned at the strip's wall is a *different job's* business (an edge push), and treating it as a
- * failure here was a bug: the travel aborted with 'lost' whenever the cursor sat at the wall — the very
- * place the push needs it (2026-11-09 02:10).
- */
-async function moveCursorTo(
-  senses: MapSenses,
-  input: MapInput,
-  at: Point,
-  pxPerMs: number,
-  maxHold: number,
-): Promise<{ readonly ok: true } | { readonly ok: false; readonly detail: string }> {
-  let pointer = await senses.pointer();
-  if (pointer === null) return { ok: false, detail: 'the frame does not draw the pointer' };
-  for (let step = 0; step < 16; step += 1) {
-    const dx = at.x - pointer.x;
-    const dy = at.y - pointer.y;
-    if (Math.abs(dx) <= 12 && Math.abs(dy) <= 12) return { ok: true };
-    // The longer axis first; one hold per step, then look again.
-    const axis: 'w' | 'a' | 's' | 'd' = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'd' : 'a') : (dy > 0 ? 's' : 'w');
-    const distance = axis === 'd' || axis === 'a' ? Math.abs(dx) : Math.abs(dy);
-    const holdMs = Math.min(maxHold, Math.max(40, Math.round(distance / Math.max(0.1, pxPerMs))));
-    const held = await input.hold(axis, holdMs);
-    if (!held.ok) return { ok: false, detail: held.reason };
-    await input.sleep(80);
-    const next = await senses.pointer();
-    if (next === null) return { ok: false, detail: 'the pointer left the frame' };
-    if (Math.abs(next.x - pointer.x) + Math.abs(next.y - pointer.y) < 2) {
-      // A hold that moves nothing is a wall or a swallowed key. Try the other axis once (a cursor on the
-      // right wall still needs to go up or down); if that moves nothing either, the cursor is stuck.
-      const other: 'w' | 'a' | 's' | 'd' = axis === 'd' || axis === 'a'
-        ? (dy > 0 ? 's' : 'w') : (dx > 0 ? 'd' : 'a');
-      const second = await input.hold(other, Math.min(maxHold, 200));
-      if (!second.ok) return { ok: false, detail: second.reason };
-      await input.sleep(80);
-      const again = await senses.pointer();
-      if (again === null) return { ok: false, detail: 'the pointer left the frame' };
-      if (Math.abs(again.x - pointer.x) + Math.abs(again.y - pointer.y) < 2) {
-        return { ok: false, detail: 'the pointer is stuck at ' + again.x + ',' + again.y };
-      }
-      pointer = again;
-      continue;
-    }
-    pointer = next;
-  }
-  return { ok: false, detail: 'the pointer did not settle' };
 }
