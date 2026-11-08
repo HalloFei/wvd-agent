@@ -98,6 +98,7 @@ import { openerFor } from './actions/battle.ts';
 import { chooseOpener } from './policy/chest.ts';
 import { nextOrientStep, type OrientCommand } from './policy/orient.ts';
 import { nextLeaveStep, type LeaveCommand } from './policy/leave.ts';
+import { StageRegistry, type StageName } from './policy/stage-registry.ts';
 import { recoverStep } from './policy/recover.ts';
 import { chooseInnRest } from './policy/inn.ts';
 import { restAtInn } from './actions/inn.ts';
@@ -411,6 +412,30 @@ const HEAL_SESSION_DEADLINE_MS = 90_000;
  */
 const CHEST_PROBE_WALK_MS = 20_000;
 /**
+ * The exit goal's bound, ms (operator rule 2026-11-09). **Below the 150 s stall clock on purpose**: a
+ * stuck exit is released to the route, not turned into a session stop. The live failure is exactly
+ * that misreading — run 7 sat on the harken page for 150 s and the log's last word was a stop, which
+ * hid a missing caller behind a "stop condition". 120 s is two minutes of exit with no command: the
+ * measured leave (F, the walk, the harken, Dungeon Select, the travel) is under 40 s, so this is a
+ * hang's bound, not a budget.
+ */
+const LEAVE_DEADLINE_MS = 120_000;
+/**
+ * The orientation's backstop, ms. A climb from another floor is minutes' work, and the orientation
+ * marks progress when it commands (see `#orientTo`) — so the stall clock only fires when it stops
+ * commanding, and this bound is what catches an episode that keeps commanding and never arrives
+ * (three minutes of turns that never reach the farm floor). It is above the 150 s stall clock by
+ * design: the two clocks cover different failures, and this one must never cut a real climb short.
+ */
+const ORIENT_DEADLINE_MS = 180_000;
+/**
+ * A scripted stage's bound, ms. The stage walks the whole exit — the harken, Dungeon Select, the
+ * world map — one step a tick, and its cursor is the step; this is the bound behind the cursor, for
+ * a step that is never answered. Five minutes: the measured exit script took 48.7 s live (2026-11-05)
+ * and a stage yields to battles and chests, so five minutes is a script that is genuinely stuck.
+ */
+const SCRIPT_DEADLINE_MS = 300_000;
+/**
  * How long the skill panel's 確定 may stay owed before the cast is given up, ms. Measured: the panel
  * is drawn within one frame of the slot tap; four seconds is four chances at it.
  */
@@ -680,7 +705,9 @@ export class WvdWorld implements World {
    * The task stage in progress (operator rule 2026-11-05: a stage is one step per tick). It is not
    * only the route's intent: the exit script walks through the Dungeon Select list, a harken menu and
    * the game's load fades, and the route has no intent for those screens, so the loop would wait the
-   * stage to death. While this is set the stage is pumped before the orientation and the route.
+   * stage to death. The script id is this field; **ownership** is the arbiter's `stage` claim, and
+   * the pump point drives it every tick it owns. The leave goal never sets it (its ownership is the
+   * exit claim and it has no cursor).
    */
   #staging: ScriptId | null = null;
   /**
@@ -836,21 +863,39 @@ export class WvdWorld implements World {
   #chestProbeDone: string | null = null;
 
   /**
-   * The orientation phase (contracts §10, the goal form). True from the session start until the map
-   * shows the farm floor; while it is true the loop sends the orientation's commands and lets the
-   * farm route answer the screens it owns (a chest, a bar, a fight).
+   * The arbiter of the loop's intent-driven stages (policy/stage-registry.ts, operator rule
+   * 2026-11-09): the orientation, the exit and a scripted stage take the tick one at a time, and the
+   * owner is pumped from the tick itself — not from the intent that started it. One owner at a time
+   * is what makes an owner always driven; the flag this replaces was a promise nobody kept.
    */
-  #orienting = false;
+  readonly #stages = new StageRegistry();
+  /**
+   * The orientation owns the loop (contracts §10, the goal form): from the session start until the
+   * map shows the farm floor. Derived from the arbiter, never assigned — a second flag would be a
+   * second owner.
+   */
+  get #orienting(): boolean {
+    return this.#stages.owner?.name === 'orient';
+  }
   /** Aborts an orientation travel or climb when the session ends under it. */
   #orientAbort: AbortController | null = null;
   #orientTravelFailures = 0;
   #orientClimbs = 0;
+  /** The orientation asked for the loop and was refused: one line per orientation episode. */
+  #orientRefused = false;
   /**
-   * The leave goal in progress (contracts §10, 2026-11-09): the policy said exit and the party is not
-   * back in town yet. There is **no cursor** — each tick's frame and floor decide (policy/leave.ts),
-   * so an interrupted leave resumes on whatever screen the game is actually on.
+   * The leave goal owns the loop (contracts §10, 2026-11-09): the policy said exit and the party is
+   * not back in town yet. There is **no cursor** — each tick's frame and floor decide
+   * (policy/leave.ts), so an interrupted leave resumes on whatever screen the game is actually on.
+   * Derived from the arbiter, never assigned.
    */
-  #leaving = false;
+  get #leaving(): boolean {
+    return this.#stages.owner?.name === 'exit';
+  }
+  /** The leave asked for the loop and was refused: one line per leave episode. */
+  #leaveRefused = false;
+  /** A scripted stage asked for the loop and was refused: one line per stage episode. */
+  #stageRefused = false;
   /** Travel failures spent on the leave, so a dead destination cannot be retried forever. */
   #leaveTravelFailures = 0;
   /** Until this instant the loop only watches: a travel or a climb just landed on a loading fade. */
@@ -1234,8 +1279,14 @@ export class WvdWorld implements World {
       this.#cyclesDone = 0;
       this.#restGate = null;
       this.#battlesEntered = 0;
-      this.#orienting = false;
-      this.#leaving = false;
+      // A new session starts with no owner. The arbiter is the World's, not the session's, and a
+      // session can end mid-leave: nothing of the last episode may survive into this one.
+      this.#stages.release('exit');
+      this.#stages.release('stage');
+      this.#stages.release('orient');
+      this.#staging = null;
+      this.#leaveRefused = false;
+      this.#orientRefused = false;
       this.#leaveTravelFailures = 0;
       this.#orientAbort = null;
       this.#orientTravelFailures = 0;
@@ -1258,7 +1309,9 @@ export class WvdWorld implements World {
       // its entry before the first tick: nothing is farmed until the task's own floor gate has
       // passed. Both are cancellable because `#running` is already true.
       if (this.#task?.orient !== undefined) {
-        this.#orienting = true;
+        // The orientation takes the loop here; the pump point drives it from the first tick.
+        const claimed = this.#stages.claim('orient', now);
+        if (!claimed.ok) this.#logOrientRefused(claimed.heldBy);
         this.#host?.log.info(
           `wvd: orienting to ${this.#task.orient.goal.site} (farm floor ${this.#task.orient.floor})`,
         );
@@ -1501,8 +1554,13 @@ export class WvdWorld implements World {
     // (live 2026-11-08 00:44, run 24: 'the map is not the task floor', read 0c0280… vs 0000…).
     if (!waiting && this.#task?.orient !== undefined && observation.screen === 'dungeonmap'
       && !isExpectedFloor(this.#task.orient.floor, observation.map.titleKey)) {
-      if (!this.#orienting) this.#host?.log.info('wvd: off the task floor; the orientation is re-armed');
-      this.#orienting = true;
+      // The claim is the arbiter's (2026-11-09): while another stage owns the loop — the exit, on this
+      // very frame in live run 7 — the orientation neither re-arms nor acts, and the refusal is said
+      // once per episode instead of once per tick.
+      const wasOurs = this.#orienting;
+      const claimed = this.#stages.claim('orient', now);
+      if (!claimed.ok) this.#logOrientRefused(claimed.heldBy);
+      else if (!wasOurs) this.#host?.log.info('wvd: off the task floor; the orientation is re-armed');
     }
 
     // A page of the knowledge base (operator rule 2026-11-06: a named page can always be left). The
@@ -1708,10 +1766,11 @@ export class WvdWorld implements World {
     // floor only once that floor's harken is reconstructed — so the climb reads it. The task names the
     // farm floor's row; when the menu offers it the World taps it (the teleport). When it does not, the
     // 归还 row backs the party out and the stair icon is the way up.
-    if (!waiting && observation.screen === 'harken-menu') {
-      // One owner per page (operator rule 2026-11-09): while the leave goal runs, the leave judges this
-      // page from the frame and the floor (policy/leave.ts); this branch is the orientation's.
-      if (this.#leaving) return;
+    if (!waiting && observation.screen === 'harken-menu' && !this.#leaving) {
+      // One owner per page (operator rule 2026-11-09): while the leave goal owns the loop this branch
+      // is the orientation's, so it neither acts nor returns — the tick falls through to the pump
+      // point, where the leave judges the page from the frame and the floor (policy/leave.ts). That
+      // return is what deadlocked run 7: the branch deferred to a flag nothing pumped.
       if (!this.#pacer.ready(now)) return;
       // The farm floor may never take 归还 (operator rule 2026-11-09): the party's way off the floor
       // it farms is that floor's own exit, never the harken. Back out of the page instead of leaving.
@@ -1801,24 +1860,23 @@ export class WvdWorld implements World {
     ) {
       return;
     }
-    // A stage in progress is the loop's own work, and the screens it walks through are why the route
-    // has no intent for it: the Dungeon Select list, the harken menu, the town it arrives in, a load
-    // fade. It is pumped before the stall clock can turn the tick into a question — a town frame at
-    // 0.94 is not a stall, it is the stage's next `expect` (live 2026-11-06: the exit's town arrival
-    // escalated six times and the fallback's map presses opened the inn dialog, which no recogniser
-    // names). Its own step is progress the loop cannot see, exactly as a finished script is.
-    if (verdict === 'ok' && !waiting && this.#staging !== null && !WORLD_SCREENS.has(observation.screen)) {
-      // A cursor stage's step is progress the loop cannot see; the leave goal is judged per frame, so
-      // only its own commands count as progress (it marks them) — a leave waiting on an unnamed frame
-      // must still reach the stall clock.
-      if (this.#task?.leave === undefined) this.#lastProgressAtMs = now;
-      await this.#execute({ kind: 'run-script', name: this.#staging }, observation.screen, {
-        session,
-        frame,
-        observation,
-        now,
-      });
-      return;
+    // **The one pump point** (arbiter, 2026-11-09). A stage in progress is the loop's own work, and
+    // the screens it walks through are why the route has no intent for it: the Dungeon Select list,
+    // the harken menu, the town it arrives in, a load fade. It is pumped before the stall clock can
+    // turn the tick into a question — a town frame at 0.94 is not a stall, it is the stage's next
+    // `expect` (live 2026-11-06: the exit's town arrival escalated six times and the fallback's map
+    // presses opened the inn dialog, which no recogniser names).
+    //
+    // It is the tick that drives the owner, not the intent that started it: the route has no intent
+    // for the harken page (it says `wait` there), so an owner pumped from `run-script` sits undriven
+    // — live run 7, where the leave owned the harken page and the stall clock ended the session.
+    // The screens the loop's own branches own pre-empt this point above; a battle, a chest, the loot
+    // card and a page are the route's, not an owner's, so they are excluded exactly as they were for
+    // the scripted stage. A pump that yields hands the tick back to the route below.
+    this.#releaseOverdueStage(now);
+    const owner = this.#stages.owner;
+    if (verdict === 'ok' && !waiting && owner !== null && !WORLD_SCREENS.has(observation.screen)) {
+      if (await this.#pumpOwner({ session, frame, observation, now })) return;
     }
     if (verdict === 'ok' && stalledMs >= this.#stallEscalateMs()) verdict = 'escalate';
 
@@ -1856,13 +1914,6 @@ export class WvdWorld implements World {
 
     if (waiting) return;
 
-    // The orientation (contracts §10, the goal form): from whatever screen the session started on,
-    // one command per tick until the map shows the farm floor. A screen the farm owns — a chest,
-    // the bar, the loot card, a battle — yields to the route below, so the orientation never
-    // abandons something the party is in the middle of. The **mode** is what makes a battle, not the
-    // recogniser: the skill panel a cast opens reads `unknown`, and this gate used to answer it with
-    // its own wait, so the owed confirm was never dispatched (live 2026-11-07 22:13: 45 s under the
-    // panel, the press only after the recovery's Esc named the screen again).
     // A **map frame is the result of an action** (open-map, a walk landing on a floor, a travel): judge it
     // once, here. If it is not the task floor the orientation takes over again — the operator's rule
     // (2026-11-08): check after an action, stop checking on arrival. Live 00:42-00:44 (run 24): the farm
@@ -1871,45 +1922,16 @@ export class WvdWorld implements World {
     const orientTask = this.#task?.orient;
     if (!this.#orienting && orientTask !== undefined && observation.screen === 'dungeonmap'
       && !isExpectedFloor(orientTask.floor, observation.map.titleKey)) {
-      this.#orienting = true;
-      this.#host?.log.info('wvd: not on the farm floor; the orientation takes over again');
+      // A second chance at the re-arm above: this site runs only when no earlier branch spent the
+      // tick, so a map frame that reached here with no owner claims the orientation now. The claim is
+      // still the arbiter's — a refused one logs once and acts not at all.
+      const claimed = this.#stages.claim('orient', now);
+      if (claimed.ok) this.#host?.log.info('wvd: not on the farm floor; the orientation takes over again');
+      else this.#logOrientRefused(claimed.heldBy);
     }
 
-    if (this.#orienting && this.#mode.mode !== 'battle') {
-      const orient = this.#task?.orient;
-      if (orient === undefined) {
-        this.#orienting = false;
-      } else {
-        const decision = nextOrientStep(observation, orient);
-        if (decision.kind === 'arrived') {
-          this.#orienting = false;
-          // The cycle's entry is an event the operator's matrix may heal on (healOnEntry).
-          this.#healSchedule.enteredFloor();
-          this.#host?.log.info(`wvd: on the farm floor (${orient.floor}); the farm takes over`);
-        } else if (decision.kind === 'wait') {
-          if (decision.reason !== 'map-icon') return;
-          this.#mapIconWaits += 1;
-          if (this.#mapIconWaits <= ORIENT_MAP_ICON_PATIENCE) return;
-          const icons = observation.screen === 'dungeonmap'
-            ? observation.map.icons.map((icon) => icon.kind).join(', ') || 'none'
-            : 'not the map';
-          await this.#stopWithEvidence(
-            session,
-            frame,
-            `the map carries no 楼梯-门 icon after ${ORIENT_MAP_ICON_PATIENCE} reads (icons: ${icons})`,
-          );
-          return;
-        } else if (decision.kind === 'stop') {
-          await this.#stopWithEvidence(session, frame, decision.reason);
-          return;
-        } else if (decision.kind === 'command') {
-          this.#mapIconWaits = 0;
-          await this.#orientTo(decision.command, observation.screen);
-          return;
-        }
-        // 'yield' falls through: the farm route finishes the chest or the fight the party is in.
-      }
-    }
+    // The orientation's own command is the pump point's (`#pumpOrient`): one owner, one pump, one
+    // place. It used to live here, which is why a second owner could act on the same frame.
 
     let intent = this.#policy.next(state);
     // The skill panel a slot tap opens is a frame the recognisers do not name, and the route's rule is
@@ -2606,15 +2628,21 @@ export class WvdWorld implements World {
     this.#rearmBattle();
     this.#askedForMap = false;
     // A leave that was interrupted by the cycle boundary is over: the next exit is a fresh goal,
-    // judged from its own first frame (there is no cursor to carry).
-    this.#leaving = false;
+    // judged from its own first frame (there is no cursor to carry). The boundary begins with no
+    // owner at all, so nothing is pumped into the next cycle.
+    this.#stages.release('exit');
+    this.#stages.release('stage');
+    this.#staging = null;
+    this.#leaveRefused = false;
+    this.#stageRefused = false;
     this.#leaveTravelFailures = 0;
     this.#pacer.reset();
     this.#lootTapAtMs = null;
     this.#lootTaps = 0;
     // A new cycle orients afresh: the climb budget is per cycle, and the next cycle may leave the
     // dungeon by the same measured stair the last one came up.
-    this.#orienting = false;
+    this.#stages.release('orient');
+    this.#orientRefused = false;
     this.#orientTravelFailures = 0;
     this.#orientClimbs = 0;
     this.#settleUntilMs = 0;
@@ -2644,8 +2672,10 @@ export class WvdWorld implements World {
       // reset that cleared the counts: the visit the party just had is what earns it.
       if (rested) this.#healSchedule.rested();
       if (this.#task.orient !== undefined) {
-        // A goal task orients back in; there is no entry script to run.
-        this.#orienting = true;
+        // A goal task orients back in; there is no entry script to run. The orientation claims the
+        // loop (the cycle reset released every owner) and the pump point drives it from the next tick.
+        const claimed = this.#stages.claim('orient', this.#now());
+        if (!claimed.ok) this.#logOrientRefused(claimed.heldBy);
         this.#host?.log.info(`wvd: cycle ${this.#cyclesDone} done; orienting back to the farm`);
         return;
       }
@@ -3263,46 +3293,40 @@ export class WvdWorld implements World {
           this.#host?.log.warn(`wvd: no task is running; the ${intent.name} script has nothing to do`);
           return;
         }
+        const now = context?.now ?? this.#now();
+        // The exit as a goal (contracts §10, 2026-11-09): no cursor, no step — the frame and the floor
+        // decide (policy/leave.ts). This is the **start** only: the claim is the ownership, and the
+        // pump point drives it every tick from here on, because the route does not return this intent
+        // on the screens the exit walks (the harken page says `wait`). `#staging` is not set for the
+        // leave path: it has no cursor to keep.
+        if (task.leave !== undefined && intent.name === 'exit') {
+          const claimed = this.#stages.claim('exit', now);
+          if (!claimed.ok) {
+            this.#logLeaveRefused(claimed.heldBy);
+            return;
+          }
+          this.#leaveRefused = false;
+          if (context === undefined) return;
+          await this.#pumpLeave(context);
+          return;
+        }
         // A stage is one step per tick (operator rule 2026-11-05): the loop hands it the frame it just
         // observed and keeps its own tick, so a battle, the chest after it, or the death scene is
-        // dispatched by the loop and the stage resumes from its cursor.
+        // dispatched by the loop and the stage resumes from its cursor. The script id is
+        // `#staging`; its ownership is the arbiter's `stage` claim.
+        const claimed = this.#stages.claim('stage', now);
+        if (!claimed.ok) {
+          if (!this.#stageRefused) {
+            this.#stageRefused = true;
+            this.#host?.log.warn(
+              `wvd: the ${intent.name} stage asked for the loop while ${claimed.heldBy} owns it`,
+            );
+          }
+          return;
+        }
+        this.#stageRefused = false;
         this.#staging = intent.name;
-        // The exit as a goal (contracts §10, 2026-11-09): no cursor and no step — the frame and the
-        // floor decide. The staging pump keeps it alive; this sends at most one command per tick, so
-        // an interrupted leave resumes on whatever screen the game is actually on.
-        if (task.leave !== undefined && intent.name === 'exit') {
-          this.#leaving = true;
-          if (context === undefined) return;
-          await this.#leaveStep(task.leave, context);
-          return;
-        }
-        const result = context === undefined
-          ? await task.runScript(intent.name)                 // no frame: the script runs blocking
-          : await task.runScript(intent.name, context.observation);
-        if (!this.#running) return;
-        if (!result.ok && result.reason === 'interrupted') {
-          // A screen the loop owns appeared mid-stage. The cursor is kept; the next tick dispatches
-          // by screen, and the stage resumes once the screen is the stage's again.
-          return;
-        }
-        if (!result.ok) {
-          this.#staging = null;
-          await this.#endSession(
-            result.reason === 'cancelled'
-              ? 'the session was stopped while the task exit ran'
-              : `the task ${intent.name} stopped at step ${result.step}: ${result.reason}`,
-            { report: true, failed: result.reason !== 'cancelled' },
-          );
-          return;
-        }
-        if (result.complete === false) return;      // partial progress: the stage has more steps
-        this.#staging = null;
-        // The stage's own screens and presses are progress the loop could not see while it ran.
-        this.#lastProgressAtMs = this.#now();
-        if (intent.name !== 'exit') return;
-        // The cycle ends where it began: asleep at the inn (operator rule 2026-11-06). The same gate
-        // closes a scripted exit and a leave goal, so the two cannot drift.
-        await this.#beginRestGate();
+        await this.#pumpScript(context ?? null);
         return;
       }
       case 'stop':
@@ -3311,6 +3335,180 @@ export class WvdWorld implements World {
       default:
         return assertNever(intent);
     }
+  }
+
+  // --- the arbiter: the loop's stages ---------------------------------------------------------
+
+  /**
+   * The **one pump point** (operator rule 2026-11-09): the stage that owns the loop is given this
+   * tick. `false` means the owner yielded the frame back to the farm route — a chest, a fight, the
+   * loot card — and the tick goes on to the route below.
+   *
+   * One of the three owns the loop at a time (`exit` → `stage` → `orient`), and never an intent:
+   * a stage driven by the route is a stage the route can strand (live run 7: the leave owned the
+   * harken page, where the route says `wait`, and nothing pumped it for 150 s).
+   */
+  async #pumpOwner(context: TickContext): Promise<boolean> {
+    const owner = this.#stages.owner;
+    if (owner === null) return false;
+    switch (owner.name) {
+      case 'exit': return this.#pumpLeave(context);
+      case 'stage': return this.#pumpScript(context);
+      case 'orient': return this.#pumpOrient(context);
+      default: return assertNever(owner.name);
+    }
+  }
+
+  /** One tick of the leave goal: the arbiter's `exit` owner (see `#leaveStep`). */
+  async #pumpLeave(context: TickContext): Promise<boolean> {
+    this.#stages.pump('exit', context.now);
+    const task = this.#task;
+    if (task === null || task.leave === undefined) {
+      // Nothing can be judged any more: the ownership goes with the task it belonged to.
+      this.#stages.release('exit');
+      return true;
+    }
+    return this.#leaveStep(task.leave, context);
+  }
+
+  /**
+   * One tick of the scripted stage (operator rule 2026-11-05: one step per tick). The arbiter's
+   * `stage` owner; a null context is the blocking form (a caller with no frame).
+   */
+  async #pumpScript(context: TickContext | null): Promise<boolean> {
+    const now = context?.now ?? this.#now();
+    this.#stages.pump('stage', now);
+    const task = this.#task;
+    const name = this.#staging;
+    if (task === null || name === null) {
+      this.#stages.release('stage');
+      this.#staging = null;
+      return true;
+    }
+    const result = context === null
+      ? await task.runScript(name)                 // no frame: the script runs blocking
+      : await task.runScript(name, context.observation);
+    if (!this.#running) return true;
+    if (!result.ok && result.reason === 'interrupted') {
+      // A screen the loop owns appeared mid-stage. The cursor is kept; the next tick dispatches by
+      // screen, and the stage resumes once the screen is the stage's again.
+      return true;
+    }
+    if (!result.ok) {
+      this.#stages.release('stage');
+      this.#staging = null;
+      await this.#endSession(
+        result.reason === 'cancelled'
+          ? 'the session was stopped while the task exit ran'
+          : `the task ${name} stopped at step ${result.step}: ${result.reason}`,
+        { report: true, failed: result.reason !== 'cancelled' },
+      );
+      return true;
+    }
+    // The stage's own screens and presses are progress the loop could not see while it ran.
+    this.#lastProgressAtMs = now;
+    if (result.complete === false) return true;      // partial progress: the stage has more steps
+    this.#stages.release('stage');
+    this.#staging = null;
+    if (name !== 'exit') return true;
+    // The cycle ends where it began: asleep at the inn (operator rule 2026-11-06). The same gate
+    // closes a scripted exit and a leave goal, so the two cannot drift.
+    await this.#beginRestGate();
+    return true;
+  }
+
+  /**
+   * One tick of the orientation: the arbiter's `orient` owner (contracts §10, the goal form). It
+   * sends at most one command and lets the next frame answer it; `arrived` and `yield` hand the tick
+   * to the farm route below (the route answers the same frame), and `wait`/a command spend it.
+   *
+   * The battle gate is the frame's, not the recogniser's: the skill panel a cast opens reads
+   * `unknown`, and an owner that waits on it strands the owed confirm (live 2026-11-07 22:13).
+   */
+  async #pumpOrient({ session, frame, observation, now }: TickContext): Promise<boolean> {
+    this.#stages.pump('orient', now);
+    if (this.#mode.mode === 'battle') return false;
+    const orient = this.#task?.orient;
+    if (orient === undefined) {
+      this.#stages.release('orient');
+      return false;
+    }
+    const decision = nextOrientStep(observation, orient);
+    switch (decision.kind) {
+      case 'arrived':
+        this.#stages.release('orient');
+        this.#orientRefused = false;
+        // The cycle's entry is an event the operator's matrix may heal on (healOnEntry).
+        this.#healSchedule.enteredFloor();
+        this.#host?.log.info(`wvd: on the farm floor (${orient.floor}); the farm takes over`);
+        // Arrival is the hand-over: the farm route answers this same frame.
+        return false;
+      case 'yield':
+        return false;
+      case 'wait': {
+        if (decision.reason !== 'map-icon') return true;
+        this.#mapIconWaits += 1;
+        if (this.#mapIconWaits <= ORIENT_MAP_ICON_PATIENCE) return true;
+        const icons = observation.screen === 'dungeonmap'
+          ? observation.map.icons.map((icon) => icon.kind).join(', ') || 'none'
+          : 'not the map';
+        await this.#stopWithEvidence(
+          session,
+          frame,
+          `the map carries no 楼梯-门 icon after ${ORIENT_MAP_ICON_PATIENCE} reads (icons: ${icons})`,
+        );
+        return true;
+      }
+      case 'stop':
+        await this.#stopWithEvidence(session, frame, decision.reason);
+        return true;
+      case 'command':
+        this.#mapIconWaits = 0;
+        await this.#orientTo(decision.command, observation.screen);
+        return true;
+      default:
+        return assertNever(decision);
+    }
+  }
+
+  /**
+   * Release an owner that has held the loop past its own bound, and say so once (the bound is each
+   * stage's own: see the constants). This is what keeps a stuck stage a release instead of a session
+   * stop — the exit's bound sits below the 150 s stall clock on purpose.
+   */
+  #releaseOverdueStage(now: number): void {
+    const owner = this.#stages.owner;
+    if (owner === null) return;
+    const deadlineMs = owner.name === 'exit'
+      ? LEAVE_DEADLINE_MS
+      : owner.name === 'stage' ? SCRIPT_DEADLINE_MS : ORIENT_DEADLINE_MS;
+    if (!this.#stages.overdue(now, deadlineMs)) return;
+    if (!this.#stages.release(owner.name)) return;
+    if (owner.name === 'stage') this.#staging = null;
+    // A released owner's refusal is a new episode's to say again.
+    if (owner.name === 'exit') this.#leaveRefused = false;
+    else if (owner.name === 'stage') this.#stageRefused = false;
+    else this.#orientRefused = false;
+    const what = owner.name === 'exit'
+      ? 'the exit'
+      : owner.name === 'stage' ? 'the scripted stage' : 'the orientation';
+    this.#host?.log.warn(
+      `wvd: ${what} held the loop for ${Math.round(deadlineMs / 1000)} s; releasing it`,
+    );
+  }
+
+  /** Said once per orientation episode: the orientation asked for the loop and another stage held it. */
+  #logOrientRefused(heldBy: StageName): void {
+    if (this.#orientRefused) return;
+    this.#orientRefused = true;
+    this.#host?.log.info(`wvd: the orientation asked for the loop while ${heldBy} owns it`);
+  }
+
+  /** Said once per leave episode: the exit asked for the loop and another stage held it. */
+  #logLeaveRefused(heldBy: StageName): void {
+    if (this.#leaveRefused) return;
+    this.#leaveRefused = true;
+    this.#host?.log.info(`wvd: the exit asked for the loop while ${heldBy} owns it`);
   }
 
   /**
@@ -3349,13 +3547,16 @@ export class WvdWorld implements World {
    * One tick of the leave goal (contracts §10, 2026-11-09): ask the frame what this floor allows and
    * send that one command. There is **no cursor** — so an interrupted leave resumes on whatever
    * screen and floor the game is actually on, which is the defect this replaces.
+   *
+   * `true` spends the tick; `false` is a **yield** — the frame is a screen the route owns (a chest, a
+   * fight, the loot card), so the tick goes on to it and the leave asks again from the next frame.
    */
-  async #leaveStep(route: TaskLeaveRoute, context: TickContext): Promise<void> {
+  async #leaveStep(route: TaskLeaveRoute, context: TickContext): Promise<boolean> {
     const { observation } = context;
     // The last reachable-chest check (operator, 2026-11-09): before the leave presses F on the farm
     // floor, ask the game itself with E (移动至宝箱) when the map draws no chest. A chest answer is the
     // farm continuing; the probe's own tick check (above) owns the wait.
-    if (this.#chestProbe !== null) return;
+    if (this.#chestProbe !== null) return true;
     const probe = nextChestProbe(observation, {
       probe: null,
       done: this.#chestProbeDone,
@@ -3364,7 +3565,7 @@ export class WvdWorld implements World {
     }, this.#now());
     if (probe.kind === 'start' && observation.screen === 'dungeonmap') {
       const at = this.#now();
-      if (!this.#pacer.ready(at)) return;
+      if (!this.#pacer.ready(at)) return true;
       this.#pacer.act(at);
       const sent = await this.#press('exit', observation.screen, () => this.#commands.automoveToChest());
       if (sent !== null && sent.ok) {
@@ -3374,7 +3575,7 @@ export class WvdWorld implements World {
         this.#chestProbeDone = observation.map.titleKey;
         this.#host?.log.warn(`wvd: the E check could not be pressed (${sent.reason}); the exit proceeds`);
       }
-      return;
+      return true;
     }
     const decision = nextLeaveStep(observation, {
       to: route.to,
@@ -3384,27 +3585,27 @@ export class WvdWorld implements World {
     });
     switch (decision.kind) {
       case 'arrived':
-        this.#leaving = false;
-        this.#staging = null;
+        // The exit is over: the claim goes with the episode, and the rest gate owns the cycle's end.
+        this.#stages.release('exit');
+        this.#leaveRefused = false;
         this.#lastProgressAtMs = this.#now();
         this.#host?.log.info('wvd: the leave arrived in the town');
         await this.#beginRestGate();
-        return;
+        return true;
       case 'yield':
-        // The loop's own branches ran before this pump for every screen they own (a chest, a fight,
-        // a loot card, a page, the heal); a screen that still reaches here is a transition. Press
-        // nothing and ask again on the next frame.
-        return;
+        // A screen the loop's own branches or the route own (a chest, a fight, a loot card, a page,
+        // the heal): press nothing and let the tick go on to the route, which finishes it.
+        return false;
       case 'wait':
-        return;
+        return true;
       case 'stop':
-        this.#leaving = false;
-        this.#staging = null;
+        this.#stages.release('exit');
+        this.#leaveRefused = false;
         await this.#stopWithEvidence(context.session, context.frame, decision.reason);
-        return;
+        return true;
       case 'command':
         await this.#leaveCommand(decision.command, observation.screen);
-        return;
+        return true;
       default:
         return assertNever(decision);
     }
@@ -3447,6 +3648,7 @@ export class WvdWorld implements World {
       case 'back': {
         if (!this.#pacer.ready(now)) return;
         this.#pacer.act(now);
+        this.#lastProgressAtMs = now;
         this.#host?.log.warn('wvd: leaving: backing out of the harken page (this floor may not take 归还)');
         await this.#commands.escape();
         return;
@@ -3456,8 +3658,7 @@ export class WvdWorld implements World {
           this.#host?.log.info(`wvd: dry run, would travel to ${command.to}`);
           return;
         }
-        this.#leaving = true;
-        this.#staging = 'exit';
+        // The exit already owns the loop; travelling is one of its commands, not a second claim.
         this.#orientAbort ??= new AbortController();
         this.#host?.log.info(`wvd: leaving: travelling to ${command.to}`);
         const result = await this.#commands.travel(command.to, this.#orientAbort.signal);
@@ -3513,6 +3714,10 @@ export class WvdWorld implements World {
     // battle or a chest, never on the way through the dungeon.
     if (!this.#pacer.ready(this.#now())) return;
     this.#pacer.act(this.#now());
+    // A command is the orientation's progress (arbiter rule 2026-11-09): the orientation's own
+    // deadline is the backstop for turns that never arrive, so its commands must keep the stall
+    // clock's account alive — otherwise a slow climb reads as a stall and the session stops.
+    this.#lastProgressAtMs = this.#now();
     this.#healSchedule.cancel();
     switch (command.kind) {
       case 'open-map':
@@ -3753,7 +3958,10 @@ export class WvdWorld implements World {
     // A stop that lands during the orientation's travel or climb must not keep pressing keys.
     this.#orientAbort?.abort();
     this.#orientAbort = null;
-    this.#orienting = false;
+    // No owner outlives the session: the arbiter is the World's, and the next session starts clean.
+    this.#stages.release('stage');
+    this.#stages.release('exit');
+    this.#stages.release('orient');
     const hadQuestion = this.#supervisor.isOpen();
     this.#running = false;
     this.#lastStopReason = reason;

@@ -3497,6 +3497,208 @@ describe('the orientation', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// The exit's single owner (operator rule 2026-11-09; live run 7's harken deadlock)
+// ---------------------------------------------------------------------------------------------
+
+describe('the exit goal', () => {
+  const FARM = '000000007f3ffe007ffeff00220bb600';
+  /** The entry floor of the same colliery: a floor the site knows, so a leave may take its F. */
+  const ENTRY = '0c0280000deff0000d7ffc0008c37000';
+  /** E, 移动至宝箱 (the chest check's key), as the fake actuator records it. */
+  const CHEST_SCAN = 0x12;
+
+  const onFloor = (titleKey: string, floorTitle: string): Observation => ({
+    screen: 'dungeonmap',
+    atMs: 100,
+    confidence: 0.9,
+    map: { floorTitle, titleKey, player: { x: 19, y: 21 }, origin: { x: 960, y: 540 }, icons: [] },
+  });
+  /** The farm floor's map with no chest drawn: the route's exit, and the E check's start. */
+  const farmMap = (): Observation => onFloor(FARM, 'B1F');
+
+  /** The harken page live run 7 stalled on: the four measured rows, 归还 last. */
+  const harkenMenu = (): Observation => ({
+    screen: 'harken-menu',
+    atMs: 100,
+    confidence: 1,
+    rows: [
+      { at: { x: 960, y: 484 }, label: '第一区-城外-' },
+      { at: { x: 960, y: 556 }, label: '第二区-城内1F-' },
+      { at: { x: 960, y: 628 }, label: '第四区-城内2F深处-' },
+      { at: { x: 960, y: 700 }, label: '归还' },
+    ],
+  });
+  /** The row the leave must tap: the point the reader matched, not a constant. */
+  const BACK_ROW = 'tap 960,700';
+
+  const definition: TaskDefinition = {
+    id: 'ffxi-4f',
+    label: '[Chest] FFXI 4F',
+    floor: { titleKey: FARM },
+    goal: {
+      site: 'ffxi-gcn',
+      zone: 'ffxi-zone3',
+      climb: { from: ENTRY, script: { timeoutMs: 60_000, steps: [{ op: 'wait' as const, ms: 1 }] } },
+    },
+    leave: { to: 'vnh' },
+  };
+
+  /** The loop's view of a leave task: the orientation, the leave route, and a script recorder. */
+  function leaveTask(): { task: SessionTask; calls: string[] } {
+    const calls: string[] = [];
+    const task: SessionTask = {
+      enter: async () => ({ ok: true, steps: 0, ms: 0 }),
+      runScript: async (name) => {
+        calls.push(name);
+        return { ok: true, steps: 1, ms: 1 };
+      },
+      abort: () => {},
+      orient: { goal: definition.goal!, floor: definition.floor.titleKey },
+      leave: { to: 'vnh', farmFloor: FARM, knownFloors: [FARM, ENTRY] },
+    };
+    return { task, calls };
+  }
+
+  /** The loop on the farm floor's map, the exit owning the loop. */
+  function makeExitWorld(options: { cfg?: Partial<WvdConfigSection> } = {}) {
+    const { task, calls } = leaveTask();
+    const loop = makeWorld({
+      observation: farmMap(),
+      task,
+      policy: createTaskPolicy(() => definition, routePolicy),
+      ...options,
+    });
+    return { ...loop, calls };
+  }
+
+  /** The exit's first three ticks: the E check, the probe's "no chest" answer, and F. */
+  async function exitTheMap(loop: ReturnType<typeof makeExitWorld>): Promise<void> {
+    await loop.world.tick();                       // E on the farm floor's map
+    expect(loop.actuator.calls).toEqual([`key ${CHEST_SCAN} 60`]);
+    loop.clock.advance(5_100);                     // the map stays up past the probe's window
+    await loop.world.tick();                       // the answer: the game has no reachable chest
+    loop.clock.advance(100);
+    await loop.world.tick();                       // the exit proceeds: F (移動至出口)
+    expect(loop.actuator.calls).toEqual([`key ${CHEST_SCAN} 60`, `key ${SCAN.F} 60`]);
+  }
+
+  /** The game walks the party off the floor and lands on its harken page: the deadlock's frame. */
+  async function landOnHarken(loop: ReturnType<typeof makeExitWorld>): Promise<void> {
+    loop.perceiver.observation = dungeonView;
+    loop.clock.advance(1_000);
+    await loop.world.tick();                       // the walk is outstanding: nothing is pressed
+    loop.perceiver.observation = harkenMenu();
+    loop.clock.advance(5_200);                     // the scene stands still: the walk has arrived
+    await loop.world.tick();
+  }
+
+  it('taps the matched 归还 on the harken page instead of owning the loop with no driver', async () => {
+    // Live run 7: 06:00:02 "leaving: walking to this floor exit with F", 06:00:20 STATE running |
+    // harken-menu, 06:02:50 STATE stopped | harken-menu | nothing changed for 150 s. The leave owned
+    // the page — the harken branch deferred to it — and nothing pumped it, because the route says
+    // wait on this screen. The page is the leave's to judge (policy/leave.ts), so the tick must
+    // reach the pump and tap the row the reader matched.
+    const loop = makeExitWorld();
+    await started(loop.world, loop.host);
+
+    await exitTheMap(loop);
+    await landOnHarken(loop);
+
+    // Within five ticks of the page being up, the leave taps the row's own point.
+    let tapped = loop.actuator.calls.includes(BACK_ROW);
+    for (let index = 0; index < 5 && !tapped; index += 1) {
+      loop.clock.advance(800);
+      await loop.world.tick();
+      tapped = loop.actuator.calls.includes(BACK_ROW);
+    }
+    expect(tapped).toBe(true);
+    expect(loop.host.logRecords.some((line) => line.message.includes('tapped the matched 归还 row'))).toBe(true);
+
+    // And the session is alive: the page is one step of the exit, not the stall clock's stop.
+    expect(loop.world.isRunning()).toBe(true);
+    for (let index = 0; index < 5; index += 1) { loop.clock.advance(800); await loop.world.tick(); }
+    expect(loop.world.isRunning()).toBe(true);
+    expect(loop.host.logRecords.some((line) => line.message.includes('nothing changed for'))).toBe(false);
+  });
+
+  it('lets only the exit own an off-floor map: the orientation neither re-arms nor commands', async () => {
+    // Live run 7 put two owners on the same exit path in the same tick: the leave pressed F, and the
+    // orientation re-armed off the same floor. A map that is not the farm floor is the leave's until
+    // the leave releases it — the orientation may not claim the loop, and it sends nothing.
+    const loop = makeExitWorld();
+    await started(loop.world, loop.host);
+    await exitTheMap(loop);
+
+    // An off-floor map of the same site: the orientation's re-arm condition is true on this frame.
+    loop.perceiver.observation = onFloor(ENTRY, 'B2F');
+    loop.clock.advance(1_000);
+    await loop.world.tick();                       // the F walk starts (the readout moved)
+    loop.clock.advance(5_200);
+    await loop.world.tick();                       // the walk arrives; the leave's own command goes out
+
+    expect(loop.host.logRecords.some((line) => line.message.includes('the orientation is re-armed'))).toBe(false);
+    expect(loop.host.logRecords.some((line) => line.message.includes('the orientation takes over again'))).toBe(false);
+    expect(loop.calls).not.toContain('climb');
+    // The leave's own F is the only command sent after the walk arrived.
+    expect(loop.actuator.calls).toEqual([
+      `key ${CHEST_SCAN} 60`,
+      `key ${SCAN.F} 60`,
+      `key ${SCAN.F} 60`,
+    ]);
+  });
+
+  it('releases the exit at its own deadline with one warning, before the stall clock', async () => {
+    // The exit's bound is below the operator's 150 s stall clock on purpose: a stuck exit is
+    // released to the route, not turned into a session stop. The stall clock keeps its semantics.
+    const loop = makeExitWorld({ cfg: { stallStopSeconds: 150, escalateTimeoutMs: 25 } });
+    await started(loop.world, loop.host);
+    await loop.world.tick();                        // the E check: the exit owns the loop from here
+    expect(loop.actuator.calls).toEqual([`key ${CHEST_SCAN} 60`]);
+
+    // Every frame is a load that never ends: the exit owns the loop and has nothing to send.
+    loop.perceiver.observation = { screen: 'loading', atMs: 100, confidence: 0.9 };
+    const released = (): string[] => loop.host.logRecords
+      .filter((line) => line.level === 'warn' && line.message.includes('held the loop'))
+      .map((line) => line.message);
+    for (let index = 0; index < 30 && released().length === 0; index += 1) {
+      loop.clock.advance(5_000);
+      await loop.world.tick();
+      // While an owner holds the loop it is pumped every tick, and this frame allows no command:
+      // an owner that is merely waiting is not the route's, and it is not a stall either.
+      if (released().length === 0) expect(loop.actuator.calls, `tick ${index}`).toHaveLength(1);
+    }
+    // One warning for one release, and the session is still running: released, not stopped.
+    expect(released()).toHaveLength(1);
+    expect(loop.world.isRunning()).toBe(true);
+
+    // The stall clock still ends a session in which nothing at all is commanded: the bound bought
+    // the exit's release, not a suspension of the loop's own stop.
+    for (let index = 0; index < 8 && loop.world.isRunning(); index += 1) {
+      loop.clock.advance(5_000);
+      await loop.world.tick();
+    }
+    expect(loop.world.isRunning()).toBe(false);
+  });
+
+  it('pumps the owner every tick it owns: one matched tap per tick on the harken page', async () => {
+    // One pump point: while an owner holds the loop it is driven once per tick, and it sends at most
+    // one command. The page stays up here (a fake), so every tick is a fresh judgement of it.
+    const loop = makeExitWorld();
+    await started(loop.world, loop.host);
+    await exitTheMap(loop);
+    await landOnHarken(loop);
+
+    const before = loop.actuator.calls.length;
+    for (let index = 1; index <= 3; index += 1) {
+      loop.clock.advance(800);
+      await loop.world.tick();
+      expect(loop.actuator.calls, `tick ${index}`).toHaveLength(before + index);
+      expect(loop.actuator.calls.at(-1)).toBe(BACK_ROW);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // A chest the party cannot walk to (operator rule, 2026-11-02)
 // ---------------------------------------------------------------------------------------------
 
