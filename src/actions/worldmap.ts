@@ -1058,6 +1058,18 @@ const ZOOM_KEY_OUT = 0x12;
  */
 const ICON_SCALES_ANY = [0.4, 0.45, 0.5, 0.55, 0.6, 0.67, 0.75, 0.83, 0.9, 1, 1.1, 1.21, 1.3] as const;
 
+/**
+ * The swipe vectors, in client pixels, named by the direction the **view** travels (legacy's own
+ * convention): to see further north, drag the map down. Fixed length — the loop never uses the distance,
+ * only "look again after the move".
+ */
+const SWIPE_VECTORS: Readonly<Record<'w' | 'a' | 's' | 'd', readonly [Point, Point]>> = {
+  w: [{ x: 960, y: 380 }, { x: 960, y: 980 }],
+  s: [{ x: 960, y: 980 }, { x: 960, y: 380 }],
+  a: [{ x: 1_220, y: 540 }, { x: 620, y: 540 }],
+  d: [{ x: 620, y: 540 }, { x: 1_220, y: 540 }],
+};
+
 /** The travel through the new senses: icon + title, the white ring, the pointer's edge push. */
 async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<MapTravelResult> {
   const now = env.now ?? (() => Date.now());
@@ -1150,6 +1162,10 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
       () => env.actuator.holdKey(POINTER_KEYS[direction], holdMs), retry,
     ),
     tap: (at) => withForegroundRetry(() => env.actuator.tap(at), retry),
+    swipe: (direction) => withForegroundRetry(async () => {
+      const [from, to] = SWIPE_VECTORS[direction];
+      return env.actuator.drag(from, to, 300);
+    }, retry),
     zoom: async (direction) => (await withForegroundRetry(
       () => env.actuator.holdKey(direction === 'in' ? ZOOM_KEY_IN : ZOOM_KEY_OUT, 60), retry,
     )).ok,

@@ -63,6 +63,15 @@ function toy(target: Point): { senses: MapSenses; input: MapInput; state: Toy } 
       if (direction === 'w') state.pointer = { x: state.pointer.x, y: state.pointer.y - step };
       return { ok: true };
     },
+    swipe: async (direction): Promise<ActionResult> => {
+      // The toy map's view moves by a fixed 400 px, in the direction the view travels.
+      state.holds.push('swipe ' + direction);
+      if (direction === 'd') state.offset = { x: state.offset.x + 400, y: state.offset.y };
+      if (direction === 'a') state.offset = { x: state.offset.x - 400, y: state.offset.y };
+      if (direction === 's') state.offset = { x: state.offset.x, y: state.offset.y + 400 };
+      if (direction === 'w') state.offset = { x: state.offset.x, y: state.offset.y - 400 };
+      return { ok: true };
+    },
     tap: async (at): Promise<ActionResult> => {
       state.taps.push(at);
       return { ok: true };
@@ -96,7 +105,7 @@ describe('travelling to a site', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.pushes).toBeGreaterThan(0);
-    expect(state.holds.some((hold) => hold.startsWith('d'))).toBe(true);
+    expect(state.holds.some((hold) => hold.startsWith('swipe'))).toBe(true);
     // The tap is on the icon **as drawn after the push**, not on the world coordinate.
     expect(state.taps).toHaveLength(1);
     expect(state.taps[0]!.x).toBeGreaterThanOrEqual(STRIP.x);

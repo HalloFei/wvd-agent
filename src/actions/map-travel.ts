@@ -33,6 +33,12 @@ export interface MapSenses {
 /** What the machine needs to do. */
 export interface MapInput {
   hold(direction: 'w' | 'a' | 's' | 'd', holdMs: number): Promise<ActionResult>;
+  /**
+   * One **swipe** in the direction the view should travel (legacy's mover: a fixed 600 px drag, then look).
+   * The distance is not used for anything — that is the point: the loop is right even when the game's
+   * drag is not reproducible (identical drags moved the map 144-264 px, measured).
+   */
+  swipe(direction: 'w' | 'a' | 's' | 'd'): Promise<ActionResult>;
   tap(at: Point): Promise<ActionResult>;
   /** One zoom step. Returns false when the press was refused. */
   zoom(direction: 'in' | 'out'): Promise<boolean>;
@@ -144,10 +150,6 @@ export async function travelToSite(
   const deadline = now() + budgetMs;
   const overBudget = (): boolean => now() >= deadline;
 
-  // The push rate this travel has measured, px of map per ms. Null until the first push is measured:
-  // a constant would be a guess, and the old loop's gains (0.49-1.87) are what a guess costs.
-  let pushPxPerMs: number | null = null;
-  let view = 0;
   let pushes = 0;
 
   // **Everything happens at level 1** (operator, 2026-11-09): at level 1 every title is drawn and every
@@ -168,35 +170,19 @@ export async function travelToSite(
       return { ok: true, at: found.at, pushes, level: 1 };
     }
 
-    // 4. Not on this view: push one view along, and measure what that push actually did.
-    const target = VIEWS[(view + 1) % VIEWS.length]!;
-    const distance = view === 0 || view === 3 ? railX : railY;
-    void target;
-    const holdMs = Math.min(
-      maxHold,
-      Math.max(80, Math.round(distance / Math.max(0.05, pushPxPerMs ?? 1))),
-    );
-    // The push needs the cursor **at the wall**, but failing to get it there is not fatal: the hold below
-    // still moves the cursor toward the wall, and the next look decides. (Making this fatal aborted every
-    // travel whose cursor was already at the wall — 2026-11-09 02:10.)
-    await moveCursorTo(senses, input, { x: strip.x + strip.width - 40, y: Math.round(strip.height / 2) }, pointerRate, maxHold);
-    const before = await senses.landmark();
+    // 4. Not on this view: **swipe and look again** — legacy's mover. A fixed swipe whose distance is
+    //    never used, cycled through the four directions, bounded by the budget. This replaces the edge
+    //    push and its rate learning: the loop does not need to know how far it moved, only that it must
+    //    look again afterwards. (The atlas may name which direction to try first; it never decides.)
+    const order: ReadonlyArray<'w' | 'a' | 's' | 'd'> = ['d', 's', 'a', 'w'];
     const direction = options.nextDirection === undefined
-      ? (pushes % 2 === 0 ? 'd' as const : 's' as const)
+      ? order[pushes % order.length]!
       : await options.nextDirection(pushes);
-    const held = await input.hold(direction, holdMs);
-    if (!held.ok) return { ok: false, reason: 'refused', detail: held.reason };
-    await input.sleep(420);
-    const after = await senses.landmark();
+    const swiped = await input.swipe(direction);
+    if (!swiped.ok) return { ok: false, reason: 'refused', detail: swiped.reason };
+    await input.sleep(600);
     pushes += 1;
-    if (before !== null && after !== null && before.id === after.id) {
-      const movedBy = Math.abs(after.at.x - before.at.x) + Math.abs(after.at.y - before.at.y);
-      // The landmark's own movement is the map's, and it is measured on the frame the push produced.
-      if (movedBy >= 4) pushPxPerMs = clampRate(movedBy / Math.max(1, holdMs));
-    }
-    view = (view + 1) % VIEWS.length;
-    input.log?.('wvd: map view ' + view + ' (pushed ' + pushes + ' times, rate '
-      + (pushPxPerMs === null ? 'not measured' : pushPxPerMs.toFixed(2)) + ' px/ms)');
+    input.log?.('wvd: swiped ' + direction + ' (view ' + pushes + ')');
   }
 }
 
