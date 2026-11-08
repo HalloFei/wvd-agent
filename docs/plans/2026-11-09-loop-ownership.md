@@ -292,3 +292,78 @@ files changed.
 Task 1 and Task 2 land reviewed; the full suite is green; then the Lead runs the live three cycles
 (`scripts/world-run.ts`, `cycles: 3`) and the run's console shows three `cycle N done` lines and the
 `task-complete` end.
+
+---
+
+## Task 4 — the map's lattice survives a lit wall
+
+**Card:** the live run's blocker (pinned at dispatch).
+**Evidence:** live run 8 (`.tmp/runs/2026-11-09-3-cycles-8`). The party travelled to the farm floor
+(第三区-城内2F-, the task's own floor), opened the map, and the map reader refused the frame:
+`readMapDetailed` → `{ ok: false, gate: 'lattice-support' }`. The saved escalation frame is
+`.tmp/runs/2026-11-09-3-cycles-8/frames/001-wvd-stuck.png` (1920×1080, lossless). The loop then sat on
+an unnamed frame until the stall clock ended the session: **0 cycles, exit 2**.
+
+Measured on that frame against the committed 第三区 fixture:
+
+| frame | mapInk | detected lines | rms-best (pitch/phase/rms/support) | support-best |
+|---|---|---|---|---|
+| run-8 stuck frame | 35 033 | 16 | 36.00 / 4.2 / 5.60 / **5** | 35.90 / 9.7 / 6.25 / **11** |
+| 2026-11-03-ffxi-map | 17 718 | 14 | 35.90 / 8.3 / 1.43 / 12 | same, 12 |
+| nav-2026-10-24-ffxi4f | 25 275 | 15 | 35.90 / 7.9 / 1.65 / 12 | 35.90 / 8.0 / 1.65 / 13 |
+| 2026-11-08-second-2f | — | 10 | 35.95 / 6.9 / 1.43 / 9 | same, 9 |
+
+### The defect
+
+`fitLattice` selects the grid with the **lowest rms**, then counts support on it. A lit, *structured*
+background behind the translucent map — this frame's wall carries window ledges and gold veins, and its
+mapInk is double the fixture's — drags the least-squares fit off the map's own borders: the rms-optimal
+grid explains only 5 of the 16 detected lines, and the gate needs 6. The grid that explains 11 of them
+exists and is never selected. The G6 comment already argues that a lit band "cannot erase a wall line —
+but it is an outlier to a least-squares residual"; the selection contradicts it. The fixtures are
+unaffected because there the rms-best and support-best grids coincide.
+
+### Files
+
+- **Edit** `src/perception/map.ts` — `fitLattice` and its doc comment.
+- **Edit** `tests/map.test.ts` — the new fixture's case, and the fixtures' recorded reads.
+- **Create** `testdata/screens/2026-11-09-map-lit-wall/map-1920.png` — the run's frame, copied as is.
+  It is the first frame in the corpus whose lattice is dragged by a lit wall; keep it lossless.
+- **Do not touch** anything else: not `policy/`, not `world.ts`, not `contracts.ts`.
+
+### What to change
+
+1. **Select by support, rms as the tie-break** — the intent the G6 comment states and the code never
+   did. A grid that explains more of the detected lines is the map's grid.
+2. **Refine** the selected grid by least squares over its **inliers only** (centres within
+   `LATTICE_SUPPORT_TOLERANCE` of the selected grid), so the phase the chevron cell and the icon lattice
+   consume is the map's own, not the background's. This matters: `findIcons` places glyphs from that
+   phase, and the chevron gate validates itself against it (≤ 6 px).
+3. Keep the gate (`support >= LATTICE_SUPPORT_MIN`), the gate order, `TILE_PX`, the pitch search range
+   (`35.5…36.5` steps 0.05) and every other measured constant. The `LATTICE_CLEAN_RMS` confidence
+   penalty reads the **inlier** rms; say so in the comment.
+4. Update `fitLattice`'s doc comment to describe the selection and the refinement, with this frame's
+   numbers.
+
+### Acceptance — TDD
+
+- **RED first:** `readMap` on `testdata/screens/2026-11-09-map-lit-wall/map-1920.png` returns
+  `null` today (`readMapDetailed` → `lattice-support`). The test asserts it returns a map with
+  `titleKey === '000000007f3ffe007ffeff00220bb600'` (the task's farm floor), `player {x:7,y:24}`, and at
+  least one icon. Capture the RED output.
+- The committed fixtures keep their recorded reads (key / player / icon count):
+  `2026-11-03-ffxi-map` → `0c0280000d6ff0000d7ffc0008c37000` / 13,25 / 7;
+  `2026-11-07-map-refused` → `000000007f3ffe007ffeff00220bb600` / 16,4 / 7;
+  `nav-2026-10-24-ffxi4f/map.jpg` → `000000007f3ffe007f7efe00220ba600` / 11,23 / 7.
+- `2026-11-08-second-2f/map-1920.jpg` stays refused (`readout-digit-unmatched`) — its readout is
+  unreadable; do not weaken that gate.
+- A 3-D view still refuses: `frames/002-wvd-stuck.png` (the run's other saved frame) and
+  `testdata/chest/2026-10-24-live-qte/open-00.jpg` must not read as maps.
+- `npx tsc --noEmit`; `npx vitest run tests/map.test.ts tests/readers-corpus.test.ts tests/world.test.ts`;
+  then the full suite `npx vitest run`. Report exact counts and the before/after support and rms for
+  the new fixture and the three committed maps.
+
+### Report
+
+The before/after table, the RED and GREEN output, the confidence effect on the four maps, and any
+fixture whose read changed (a changed read is a finding, not a test update).
