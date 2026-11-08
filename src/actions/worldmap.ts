@@ -19,6 +19,10 @@ import { DUNGEON_SELECT_AREA, DUNGEON_SELECT_FLOOR, DUNGEON_SELECT_SCALES } from
 import { TOWN_PANEL_CHEVRON_BAND } from '../perception/location.ts';
 import { LOCATIONS, type LocationEntry } from '../perception/locations.ts';
 import { findTemplate, type Match, type MatchTemplate } from '../perception/match.ts';
+import { findSite, findSites } from '../perception/site-finder.ts';
+import { isClickable } from '../perception/map-ring.ts';
+import { pointerAt } from '../perception/pointer.ts';
+import { travelToSite, type MapInput, type MapSenses, type MapTravelResult } from './map-travel.ts';
 import { TOWN_PANEL_CHEVRON_BASE64 } from '../perception/town-template.ts';
 import {
   LABEL_ANCHORS,
@@ -48,6 +52,8 @@ export interface WorldMapEnv {
    * the fallback's own behaviour stays testable unchanged.
    */
   readonly atlas?: boolean;
+  /** Whether the travel may use the new senses (finder + ring + pointer). Off by default. */
+  readonly pointer?: boolean;
 }
 
 export type TravelReason =
@@ -1016,6 +1022,58 @@ export async function travelViaAtlas(
  * Travel to one catalogued node: open the map, match the node, tap it, and wait until the map is
  * gone. Zoom out up to three times and pan in eight directions before giving up.
  */
+/** WASD scan codes for the pointer, and the map's own zoom keys (Q in, E out). */
+const POINTER_KEYS: Readonly<Record<'w' | 'a' | 's' | 'd', number>> = { w: 0x11, a: 0x1e, s: 0x1f, d: 0x20 };
+const ZOOM_KEY_IN = 0x10;
+const ZOOM_KEY_OUT = 0x12;
+
+/** The travel through the new senses: icon + title, the white ring, the pointer's edge push. */
+async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<MapTravelResult> {
+  const now = env.now ?? (() => Date.now());
+  const opened = await openWorldMap(env);
+  if (!opened.ok) return { ok: false, reason: 'refused', detail: opened.reason };
+  const levels = (level: 0 | 1 | 2): number[] => iconScalesAt(level);
+  const image = async (): Promise<RgbaImage | null> => decode(await env.capture());
+  const senses: MapSenses = {
+    site: async (level, wantTitle) => {
+      const current = await image();
+      if (current === null) return null;
+      const found = findSite(current, entry, {
+        strip: MAP_STRIP, iconScales: levels(level), titleScales: [1], wantTitle,
+      });
+      return found === null ? null : { at: found.point, confidence: found.confidence };
+    },
+    ring: async (at) => {
+      const current = await image();
+      return current === null ? false : isClickable(current, at);
+    },
+    pointer: async () => {
+      const current = await image();
+      return current === null ? null : pointerAt(current);
+    },
+    landmark: async () => {
+      const current = await image();
+      if (current === null) return null;
+      const found = findSites(current, [...LOCATIONS.values()], {
+        strip: MAP_STRIP, iconScales: levels(0), wantTitle: false,
+      });
+      const best = found[0];
+      return best === undefined ? null : { id: best.id, at: best.point };
+    },
+  };
+  const input: MapInput = {
+    hold: (direction, holdMs) => env.actuator.holdKey(POINTER_KEYS[direction], holdMs),
+    tap: (at) => env.actuator.tap(at),
+    zoom: async (direction) => (await env.actuator.holdKey(direction === 'in' ? ZOOM_KEY_IN : ZOOM_KEY_OUT, 60)).ok,
+    sleep: (ms) => env.sleep(ms),
+    log: (line) => env.log?.(line),
+  };
+  const travelled = await travelToSite(senses, input, { now });
+  if (!travelled.ok) return travelled;
+  const left = await poll(env, (screen) => screen !== 'worldmap', LEAVE_TIMEOUT_MS, now, 'location-not-found');
+  return left.ok ? travelled : { ok: false, reason: 'not-found', detail: 'the map did not leave after the tap' };
+}
+
 export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResult> {
   const now = env.now ?? (() => Date.now());
   const entry = destinationOf(id);
@@ -1026,6 +1084,14 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
   // measured and one label banner tells the view where it is, so the spiral below is the fallback
   // for destinations the atlas does not know.
   const atlasSite = env.atlas === true ? siteById(id) : null;
+  if (env.pointer === true) {
+    const entryForSenses = LOCATIONS.get(id);
+    if (entryForSenses !== undefined) {
+      const viaSenses = await travelBySenses(entryForSenses, env);
+      if (viaSenses.ok) return { ok: true };
+      env.log?.('wvd: the senses could not reach ' + entry.label + ' (' + viaSenses.reason + '); falling back to the atlas');
+    }
+  }
   if (atlasSite !== null) {
     const viaAtlas = await travelViaAtlas({ kind: 'site', id }, env);
     if (viaAtlas.ok) return { ok: true };

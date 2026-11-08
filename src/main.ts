@@ -389,6 +389,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
           abort,
           log: (line) => world?.note(line),
           atlas: true,
+          pointer: true,
         });
       },
     },
