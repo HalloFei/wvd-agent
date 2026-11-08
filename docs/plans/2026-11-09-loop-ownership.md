@@ -30,8 +30,8 @@ and each is a *class* of defect:
 1. **Liveness** — an owner is driven every tick. A flag that says "I own this" is a promise someone
    calls; nothing in the code kept it.
 2. **Exclusivity** — one owner at a time. The orientation and the leave both drove the exit path.
-3. **Bounds** — an owner is released by its own clock, before the 150 s stall clock (which ends the
-   session and masks the design hole as a "stop condition").
+3. **Bounds** — an owner is released by its own clock, before the shipped stall stop that would end
+   the session and mask the design hole as a "stop condition".
 
 ## How this plan runs
 
@@ -58,8 +58,8 @@ Rulings recorded at dispatch:
 2. One command per tick. A command only from a named screen at confidence ≥ 0.5 that has held ≥ 2
    frames. No blind taps. A menu row is tapped at the point the reader **matched**, never a constant.
 3. Input only through the focused window (`#press` / `#commands`). Nothing starts, stops or focuses the game.
-4. Progress is what the loop **commands**, not what it observes. `stallStopSeconds` (150 s) and the
-   session limit keep their semantics.
+4. Progress is what the loop **commands**, not what it observes. `stallStopSeconds` (shipped 120 s;
+   150 s in run 7's harness setting) and the session limit keep their semantics.
 5. A timing constant is module-local and carries the measurement or the reasoning that set it.
 6. A warning is logged once per episode (the `#…Warned` pattern), never every tick.
 7. **The heal is frozen:** `src/policy/heal-session.ts`, `src/policy/heal-schedule.ts`,
@@ -131,8 +131,11 @@ knowledge of screens, commands or the World.
 
 Per-stage bounds, module-local in `src/world.ts`, each with its reasoning:
 
-- `LEAVE_DEADLINE_MS = 120_000` — **below** the 150 s stall clock on purpose: a stuck exit is
-  released, not turned into a session stop.
+- `LEAVE_DEADLINE_MS = 110_000` — **below the shipped `stallStopSeconds` (120 s) with a 10 s margin**
+  on purpose: a stuck exit is released, not turned into a session stop. (Corrected at review: the
+  shipped default is 120 s, not the 150 s run 7 used, and the stall check runs earlier in the tick, so
+  a 120 s deadline would never release at the shipped configuration. An operator who lowers the stop
+  below 110 s gets the stop, not the release — the documented trade.)
 - `ORIENT_DEADLINE_MS = 180_000` — a climb from another floor is minutes' work; the orientation
   marks progress when it commands, so its own bound is a backstop only.
 - `SCRIPT_DEADLINE_MS = 300_000` — a scripted stage walks the whole exit (harken, Dungeon
