@@ -28,6 +28,7 @@ import type { ScreenId } from '../contracts.ts';
 import { UiMenuPerceiver } from '../ui/menu.ts';
 import { CharacterPagePerceiver } from './character-page.ts';
 import { ChestPerceiver, type ChestPerceiverOptions } from './chest.ts';
+import { FilterDialogPerceiver } from './filter-dialog.ts';
 import { ChestOpeningPerceiver } from './chest-opening.ts';
 import { CombatPerceiver } from './combat.ts';
 import { CompositePerceiver, type Recogniser } from './composite.ts';
@@ -92,6 +93,8 @@ export function screenRecognisers(readers: {
     // The battle's skill detail panel before any chest: its 取消/確定 pair is the page's own evidence,
     // and a panel left unnamed escalated for 20 s and then had its panel cancelled by the Esc.
     { perceiver: new SkillPanelPerceiver(), floor },
+    // The item filter: the game's blurred page, named so the loop leaves it instead of asking (2026-11-08).
+    { perceiver: new FilterDialogPerceiver(), floor },
     { perceiver: chest, floor },
     { perceiver: map, floor },
     { perceiver: new ChestPromptPerceiver(), floor },

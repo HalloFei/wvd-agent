@@ -13,7 +13,7 @@ import { SkillPanelPerceiver, findPair, ruleWidth } from '../src/perception/skil
  */
 const PANEL = new URL('../testdata/screens/2026-11-08-battle/skill-panel.png', import.meta.url);
 const FADING = new URL('../testdata/screens/2026-11-08-battle/skill-panel-fading.png', import.meta.url);
-const DIM = new URL('../testdata/screens/2026-11-08-blank-after-battle/dim-menu.png', import.meta.url);
+const DIM = new URL('../testdata/screens/2026-11-08-filter/filter.png', import.meta.url);
 const BLANK = new URL('../testdata/screens/2026-11-08-blank-after-battle/blank-after-battle.png', import.meta.url);
 const TOWN = new URL('../testdata/frames/town-0.jpg', import.meta.url);
 const OPENER = new URL('../testdata/chest/2026-10-24-opener/panel-00.jpg', import.meta.url);

@@ -12,7 +12,7 @@ import { createScreenReaders } from '../src/perception/reader-set.ts';
  * `unknown` because nothing names it — and must NOT be called a load.
  */
 const BLANK = new URL('../testdata/screens/2026-11-08-blank-after-battle/blank-after-battle.png', import.meta.url);
-const DIM = new URL('../testdata/screens/2026-11-08-blank-after-battle/dim-menu.png', import.meta.url);
+const DIM = new URL('../testdata/screens/2026-11-08-filter/filter.png', import.meta.url);
 const TOWN = new URL('../testdata/frames/town-0.jpg', import.meta.url);
 
 async function pngFrame(url: URL): Promise<{ frame: Frame; image: RgbaImage }> {
