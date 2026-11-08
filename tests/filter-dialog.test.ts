@@ -64,9 +64,12 @@ describe('the item filter', () => {
     }
   });
 
-  it('is the chain s answer on the filter s frame', async () => {
+  it('is kept out of the chain until a second live drawing anchors it', async () => {
+    // 2026-11-08 22:01: the blur anchor alone named the **world map** at 0.87 and the loop pressed three
+    // points on it. The page stays `unknown` (an escalation) until its content anchors it — a wrong tap
+    // on the map travels somewhere, which is worse than a question.
     const { composite } = createScreenReaders({});
     const answer = await composite.classify((await png(FILTER)).frame);
-    expect(answer.answer.screen).toBe('ui-menu');
+    expect(answer.answer.screen).toBe('unknown');
   });
 });

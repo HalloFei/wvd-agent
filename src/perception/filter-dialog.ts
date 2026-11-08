@@ -92,23 +92,24 @@ export function findExit(image: RgbaImage): Point | null {
     if (widest >= EXIT_MIN_WIDTH) rows.push({ y, x0: widestStart, x1: widestEnd, width: widest });
   }
   if (rows.length === 0) return null;
-  // The widest group of consecutive rows, then its middle row.
+  // The page's **bottom-most** plate is its OK: the wide plates above it are the 全部 dropdowns, and a
+  // live frame put one of those at 1039,950 — three presses that closed nothing (2026-11-08 22:01).
+  const clusters: Array<typeof rows> = [];
   let group: typeof rows = [];
-  let best: typeof rows = [];
   let previous = -10;
   for (const row of rows) {
     // A plate's outline is rows of the same run interrupted by the label inside it: one cluster, and its
     // middle row is the point a tap wants (measured: the OK plate's rows 974–1024, centre y 999).
     if (row.y - previous > 60) {
-      if (best.length === 0 || group.length > 0) {
-        if (group.length > best.length) best = group;
-      }
+      if (group.length > 0) clusters.push(group);
       group = [];
     }
     group.push(row);
     previous = row.y;
   }
-  if (group.length > best.length) best = group;
+  if (group.length > 0) clusters.push(group);
+  const best = clusters.reduce((lowest, cluster) =>
+    cluster[cluster.length - 1]!.y > lowest[lowest.length - 1]!.y ? cluster : lowest, clusters[0]!);
   // The plate's middle is the midpoint of its **outermost** rows, not the middle row of the list: the
   // list holds the plate's edges (which are the only full-width rows) and the label's rows are shorter.
   const y = Math.round((best[0]!.y + best[best.length - 1]!.y) / 2);

@@ -28,7 +28,6 @@ import type { ScreenId } from '../contracts.ts';
 import { UiMenuPerceiver } from '../ui/menu.ts';
 import { CharacterPagePerceiver } from './character-page.ts';
 import { ChestPerceiver, type ChestPerceiverOptions } from './chest.ts';
-import { FilterDialogPerceiver } from './filter-dialog.ts';
 import { ChestOpeningPerceiver } from './chest-opening.ts';
 import { CombatPerceiver } from './combat.ts';
 import { CompositePerceiver, type Recogniser } from './composite.ts';
@@ -93,8 +92,12 @@ export function screenRecognisers(readers: {
     // The battle's skill detail panel before any chest: its 取消/確定 pair is the page's own evidence,
     // and a panel left unnamed escalated for 20 s and then had its panel cancelled by the Esc.
     { perceiver: new SkillPanelPerceiver(), floor },
-    // The item filter: the game's blurred page, named so the loop leaves it instead of asking (2026-11-08).
-    { perceiver: new FilterDialogPerceiver(), floor },
+    // The item filter is **not** in the chain yet, and this is deliberate (2026-11-08 22:01): its blur
+    // anchor named the *world map* at 0.87 and the loop pressed three points on it. Measured — the
+    // filter page is 2.3 luma / 0.25 detail, the map's frame is 10.6 / 1.42 — so the margin exists but
+    // is thin, and a wrong tap on the world map travels somewhere. A page that escalates costs 20 s; a
+    // page named wrongly costs a journey. The reader and its fixture stay (perception/filter-dialog.ts)
+    // until a second live drawing anchors it with content evidence, not just the background.
     { perceiver: chest, floor },
     { perceiver: map, floor },
     { perceiver: new ChestPromptPerceiver(), floor },
