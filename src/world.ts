@@ -72,8 +72,9 @@ import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
 import { advanceMode, INITIAL_MODE, type ModeMemory } from './policy/mode.ts';
 import { nextPageCloseTries } from './policy/page-episode.ts';
+import { HealSequence } from './policy/heal-sequence.ts';
 import { isExpectedFloor } from './tasks/steps.ts';
-import { OPERATION_PACE_MS, Pacer } from './policy/pacing.ts';
+import { OPERATION_PACE_MS, Pacer, STABLE_FRAMES } from './policy/pacing.ts';
 import { BattleSequence } from './policy/battle-sequence.ts';
 import {
   fallbackPhrase,
@@ -139,8 +140,11 @@ export interface RouteCommands {
   tapLoot(): Promise<ActionResult>;
   /** Dismiss the loot result banner (the card's own continue arrow) when the card taps do not leave it. */
   dismissLoot(): Promise<ActionResult>;
-  /** The game's one-key heal: party card, sparkle, 恢复, close, with its own settles. */
-  healParty(): Promise<ActionResult>;
+  /**
+   * One step of the game's quick heal: the party card, the sparkle, 恢复, the page's close. One tap per
+   * call, and the caller sends it only from a frame that names what it acts on (`policy/heal-sequence.ts`).
+   */
+  healStep(step: 'card' | 'sparkle' | 'restore' | 'close'): Promise<ActionResult>;
   /** Leave the character page: its measured X 关闭 tile (2026-11-03; the page is a named screen). */
   closeCharacterPage(): Promise<ActionResult>;
   /**
@@ -374,8 +378,16 @@ const PARTY_DOWN_FRAMES = 2;
 
 /** How many X 关闭 taps a character page may take before the loop leaves it to the stall clock. */
 const PAGE_CLOSE_TRIES = 3;
-/** How long the the page opened by the heal may take to leave before the sequence's one Esc (the measured close settle + 1 s). */
-const HEAL_VERIFY_GRACE_MS = 2_500;
+/**
+ * The heal's own pace, from `actions/heal.ts`'s measurements and `policy/heal-sequence.ts`'s contract:
+ * each screen needs ~1 s before the next tap lands, the page needs up to 2.5 s to leave after the
+ * close, the Esc gets the same, and the whole sequence is bounded (the four taps plus their settles
+ * are ~4.5 s, so 12 s is the heal with two chances at every step).
+ */
+const HEAL_STEP_MS = 900;
+const HEAL_PAGE_GRACE_MS = 2_500;
+const HEAL_ESCAPE_GRACE_MS = 2_500;
+const HEAL_DEADLINE_MS = 12_000;
 
 /**
  * How many recovery steps one screen gets before the loop leaves it to the stall clock (operator,
@@ -703,9 +715,11 @@ export class WvdWorld implements World {
   #qteLatencyMs: number | null = null;
   /** Character-page close taps sent for the page on screen; the page's own name re-arms them. */
   #pageCloseTries = 0;
-  /** When the heal's taps were sent: set until a stable frame proves the page is gone (or one Esc has been given). */
-  #healVerifyAtMs: number | null = null;
-  #healEscaped = false;
+  /**
+   * The heal in flight: a sequence of steps, each sent only from a frame that names what it acts on
+   * (`policy/heal-sequence.ts`). Non-null means the heal owns the tick until it is done or gives up.
+   */
+  #heal: HealSequence | null = null;
   /** The screen the last frames named, and how many in a row: the stable-frame gate. */
   #stableScreen: ScreenId | null = null;
   #stableCount = 0;
@@ -1383,46 +1397,76 @@ export class WvdWorld implements World {
     // the inn and message plug-ins — the gate is what counts the cycle once the party is back in town.
     if (await this.#advanceRestGate(observation, now)) return;
 
-    // The heal is the game's own quick heal, and it is only valid from the 3-D view: a battle or a
-    // chest set the flag, this tick spends it as one command (the four taps carry their own settles).
+    // The heal is the game's own quick heal, sent as a **sequence**: the party card, the sparkle, 恢复 and
+    // the close, one tap per tick, each sent only from a frame that names what it acts on (operator rule
+    // 2026-11-07: *only next order based on the current stable frame. no competing orders*). The old
+    // composite sent all four taps blind, so a battle that interrupted the heal took the remaining taps
+    // on the battle screen (live 2026-11-08 13:07) and the verify afterwards held the tick 11 s. The
+    // sequence owns the heal until it is done, gives up at its deadline, or leaves the page to the
+    // recovery stepper after its one Esc.
     if (this.#healDue && now - this.#healDueAtMs > HEAL_WINDOW_MS) this.#healDue = false;
-    if (!waiting && this.#healDue && this.#healVerifyAtMs === null && observation.screen === 'dungeon') {
+    if (this.#heal === null && this.#healDue && !waiting && observation.screen === 'dungeon') {
       this.#healDue = false;
-      const healed = await this.#commands.healParty();
-      if (healed.ok) this.#host?.log.info('wvd: healed the party');
-      else this.#host?.log.warn(`wvd: the heal was refused (${healed.reason})`);
-      // The heal is not done when its taps are sent: it is done when a stable frame proves the page it
-      // opened is gone (operator rule 2026-11-07: *only next order based on the current stable frame. no
-      // competing orders*). Until then the heal owns the tick — the route is not asked, and the page
-      // block does not press (live 2026-11-07 23:39: open-map and the page alternated seven times).
-      this.#healVerifyAtMs = this.#now();
-      this.#healEscaped = false;
-      return;
+      this.#heal = new HealSequence({
+        stableFrames: STABLE_FRAMES,
+        stepMs: HEAL_STEP_MS,
+        graceMs: HEAL_PAGE_GRACE_MS,
+        escapeGraceMs: HEAL_ESCAPE_GRACE_MS,
+        deadlineMs: HEAL_DEADLINE_MS,
+      });
+      this.#heal.enter(now);
+      this.#host?.log.info('wvd: the heal starts; one step per frame that names what it acts on');
     }
-
-    if (this.#healVerifyAtMs !== null) {
-      const since = this.#healVerifyAtMs;
-      if (observation.screen === 'character-page') {
-        if (!this.#healEscaped && now - since >= HEAL_VERIFY_GRACE_MS) {
-          this.#healEscaped = true;
-          this.#host?.log.warn('wvd: the the page opened by the heal did not close; pressing Esc once');
+    if (this.#heal !== null) {
+      // The heal's own screens are the walking view and its character page. Any other **named** screen
+      // is the game taking the frame away — a battle, a chest, an event page — and the loop owns that:
+      // the heal is abandoned there instead of holding the tick to its deadline (live 2026-11-08 13:07:
+      // a battle interrupted the composite heal and the loop lost 11 s to it).
+      const taken = observation.screen !== 'dungeon'
+        && observation.screen !== 'character-page'
+        && observation.screen !== 'unknown'
+        && observation.screen !== 'loading';
+      if (taken) {
+        // Abandoned, and the tick carries on into this screen's own dispatch: the battle that took the
+        // frame is the order now.
+        this.#heal = null;
+        this.#host?.log.info(`wvd: the heal was interrupted by ${observation.screen}; the farm continues`);
+      } else {
+        const phase = {
+          screen: observation.screen,
+          stable: this.#stableCount,
+          page: observation.screen === 'character-page',
+        };
+        const step = this.#heal.next(phase, now);
+        if (step.kind === 'wait') return;
+        if (step.kind === 'done') {
+          const gaveUp = step.why === 'gave-up';
+          this.#heal = null;
+          if (gaveUp) this.#host?.log.warn('wvd: the heal gave up at its deadline; the farm continues');
+          else this.#host?.log.info('wvd: healed the party');
+          return;
+        }
+        if (step.kind === 'escape') {
+          this.#heal.escaped(this.#now());
+          this.#host?.log.warn('wvd: the page the heal opened did not close; pressing Esc once');
           await this.#commands.escape();
+          return;
+        }
+        const sent = await this.#commands.healStep(step.kind);
+        if (sent.ok) this.#heal.completed(this.#now());
+        else {
+          this.#heal.refused(this.#now());
+          this.#host?.log.warn(`wvd: the heal's ${step.kind} tap was refused (${sent.reason}); the step stays owed`);
         }
         return;
       }
-      const named = observation.screen !== 'unknown' && observation.screen !== 'loading';
-      if (named && this.#stableCount >= 2) {
-        this.#host?.log.info('wvd: the the page opened by the heal is gone (stable ' + observation.screen + '); the farm continues');
-        this.#healVerifyAtMs = null;
-      }
-      return;
     }
 
     // The character page: a menu the heal (or an operator) opens, and a screen the loop *finishes* —
     // operator rule 2026-11-03: *after open and heal there shall be a close of the character panel, so
     // go back to the dungeon*. Its X 关闭 tile is the evidence that names it, so the close is verified
     // by the next frame rather than hoped for; a page that stays costs one tap per tick, capped.
-    if (this.#healVerifyAtMs === null && !waiting && observation.screen === 'character-page') {
+    if (this.#heal === null && !waiting && observation.screen === 'character-page') {
       // Paced (operator rule 2026-11-03): the page animates while it closes, and a tap sent into that
       // animation lands on the 3-D view and opens another member's page. One tap per pace, on a frame
       // that has stopped moving.

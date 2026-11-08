@@ -26,7 +26,6 @@ import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
 import { BATTLE_OPENERS, tapOpenerConfirm, tapOpenerSlot } from './actions/battle.ts';
 import { locateSkillPanelConfirm } from './perception/battle-panel.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from './actions/chest.ts';
-import { closeCharacterPage } from './actions/heal.ts';
 import { CharacterPagePerceiver } from './perception/character-page.ts';
 import { MainCharacterDeathPerceiver } from './perception/death.ts';
 import { ReviveQtePerceiver } from './perception/revive-qte.ts';
@@ -36,7 +35,7 @@ import { InnRestPerceiver } from './perception/inn-rest.ts';
 import { UiMenuPerceiver } from './ui/menu.ts';
 import { restAtInn } from './actions/inn.ts';
 import { HarkenMenuPerceiver } from './perception/harken.ts';
-import { healParty } from './actions/heal.ts';
+import { closeCharacterPage, confirmAutoHeal, openAutoHeal, openCharacterPage } from './actions/heal.ts';
 import { timeQte } from './actions/qte.ts';
 import { createQteFileRecorder } from './actions/qte-record.ts';
 import { travelTo } from './actions/worldmap.ts';
@@ -376,7 +375,12 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
       dismissLoot: () => dismissLoot(actuator),
-      healParty: () => healParty(actuator, (ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+      // One step of the heal per call: the loop's sequence decides which, from the frame it holds.
+      healStep: (step) =>
+        step === 'card' ? openCharacterPage(actuator)
+          : step === 'sparkle' ? openAutoHeal(actuator)
+            : step === 'restore' ? confirmAutoHeal(actuator)
+              : closeCharacterPage(actuator),
       // The character page's own close: one tap on its measured X 关闭 tile, verified by the next frame.
       closeCharacterPage: () => closeCharacterPage(actuator),
       // A control perception named: the harken menu's row (contracts §2 harken-menu).

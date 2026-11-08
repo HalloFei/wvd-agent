@@ -42,6 +42,15 @@ export interface HealOptions {
   readonly graceMs: number;
   /** How long the \`Esc\` gets before the sequence gives up, ms. */
   readonly escapeGraceMs: number;
+  /**
+   * The whole sequence's bound, ms: from enter to done, whatever it is waiting for.
+   *
+   * Without it the sequence hangs on the one thing it cannot see: a card tap that never opened the
+   * page (a battle started instead, or the tap was swallowed) leaves it waiting for a page that will
+   * never come — a worse stall than the composite it replaces. Measured live 2026-11-08: the four taps
+   * with their settles are ~4.5 s, so 12 s is the whole heal plus two chances at every step.
+   */
+  readonly deadlineMs: number;
 }
 
 const STEPS: readonly HealStepKind[] = ['card', 'sparkle', 'restore', 'close'];
@@ -65,6 +74,8 @@ export class HealSequence {
   /** One step for this tick, or a reason to wait. The caller sends at most one tap. */
   next(phase: HealPhase, nowMs: number): HealStep {
     if (this.#enteredAtMs === null) return { kind: 'wait', why: 'settle' };
+    // The deadline is the sequence's own bound: nothing it waits for may outlive it.
+    if (nowMs - this.#enteredAtMs >= this.#options.deadlineMs) return { kind: 'done', why: 'gave-up' };
     const paced = this.#lastTapAtMs === null || nowMs - this.#lastTapAtMs >= this.#options.stepMs;
     if (!paced) return { kind: 'wait', why: 'paced' };
 

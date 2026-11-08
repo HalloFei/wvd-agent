@@ -9,7 +9,8 @@ import { HealSequence, type HealPhase } from '../src/policy/heal-sequence.ts';
  */
 const dungeon = (stable = 2): HealPhase => ({ screen: 'dungeon' as ScreenId, stable, page: false });
 const page = (stable = 2): HealPhase => ({ screen: 'character-page' as ScreenId, stable, page: true });
-const make = (): HealSequence => new HealSequence({ stableFrames: 2, stepMs: 900, graceMs: 2_500, escapeGraceMs: 2_500 });
+const make = (deadlineMs = 12_000): HealSequence =>
+  new HealSequence({ stableFrames: 2, stepMs: 900, graceMs: 2_500, escapeGraceMs: 2_500, deadlineMs });
 
 describe('the heal sequence', () => {
   it('runs card → sparkle → 恢复 → close, one step per paced tick, each from a stable frame', () => {

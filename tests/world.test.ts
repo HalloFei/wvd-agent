@@ -269,6 +269,45 @@ const dungeonLikeUnknown: Observation = { screen: 'unknown', atMs: 100, confiden
 const nothingSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0 };
 const waiting: Observation = { screen: 'loading', atMs: 100, confidence: 0.9 };
 const dungeonView: Observation = { screen: 'dungeon', atMs: 100, confidence: 0.9 };
+const characterPageView: Observation = { screen: 'character-page', atMs: 100, confidence: 1 };
+
+/**
+ * One heal, the way the loop runs it since 2026-11-08: the party card from the walking view, then the
+ * page's three steps (sparkle, 恢复, close) from **page** frames, then the close verified by the page
+ * leaving. The loop sends one step per tick, so each tap needs its own frames — a composite would land
+ * all four taps in one tick (and, in a battle, on the battle screen).
+ */
+interface TickableWorld { tick(): Promise<unknown> }
+interface RecordingHost { logRecords: ReadonlyArray<{ message: string }> }
+
+/** Tick until the loop logs `text` once more than it had, or fail: the heal's start is a log line. */
+async function tickUntilLogged(
+  world: TickableWorld,
+  host: RecordingHost,
+  clock: { advance(ms: number): void },
+  text: string,
+  limit = 24,
+): Promise<void> {
+  const count = (): number => host.logRecords.filter((record) => record.message.includes(text)).length;
+  const before = count();
+  for (let index = 0; index < limit; index += 1) {
+    clock.advance(500);
+    await world.tick();
+    if (count() > before) return;
+  }
+  throw new Error('never logged: ' + text);
+}
+
+async function runHeal(
+  world: TickableWorld,
+  perceiver: { observation: Observation },
+  clock: { advance(ms: number): void },
+): Promise<void> {
+  perceiver.observation = characterPageView;
+  for (let index = 0; index < 6; index += 1) { clock.advance(1_000); await world.tick(); }
+  perceiver.observation = dungeonView;
+  for (let index = 0; index < 4; index += 1) { clock.advance(1_000); await world.tick(); }
+}
 
 /** A member the opener policy can rank; the card index is its position in the panel. */
 function openerMember(detect: number, disarm: number, willpower = 100, feared = false) {
@@ -379,6 +418,8 @@ function makeWorld(options: {
   const travelCalls: string[] = [];
   /** The battle's cast, split into its two operations (contracts §11, the sequence). */
   const slotCalls: string[] = [];
+  /** The heal's steps, in the order the loop sent them (2026-11-08: one step per frame). */
+  const healSteps: string[] = [];
   const confirmCalls: string[] = [];
   const escCalls: string[] = [];
   const snapshotCalls: Array<number | undefined> = [];
@@ -439,7 +480,7 @@ function makeWorld(options: {
       tapLoot: () => tapLoot(actuator),
       dismissLoot: () => dismissLoot(actuator),
       // The heal's taps are pinned in tests/heal.test.ts; the world tests only need the command.
-      healParty: async () => ({ ok: true }),
+      healStep: async (step: string) => { healSteps.push(step); return { ok: true }; },
       // The page's close is one measured tap, so the world tests can see it.
       closeCharacterPage: () => closeCharacterPage(actuator),
       tapPoint: (at) => actuator.tap(at),
@@ -470,6 +511,7 @@ function makeWorld(options: {
   return {
     world, host, source, perceiver, actuator, cfg, snapshotCalls, clock, travelCalls,
     slotCalls,
+    healSteps,
     confirmCalls,
     escCalls,
     openSessionCalls: () => openSessionCalls,
@@ -1539,25 +1581,61 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(fightCalls).toBeGreaterThan(0);
 
     // The battle leaves: the fight stays in flight until its screen answers (arrival), then the heal
-    // is that tick's one command — no route command rides along with it.
+    // starts on that tick — one step per frame, and no route command rides along with it.
     perceiver.observation = dungeonView;
+    const healStarts = (): number => host.logRecords.filter((record) => record.message.includes('the heal starts')).length;
     let callsAtHeal = -1;
     for (let index = 0; index < 14 && callsAtHeal < 0; index += 1) {
       clock.advance(500);
       await world.tick();
-      if (healed() === 1) callsAtHeal = actuator.calls.length;
+      if (healStarts() === 1) callsAtHeal = actuator.calls.length;
     }
-    expect(healed()).toBe(1);
+    expect(healStarts()).toBe(1);
     expect(callsAtHeal).toBe(fightCalls);
 
-    // The heal owns the tick until a stable frame proves its page is gone (operator rule 2026-11-07:
-    // only the next order, from the current stable frame), so the tick after it clears that gate and the
-    // route's map press is the one after.
+    // The heal's four steps, each from the frame that names what it acts on; the close is verified by
+    // the page leaving (operator rule 2026-11-07: only the next order, from the current stable frame).
+    await runHeal(world, perceiver, clock);
+    expect(healed()).toBe(1);
+
+    // The heal owns the tick until a stable frame proves its page is gone, so the tick after it clears
+    // that gate and the route's map press is the one after.
     clock.advance(500);
     await world.tick();
     clock.advance(500);
     await world.tick();
     expect(actuator.calls.slice(fightCalls)).toEqual([`key ${SCAN.G} 60`]);
+  });
+
+  it('abandons the heal when a battle takes the frame, and dispatches the battle that tick', async () => {
+    // The defect the operator named (2026-11-08): the loop was healing when a battle interrupted it. The
+    // composite tapped card -> sparkle -> 恢复 -> close blind, so the taps after the interruption landed
+    // on the battle screen, and the verify then held the tick 11 s. The sequence drops the heal instead,
+    // and the frame in hand is the order.
+    const { world, host, actuator, perceiver, clock, healSteps } = makeWorld({ observation: dungeonView });
+    await started(world, host);
+
+    perceiver.observation = combatView;
+    clock.advance(100);
+    await world.tick();
+    perceiver.observation = dungeonView;
+    await tickUntilLogged(world, host, clock, 'the heal starts');
+    await world.tick();                                   // the card, from the walking view
+    expect(healSteps).toEqual(['card']);
+
+    // The battle takes the frame: the heal is dropped and no further heal step is attempted on it.
+    perceiver.observation = combatView;
+    clock.advance(500);
+    const calls = actuator.calls.length;
+    await world.tick();
+
+    expect(host.logRecords.some((record) => record.message.includes('the heal was interrupted by combat'))).toBe(true);
+    expect(healSteps).toEqual(['card']);
+
+    // …and the battle is the loop's from that tick: its own settle, then its press.
+    clock.advance(1_000);
+    await world.tick();
+    expect(actuator.calls.length).toBeGreaterThan(calls);
   });
 
   it('heals once after a battle, and again after a chest, and not twice on the same view', async () => {
@@ -1572,7 +1650,8 @@ describe('a walk stays in flight through the screens it produces', () => {
     await world.tick();
     expect(healed()).toBe(0);
     perceiver.observation = dungeonView;
-    for (let index = 0; index < 12; index += 1) { clock.advance(500); await world.tick(); }
+    await tickUntilLogged(world, host, clock, 'the heal starts');
+    await runHeal(world, perceiver, clock);
     expect(healed()).toBe(1);
 
     // The flag is spent: more view ticks do not heal again.
@@ -1584,7 +1663,8 @@ describe('a walk stays in flight through the screens it produces', () => {
     clock.advance(100);
     await world.tick();
     perceiver.observation = dungeonView;
-    for (let index = 0; index < 12; index += 1) { clock.advance(500); await world.tick(); }
+    await tickUntilLogged(world, host, clock, 'the heal starts');
+    await runHeal(world, perceiver, clock);
     expect(healed()).toBe(2);
   });
 

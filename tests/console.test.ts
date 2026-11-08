@@ -216,7 +216,7 @@ function makeConsole(options: {
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
       dismissLoot: () => dismissLoot(actuator),
-      healParty: async () => ({ ok: true }),
+      healStep: async () => ({ ok: true }),
       closeCharacterPage: async () => ({ ok: true }),
       tapPoint: (at) => actuator.tap(at),
       restAtInn: (at) => actuator.tap(at),

@@ -1390,6 +1390,30 @@ intent was re-derived from the frame in hand. Proved by `tests/world.test.ts` (1
 `.tmp/runs/<stamp>/console.log` beside the report. Two stalls today cost their diagnosis because the
 only copy was the harness's stdout and a `job_output` read consumes it.
 
+## The heal is a sequence now (2026-11-08)
+
+The operator's report: *"the world was trying to heal, yet a battle happened and interrupted the heal,
+and the world gets stall for a while after battle."* The code said why: the loop still sent the heal as
+one **blind composite** (`actions/heal.ts`: card → sparkle → 恢复 → close with fixed settles), so the
+taps after an interruption landed on the battle screen, and the verify then held the tick — live 13:07,
+**11 s** between `healed the party` and the verify seeing `combat`.
+
+`policy/heal-sequence.ts` had been written and tested for exactly this and never wired. It is now the
+loop's heal: **one step per tick**, each sent only from a frame that names what it acts on (the card
+from the walking view, the sparkle, 恢复 and the close from the **page**), the close verified by the
+page leaving, one `Esc` if it will not, and a **total deadline** (`deadlineMs`, 12 s — the four taps
+plus their ~4.5 s of settles with two chances at each step) so a page that never appears cannot hang
+the loop.
+
+A frame the loop owns **abandons** the heal rather than waiting it out: a battle that takes the frame
+mid-heal drops the sequence and that same tick is the battle's (the operator's rule — the frame in hand
+is the order). `RouteCommands.healParty()` became `healStep(kind)`; `main.ts` maps each step to the
+measured tap in `actions/heal.ts`.
+
+Proved by `tests/heal-sequence.test.ts` (the deadline: a swallowed card gives up at its bound) and
+`tests/world.test.ts` (165 with the console and heal suites: the four steps in order, the heal
+abandoned on a battle frame with no further step, the battle acting from its own settle).
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only
