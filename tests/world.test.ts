@@ -43,7 +43,7 @@ import { routePolicy } from '../src/policy/route.ts';
 import { createTaskPolicy } from '../src/tasks/policy.ts';
 import { tileOnScreen } from '../src/perception/map.ts';
 import { classify } from '../src/policy/session.ts';
-import { WvdWorld, type WvdSession } from '../src/world.ts';
+import { LEAVE_DEADLINE_MS, WvdWorld, type WvdSession } from '../src/world.ts';
 import { PARTY_PANEL_COLLAPSE } from '../src/policy/recover.ts';
 
 const CTX = {} as ToolCallContext;
@@ -3647,10 +3647,18 @@ describe('the exit goal', () => {
     ]);
   });
 
-  it('releases the exit at its own deadline with one warning, before the stall clock', async () => {
-    // The exit's bound is below the operator's 150 s stall clock on purpose: a stuck exit is
-    // released to the route, not turned into a session stop. The stall clock keeps its semantics.
-    const loop = makeExitWorld({ cfg: { stallStopSeconds: 150, escalateTimeoutMs: 25 } });
+  it('bounds the exit strictly below the shipped stall stop', () => {
+    // The finding (2026-11-09): a bound equal to the shipped stall clock is dead at the default — the
+    // stall check runs earlier in the tick than the release, so at the same instant the stop wins and
+    // a 120 s bound would only ever fire by accident of the claim/progress skew. Pin the
+    // **relationship** to the shipped configuration, not a second magic number: its 120 s minus 10 s.
+    expect(LEAVE_DEADLINE_MS).toBeLessThan(WVD_DEFAULTS.stallStopSeconds * 1000);
+  });
+
+  it('releases the exit at its own deadline with one warning, before the shipped stall clock', async () => {
+    // At the shipped configuration, not a live run sheet's 150 s: the bound must fire before the
+    // stop the package actually ships, and the exit is released to the route rather than stopped.
+    const loop = makeExitWorld({ cfg: { escalateTimeoutMs: 25 } });
     await started(loop.world, loop.host);
     await loop.world.tick();                        // the E check: the exit owns the loop from here
     expect(loop.actuator.calls).toEqual([`key ${CHEST_SCAN} 60`]);
@@ -3667,17 +3675,21 @@ describe('the exit goal', () => {
       // an owner that is merely waiting is not the route's, and it is not a stall either.
       if (released().length === 0) expect(loop.actuator.calls, `tick ${index}`).toHaveLength(1);
     }
-    // One warning for one release, and the session is still running: released, not stopped.
-    expect(released()).toHaveLength(1);
+    // One warning for one release, worded with the constant's own bound, and the session is still
+    // running: released, not stopped.
+    expect(released()).toEqual([`wvd: the exit held the loop for ${LEAVE_DEADLINE_MS / 1000} s; releasing it`]);
     expect(loop.world.isRunning()).toBe(true);
 
-    // The stall clock still ends a session in which nothing at all is commanded: the bound bought
-    // the exit's release, not a suspension of the loop's own stop.
+    // The stall clock still ends a session in which nothing at all is commanded — at the shipped
+    // stop, the very clock the release above had to beat.
     for (let index = 0; index < 8 && loop.world.isRunning(); index += 1) {
       loop.clock.advance(5_000);
       await loop.world.tick();
     }
     expect(loop.world.isRunning()).toBe(false);
+    const stopped = loop.host.pushed.filter((pushed) => pushed.event.type === 'wvd.stopped');
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]!.event.text).toContain(`nothing changed for ${WVD_DEFAULTS.stallStopSeconds} s`);
   });
 
   it('pumps the owner every tick it owns: one matched tap per tick on the harken page', async () => {

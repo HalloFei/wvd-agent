@@ -86,17 +86,24 @@ loop's own screen branches, before the route. Order: `exit` → `#pumpLeave`, `s
   Select**, not to the town — the leave travels from there). Making the empty floor mean "farm" would
   make the exit back out of the page and loop forever. `policy/leave.ts` is unchanged.
 
-## 5. The three deadlines (module-local in `src/world.ts`)
+## 5. The three deadlines (in `src/world.ts`)
 
 | Owner | Bound | Why |
 |---|---|---|
-| `exit` | `LEAVE_DEADLINE_MS = 120_000` | **Below** the 150 s stall clock on purpose: a stuck exit is released, not turned into a session stop. The measured leave is under 40 s, so this is a hang's bound, not a budget. |
+| `exit` | `LEAVE_DEADLINE_MS = 110_000` | **Below the shipped `stallStopSeconds` (120 s) with a 10 s margin**, on purpose: the release runs *after* the stall check in the tick, so a bound at or above the stop never fires at the default. A stuck exit is released, not turned into a session stop. The measured leave is under 40 s, so this is a hang's bound, not a budget. |
 | `orient` | `ORIENT_DEADLINE_MS = 180_000` | A climb from another floor is minutes' work. The orientation marks progress when it commands, so the stall clock only fires when it stops commanding; this bound is the backstop for an episode that keeps commanding and never arrives. |
 | `stage` | `SCRIPT_DEADLINE_MS = 300_000` | A scripted stage walks the whole exit (harken, Dungeon Select, world map), one step a tick; its cursor is the step and this is the bound behind the cursor. The measured exit script took 48.7 s (2026-11-05) and a stage yields to battles and chests. |
 
-Caveat, recorded rather than hidden: 120 s is **not** below the 150 s stall clock when the session
-runs at the shipped default of 120 s (the stall check is earlier in the tick). The constant follows
-the plan; the test pins the operator's 150 s setting, where the release demonstrably happens first.
+The deadline is measured against the **shipped** `stallStopSeconds` (120 s), not against a live run
+sheet's 150 s. The tick checks the stall clock first and releases an overdue owner afterwards, so the
+bound must be strictly below the stop at the configuration the package actually ships — hence 110 s,
+with a 10 s margin. An operator who lowers `stallStopSeconds` below the deadline gets the stop
+instead of the release: that is the documented trade. `tests/world.test.ts` pins the relationship
+(`LEAVE_DEADLINE_MS < WVD_DEFAULTS.stallStopSeconds * 1000`, a property rather than a second magic
+number) and the release itself at the shipped default.
+
+`LEAVE_DEADLINE_MS` is exported only so the test can pin that relationship by name; it is not part of
+the World's contract.
 
 ## 6. What stays outside the registry
 
@@ -112,5 +119,5 @@ character page, the inn and the QTE sub-loop. The registry governs the **intent-
 re-use after release). `tests/world.test.ts` (`the exit goal`) pins the four loop-level properties:
 the harken deadlock taps the matched 归还 within five ticks and never stops; an off-floor map while
 the exit owns logs no orientation re-arm and sends no orientation command; the deadline releases the
-exit with one warning before the stall clock; and the owner is pumped once per tick (one matched tap
-per tick on a page that stays).
+exit with one warning before the shipped stall clock; and the owner is pumped once per tick (one
+matched tap per tick on a page that stays).

@@ -412,20 +412,27 @@ const HEAL_SESSION_DEADLINE_MS = 90_000;
  */
 const CHEST_PROBE_WALK_MS = 20_000;
 /**
- * The exit goal's bound, ms (operator rule 2026-11-09). **Below the 150 s stall clock on purpose**: a
- * stuck exit is released to the route, not turned into a session stop. The live failure is exactly
- * that misreading — run 7 sat on the harken page for 150 s and the log's last word was a stop, which
- * hid a missing caller behind a "stop condition". 120 s is two minutes of exit with no command: the
- * measured leave (F, the walk, the harken, Dungeon Select, the travel) is under 40 s, so this is a
- * hang's bound, not a budget.
+ * The exit goal's bound, ms (operator rule 2026-11-09). **Below the shipped `stallStopSeconds`
+ * (120 s) with a 10 s margin, on purpose**: the stall check runs earlier in the tick than the
+ * release, so a bound at or above the stop would be dead at the configuration the package actually
+ * ships. The live failure is exactly that misreading — run 7 sat on the harken page until the stall
+ * clock and the log's last word was a stop, which hid a missing caller behind a "stop condition".
+ * 110 s is the shipped two-minute stop minus a ten-second margin: the measured leave (F, the walk,
+ * the harken, Dungeon Select, the travel) is under 40 s, so this is a hang's bound, not a budget.
+ * An operator who lowers `stallStopSeconds` below this deadline gets the stop instead of the
+ * release — that is the documented trade, not a second number to keep in sync.
+ *
+ * Exported only so `tests/world.test.ts` can pin that relationship against `WVD_DEFAULTS` rather
+ * than repeating the value as a second magic number.
  */
-const LEAVE_DEADLINE_MS = 120_000;
+export const LEAVE_DEADLINE_MS = 110_000;
 /**
  * The orientation's backstop, ms. A climb from another floor is minutes' work, and the orientation
  * marks progress when it commands (see `#orientTo`) — so the stall clock only fires when it stops
  * commanding, and this bound is what catches an episode that keeps commanding and never arrives
- * (three minutes of turns that never reach the farm floor). It is above the 150 s stall clock by
- * design: the two clocks cover different failures, and this one must never cut a real climb short.
+ * (three minutes of turns that never reach the farm floor). It is above the shipped 120 s stall
+ * clock by design: the two clocks cover different failures, and this one must never cut a real
+ * climb short.
  */
 const ORIENT_DEADLINE_MS = 180_000;
 /**
@@ -3474,7 +3481,7 @@ export class WvdWorld implements World {
   /**
    * Release an owner that has held the loop past its own bound, and say so once (the bound is each
    * stage's own: see the constants). This is what keeps a stuck stage a release instead of a session
-   * stop — the exit's bound sits below the 150 s stall clock on purpose.
+   * stop — the exit's bound sits below the shipped 120 s stall clock on purpose.
    */
   #releaseOverdueStage(now: number): void {
     const owner = this.#stages.owner;
