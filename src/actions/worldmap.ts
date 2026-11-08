@@ -715,7 +715,11 @@ function iconTemplateFor(locationId: string): MatchTemplate | null {
  * +-15% sweep. Measured live: 0.917 at scale 0.96 on the max zoom-in frame.
  */
 function iconScalesAt(level: number): number[] {
-  const centre = 0.45 * Math.pow(MAP_ZOOM.stepScale, level);
+  // **Measured on a live level-1 frame, 2026-11-09 02:00**: ffxi-gcn's icon matches at scale **0.90**
+  // (score 0.993), and nowhere in the old 0.51-0.69 bank. That is why the two live runs found nothing:
+  // the basis below used to be 0.45 — the *atlas stills'* art — which is about half the live scale. The
+  // ladder is the same 1.34 step, anchored on the measurement instead of on the stills.
+  const centre = 0.9 * Math.pow(MAP_ZOOM.stepScale, level - 1);
   return [0.85, 0.92, 1, 1.08, 1.15].map((fraction) => Math.round(centre * fraction * 100) / 100);
 }
 
@@ -1034,8 +1038,14 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
   const now = env.now ?? (() => Date.now());
   const opened = await openWorldMap(env);
   if (!opened.ok) return { ok: false, reason: 'refused', detail: opened.reason };
-  // One zoom out: the map opens at its most zoomed-in level, and **level 1** is where every title is
-  // drawn and every site is clickable (operator, 2026-11-09) — the only level the travel needs.
+  // Put the map at **level 1** deterministically: three zoom-ins saturate at the most zoomed-in level
+  // (extra presses clamp), then one zoom-out lands on level 1 — where every title is drawn and every
+  // site is clickable (operator, 2026-11-09). Counting from the opening level would be a guess: a
+  // swallowed press, or a map left at another level by an earlier action, would put every icon scale wrong.
+  for (let step = 0; step < 3; step += 1) {
+    await env.actuator.holdKey(ZOOM_KEY_IN, 60);
+    await env.sleep(300);
+  }
   await env.actuator.holdKey(ZOOM_KEY_OUT, 60);
   await env.sleep(420);
   const levels = (level: 0 | 1 | 2): number[] => iconScalesAt(level);
