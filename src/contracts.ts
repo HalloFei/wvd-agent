@@ -394,7 +394,7 @@ export interface TaskStep {
    * stair icon is the way up). A perceptual step, not a measured tile — the operator's rule 2026-11-03:
    * the list is not fixed, so the script reads it.
    */
-  readonly op: 'tap' | 'key' | 'wait' | 'expect' | 'expectFloor' | 'travel' | 'harken';
+  readonly op: 'tap' | 'key' | 'wait' | 'expect' | 'expectFloor' | 'travel' | 'harken' | 'open-map';
   /** `harken` only: the row's label, as the menu draws it (第一区-城外- etc.). */
   readonly destination?: string;
   readonly at?: readonly [number, number];
@@ -407,6 +407,12 @@ export interface TaskStep {
   readonly screen?: ScreenId;
   /** `expectFloor` only: the 32-hex floor key to gate; the task's own key when absent. */
   readonly titleKey?: string;
+  /**
+   * `open-map` only: none. The step means "the map is open", and the runner looks before it presses:
+   * one `G` opens it from the walking view (measured live 2026-11-08, 8 of 8), while a `G` on an
+   * already-open map is 移動至目的地 — a walk order that closes the map again. A blind two-press opener
+   * stopped the exit script at step 1 (live 2026-11-08 13:32).
+   */
   readonly timeoutMs?: number;
 }
 

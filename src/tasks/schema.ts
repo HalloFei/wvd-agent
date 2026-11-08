@@ -48,6 +48,7 @@ const STEP_FIELDS: Record<TaskStep['op'], readonly string[]> = {
   expectFloor: ['op', 'titleKey', 'timeoutMs'],
   travel: ['op', 'to'],
   harken: ['op', 'destination', 'timeoutMs'],
+  'open-map': ['op'],
 };
 
 function parseStep(raw: unknown, index: number, knownLocations?: ReadonlySet<string>): TaskStep | Problem {
@@ -108,6 +109,7 @@ function parseStep(raw: unknown, index: number, knownLocations?: ReadonlySet<str
     const named = raw.destination === undefined ? step : { ...step, destination: raw.destination as string };
     return timeoutMs === undefined ? named : { ...named, timeoutMs: timeoutMs as number };
   }
+  if (op === 'open-map') return { op };
   if (op === 'travel') {
     if (typeof raw.to !== 'string' || raw.to.length === 0) return problem('missing-field', `${where}: to`);
     if (knownLocations !== undefined && !knownLocations.has(raw.to)) {

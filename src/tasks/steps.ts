@@ -165,6 +165,17 @@ async function runStep(step: TaskStep, index: number, env: ScriptEnv, floorKey: 
       if (result.ok) return null;
       return stopped(index, result.reason, result.detail);
     }
+    case 'open-map': {
+      // "The map is open" is the step's meaning, so it looks before it presses: one `G` opens it from
+      // the walking view (8 of 8 live, 2026-11-08), and a `G` on an already-open map is 移動至目的地.
+      const captured = await captureWithRetry(env);
+      if (isStop(captured)) return stopped(index, captured.reason, captured.detail);
+      const observation = await env.observe(captured);
+      if (observation.screen === 'dungeonmap') return null;
+      const pressed = await env.actuator.holdKey(TASK_KEYS.g, DEFAULT_HOLD_MS);
+      if (pressed.ok) return null;
+      return stopped(index, pressed.reason, pressed.detail);
+    }
     case 'wait':
       await sleepUnlessAborted(env, step.ms!);
       return env.abort.aborted ? stopped(index, 'cancelled') : null;
@@ -312,6 +323,20 @@ export async function advanceSteps(
         const hold = Math.min(MAX_PRESS_HOLD_MS, Math.max(1, step.holdMs ?? DEFAULT_HOLD_MS));
         const result = await env.actuator.holdKey(scan, hold);
         if (!result.ok) return { kind: 'failed', stop: stopped(cursor.index, result.reason, result.detail) };
+        cursor.index += 1;
+        return { kind: 'waiting' };
+      }
+      case 'open-map': {
+        // Already open: the step is satisfied without a press (a press here would walk the party).
+        if (screen === 'dungeonmap') {
+          cursor.untilMs = null;
+          cursor.index += 1;
+          continue;
+        }
+        if (screen === null) return { kind: 'waiting' };
+        const pressed = await env.actuator.holdKey(TASK_KEYS.g, DEFAULT_HOLD_MS);
+        if (!pressed.ok) return { kind: 'failed', stop: stopped(cursor.index, pressed.reason, pressed.detail) };
+        cursor.untilMs = null;
         cursor.index += 1;
         return { kind: 'waiting' };
       }

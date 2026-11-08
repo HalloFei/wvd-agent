@@ -78,6 +78,47 @@ function makeEnv(options: {
 
 const script = (steps: TaskScript['steps'], timeoutMs = 5_000): TaskScript => ({ timeoutMs, steps });
 
+/**
+ * `open-map` means "the map is open", so it looks before it presses. Measured live 2026-11-08: one `G`
+ * opens the map from the walking view (8 of 8), while a `G` on an already-open map is 移動至目的地 — a
+ * walk order that closes it again. The exit script's blind second press stopped the third cycle at
+ * step 1 that way.
+ */
+describe('the open-map step', () => {
+  it('presses G once from the walking view', async () => {
+    const { env, recorder } = makeEnv();
+    const cursor: StepCursor = { script: script([{ op: 'open-map' }]), index: 0, untilMs: null, startedAtMs: Date.now() };
+
+    const outcome = await advanceSteps(cursor, env, 'k'.repeat(32), screen('dungeon'));
+
+    expect(outcome.kind).toBe('waiting');
+    expect(recorder.calls).toEqual([`key ${TASK_KEYS.g} 60`]);
+    expect(cursor.index).toBe(1);
+  });
+
+  it('presses nothing when the map is already open', async () => {
+    const { env, recorder } = makeEnv();
+    const cursor: StepCursor = { script: script([{ op: 'open-map' }]), index: 0, untilMs: null, startedAtMs: Date.now() };
+
+    const outcome = await advanceSteps(cursor, env, 'k'.repeat(32), mapObservation());
+
+    expect(outcome.kind).toBe('done');
+    expect(recorder.calls).toEqual([]);
+    expect(cursor.index).toBe(1);
+  });
+
+  it('waits for a frame before it presses, rather than pressing blind', async () => {
+    const { env, recorder } = makeEnv();
+    const cursor: StepCursor = { script: script([{ op: 'open-map' }]), index: 0, untilMs: null, startedAtMs: Date.now() };
+
+    const outcome = await advanceSteps(cursor, env, 'k'.repeat(32), null);
+
+    expect(outcome.kind).toBe('waiting');
+    expect(recorder.calls).toEqual([]);
+    expect(cursor.index).toBe(0);
+  });
+});
+
 describe('runSteps', () => {
   it('runs the steps in order through the actuator', async () => {
     const { env, recorder } = makeEnv();

@@ -19,8 +19,7 @@
     "timeoutMs": 300000,
     "steps": [
       {
-        "op": "key",
-        "key": "g"
+        "op": "open-map"
       },
       {
         "op": "expect",
@@ -41,8 +40,7 @@
         "timeoutMs": 8000
       },
       {
-        "op": "key",
-        "key": "g"
+        "op": "open-map"
       },
       {
         "op": "expect",

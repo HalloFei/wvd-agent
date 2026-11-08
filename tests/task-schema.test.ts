@@ -39,10 +39,11 @@ describe('parseTask', () => {
     // The exit walks back through both floors, harkens out, then returns to town.
     expect(task.exit).toBeDefined();
     const exit = task.exit!.steps;
-    // The opener is the loop's own action, one `G` (2026-11-08: a second press is 移動至目的地 on the
-    // map); the blind tap on the minimap icon it replaced was never verified on the live client.
+    // The opener is `open-map`: "the map is open", with the runner looking before it presses (one `G`
+    // from the walking view; a `G` on an already-open map is 移動至目的地 — live 2026-11-08 13:32, the
+    // third cycle's exit stopped at step 1 because the map was already open).
     expect(exit.slice(0, 2)).toEqual([
-      { op: 'key', key: 'g' },
+      { op: 'open-map' },
       { op: 'expect', screen: 'dungeonmap', timeoutMs: 8000 },
     ]);
     expect(exit).toContainEqual({ op: 'tap', at: [960, 714], count: 1 });
