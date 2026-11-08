@@ -1463,6 +1463,33 @@ Proved by: `tests/evidence.test.ts`, `tests/site-schema.test.ts`, `tests/ledger.
 + availability line, the margins tool, then the fan-out to opener/harken/inn/location/battle-panel/chest,
 and finally the live 3-cycle and 99-cycle acceptance.
 
+## The robustness change, finished (2026-11-08)
+
+What landed, in the order the operator asked for.
+
+| piece | commit | what it does |
+| --- | --- | --- |
+| graded evidence | `e91fc00` | `perception/evidence.ts`: **anchors veto, metrics weigh**; `map.ts` migrated (ink is a metric, band 15 000…200 000, soft 6 000). The 第二区 canvas reads 0.57 instead of being refused. |
+| site descriptor | `340013f` | `perception/site.ts` + `sites/ffxi-gcn.ts`: the per-site numbers (floors, title keys, bands, screen floors) leave the readers; `metricFor`/`floorFor` fall back to the reader's measured default. |
+| refusal ledger | `7f2c109` | lossless PNG + JSON per refusal, wired through `SnapshotSource.capturePng` into the escalation event and the run's frames. |
+| verification by action | `6eba7ae` | `policy/trust.ts`: a screen confirmed three times may act from a 15 % weaker read; one contradiction demands 25 % more. The composite's floor is scaled per screen. |
+| probe evidence + margins | `fd08df5` | the Esc that clears an unnamed frame now logs **what the frame was**; the harness says whether an escalation endpoint exists; `scripts/margins.ts` prints every frame's verdict and metric margins (`--check`). |
+| refusal triage | `<this commit>` | `scripts/triage-refusals.ts`: list the ledger, promote one record to `testdata/refusals/<stamp>-<gate>/` and print the test stub that pins it. |
+
+**The fan-out's honest boundary.** The gate surface that mattered was the map's (19 metric gates, now one
+metric + 8 anchors). The other readers' refusal sites are **structural** (a panel is not drawn, a bar is
+not there, a card border is missing) or **content** (a numeral that cannot be read, and the roster must
+not be ranked on a guess) — vetoes are the correct behaviour there, and those readers already return
+graded confidences (harken/inn/location/combat/hud score their matches and let the composite's floor
+decide). Migrating them would mean acting on a guess, which is the one rule this design keeps.
+
+**Not done:** `policy/probe.ts` as a separate module — deliberate: `policy/recover.ts` already *is* the
+probe catalogue (one `Esc`, the page's exit, the party-panel collapse) and the World now owns the episode
+and records the outcome; a second table would have been a parallel abstraction.
+
+**Still owed:** the live acceptance — one orient probe on a refused floor, then 3 cycles, then 99. The
+game is closed, so every claim above is proved by fixtures and bounded tests only.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only
