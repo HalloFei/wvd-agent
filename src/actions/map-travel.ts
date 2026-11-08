@@ -153,8 +153,8 @@ export async function travelToSite(
     const found = await senses.site(1, true);
     if (found !== null) {
       // The pointer to the icon, then the game's own ring — the only evidence a tap may rest on.
-      const moved = await steerTo(senses, input, found.at, pointerRate, maxHold);
-      if (moved !== null) return moved;
+      const moved = await moveCursorTo(senses, input, found.at, pointerRate, maxHold);
+      if (!moved.ok) return { ok: false, reason: 'lost', detail: moved.detail };
       if (!(await senses.ring(found.at))) {
         return { ok: false, reason: 'no-ring', detail: 'the icon is not clickable on this frame' };
       }
@@ -171,8 +171,10 @@ export async function travelToSite(
       maxHold,
       Math.max(80, Math.round(distance / Math.max(0.05, pushPxPerMs ?? 1))),
     );
-    const edge = await steerTo(senses, input, { x: strip.x + strip.width - 40, y: Math.round(strip.height / 2) }, pointerRate, maxHold);
-    if (edge !== null) return edge;
+    // The push needs the cursor **at the wall**, but failing to get it there is not fatal: the hold below
+    // still moves the cursor toward the wall, and the next look decides. (Making this fatal aborted every
+    // travel whose cursor was already at the wall — 2026-11-09 02:10.)
+    await moveCursorTo(senses, input, { x: strip.x + strip.width - 40, y: Math.round(strip.height / 2) }, pointerRate, maxHold);
     const before = await senses.landmark();
     const held = await input.hold(pushes % 2 === 0 ? 'd' : 's', holdMs);
     if (!held.ok) return { ok: false, reason: 'refused', detail: held.reason };
@@ -196,34 +198,57 @@ function clampRate(value: number): number {
 }
 
 /**
- * Steer the pointer to a point, re-reading the frame after every hold: the target is a place, never a
- * distance. Returns a failure only when the pointer cannot be read.
+ * Put the cursor **on** a point of the frame, then stop. That is the whole job: the target is a place,
+ * never a distance, and the answer is "done" or "the cursor cannot be read".
+ *
+ * The loop exists for one reason only: one blind hold cannot be sized exactly (1 px/ms measured, but the
+ * game's own frame pacing makes a millisecond of error a pixel of error, and a 900 ms hold crosses most
+ * of the strip), so the move is re-read and corrected rather than trusted.
+ *
+ * It is **not** a navigator: it does not know about the map's edge, the push, or the zoom. A cursor
+ * pinned at the strip's wall is a *different job's* business (an edge push), and treating it as a
+ * failure here was a bug: the travel aborted with 'lost' whenever the cursor sat at the wall — the very
+ * place the push needs it (2026-11-09 02:10).
  */
-async function steerTo(
+async function moveCursorTo(
   senses: MapSenses,
   input: MapInput,
   at: Point,
   pxPerMs: number,
   maxHold: number,
-): Promise<MapTravelResult | null> {
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly detail: string }> {
   let pointer = await senses.pointer();
-  if (pointer === null) return { ok: false, reason: 'lost', detail: 'the frame does not draw the pointer' };
+  if (pointer === null) return { ok: false, detail: 'the frame does not draw the pointer' };
   for (let step = 0; step < 16; step += 1) {
     const dx = at.x - pointer.x;
     const dy = at.y - pointer.y;
-    if (Math.abs(dx) <= 12 && Math.abs(dy) <= 12) return null;
+    if (Math.abs(dx) <= 12 && Math.abs(dy) <= 12) return { ok: true };
+    // The longer axis first; one hold per step, then look again.
     const axis: 'w' | 'a' | 's' | 'd' = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'd' : 'a') : (dy > 0 ? 's' : 'w');
     const distance = axis === 'd' || axis === 'a' ? Math.abs(dx) : Math.abs(dy);
     const holdMs = Math.min(maxHold, Math.max(40, Math.round(distance / Math.max(0.1, pxPerMs))));
     const held = await input.hold(axis, holdMs);
-    if (!held.ok) return { ok: false, reason: 'refused', detail: held.reason };
+    if (!held.ok) return { ok: false, detail: held.reason };
     await input.sleep(80);
     const next = await senses.pointer();
-    if (next === null) return { ok: false, reason: 'lost', detail: 'the pointer left the frame' };
+    if (next === null) return { ok: false, detail: 'the pointer left the frame' };
     if (Math.abs(next.x - pointer.x) + Math.abs(next.y - pointer.y) < 2) {
-      return { ok: false, reason: 'lost', detail: 'the pointer did not move on a ' + axis + ' hold' };
+      // A hold that moves nothing is a wall or a swallowed key. Try the other axis once (a cursor on the
+      // right wall still needs to go up or down); if that moves nothing either, the cursor is stuck.
+      const other: 'w' | 'a' | 's' | 'd' = axis === 'd' || axis === 'a'
+        ? (dy > 0 ? 's' : 'w') : (dx > 0 ? 'd' : 'a');
+      const second = await input.hold(other, Math.min(maxHold, 200));
+      if (!second.ok) return { ok: false, detail: second.reason };
+      await input.sleep(80);
+      const again = await senses.pointer();
+      if (again === null) return { ok: false, detail: 'the pointer left the frame' };
+      if (Math.abs(again.x - pointer.x) + Math.abs(again.y - pointer.y) < 2) {
+        return { ok: false, detail: 'the pointer is stuck at ' + again.x + ',' + again.y };
+      }
+      pointer = again;
+      continue;
     }
     pointer = next;
   }
-  return { ok: false, reason: 'lost', detail: 'the pointer did not settle' };
+  return { ok: false, detail: 'the pointer did not settle' };
 }
