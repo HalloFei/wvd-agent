@@ -47,6 +47,13 @@ const SETTLE_MS = Math.max(0, Number(process.env.WVD_SETTLE_MS ?? WVD_DEFAULTS.e
 /** The hourly question budget; an unattended run has nobody to answer, so it is only a backstop. */
 const ESCALATE_MAX = Math.max(1, Number(process.env.WVD_ESCALATE_MAX ?? WVD_DEFAULTS.escalateMaxPerHour));
 const PAUSE_ON_STALL = process.env.WVD_PAUSE_ON_STALL === '1';
+/**
+ * The escalation snapshot width. 1920 by default: a stall frame must be the bytes the readers
+ * actually refused, at the size they refused them (operator, 2026-11-08). The 1280 default was
+ * unreadable evidence: run 26 stalled on a map the downscaled snapshot showed plainly while the
+ * raw frame's readers refused it, and no saved frame could reproduce the refusal.
+ */
+const ESCALATION_IMAGE_WIDTH = Math.max(320, Number(process.env.WVD_ESCALATION_IMAGE_WIDTH ?? 1_920));
 const STOP_ON_OPENER_MISS = process.env.WVD_STOP_ON_OPENER_MISS === '1';
 /** One directory per run, so two runs never overwrite each other's record. */
 const startedAt = new Date();
@@ -67,6 +74,7 @@ const cfg = {
   escalateTimeoutMs: ESCALATE_TIMEOUT_MS,
   escalateSettleMs: SETTLE_MS,
   escalateMaxPerHour: ESCALATE_MAX,
+  escalationImageWidth: ESCALATION_IMAGE_WIDTH,
 };
 const world = createWvdWorld({ cfg, timezone: 'Asia/Shanghai' });
 /** Local time of day: the morning reader's clock, not UTC. */
