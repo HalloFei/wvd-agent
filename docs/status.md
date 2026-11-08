@@ -1414,6 +1414,26 @@ Proved by `tests/heal-sequence.test.ts` (the deadline: a swallowed card gives up
 `tests/world.test.ts` (165 with the console and heal suites: the four steps in order, the heal
 abandoned on a battle frame with no further step, the battle acting from its own settle).
 
+## 第二区's canvas refused the map gate (2026-11-08)
+
+The run of 13:58 was paused on a frame the loop could not name. The frame is kept:
+`testdata/screens/2026-11-08-second-2f/map-1920.jpg` (the World's own 1920 snapshot) — the
+**第二区-城内1F** map, party at 5,1, legible to a human.
+
+The referee is G3, the panel's white ink: **13 047 px**, against a floor of **15 000** that the
+research's 第三区/第四区 captures set (they draw 17 003 and 20 597; the dungeon-select map draws
+39 466). The live raw frame refused exactly there (`map-ink`); the saved JPEG refuses one gate
+earlier at `readout-digit-unmatched` — the usual encode asymmetry, and the reason the snapshot alone
+cannot prove the live read.
+
+The floor is now **10 500**, measured across the corpus the same day: maps **13 047–39 466**, non-maps
+**72–7 158** (a battle's command phase 4 509, the 3-D view after a chest 7 158, the opener panel 4 754,
+a QTE still 72). `panelInk()` is exported so the numbers are pinned by a test rather than by prose:
+`tests/map.test.ts` measures the frame (13 047) and the control (1 330).
+
+**Not yet proven:** with the gate moved the raw frame would reach the gates after it (title, lattice,
+chevron, icons), which it had never been tried on. One live run on that floor settles it.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

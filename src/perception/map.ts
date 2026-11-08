@@ -95,12 +95,21 @@ const TITLE_BAR_H = 22;
 const TITLE_BAR_DARK_LUMA = 60;
 const TITLE_BAR_DARK_FRACTION = 0.95;
 
-/** G3 — white map ink in the panel: 15 000 … 200 000 (research §1). */
+/**
+ * G3 — white map ink in the panel.
+ *
+ * The floor was 15 000 from the research's 第三区/第四区 captures, and it refused the operator's
+ * **第二区-城内1F** map on 2026-11-08: that canvas draws **13 047** white pixels (shorter walls), so the
+ * live map read refused at this gate and the loop could not name the floor. Measured across the corpus
+ * the same day: maps 13 047–39 466, and non-maps 72–7 158 (a battle's command phase, the 3-D view after
+ * a chest, the opener panel, a QTE still) — so 10 500 keeps a 1.5× margin over the brightest non-map
+ * and accepts the smallest map.
+ */
 const MAP_INK_X = 480;
 const MAP_INK_Y = 150;
 const MAP_INK_W = 1220;
 const MAP_INK_H = 750;
-const MAP_INK_MIN = 15_000;
+const MAP_INK_MIN = 10_500;
 const MAP_INK_MAX = 200_000;
 const MAP_INK_LUMA = 185;
 const MAP_INK_SAT = 60;
@@ -141,6 +150,35 @@ export const TITLE_BAR_INK_MIN = 20;
  * 3-D view's corner says otherwise" for the evidence table (`screens.ts`): a battle draws no title, and
  * neither does the 3-D view — but only a title's text may rule the 3-D view out.
  */
+/**
+ * The map panel's white ink: bright and unsaturated (G3). One predicate, so `scanPanel`'s count and the
+ * exported measurement can never disagree.
+ */
+function isPanelInk(r: number, g: number, b: number): boolean {
+  const luma = ((r * 299 + g * 587 + b * 114) / 1000) | 0;
+  if (luma <= MAP_INK_LUMA) return false;
+  return Math.max(r, g, b) - Math.min(r, g, b) < MAP_INK_SAT;
+}
+
+/**
+ * The panel's white-ink count over the measured rect, px (G3's measurement, exported for the fixtures
+ * that pin its floor). Measured 2026-11-08 across the corpus: a map's canvas draws **13 047–39 466**,
+ * and the frames that are not maps draw **72–7 158** (a battle's command phase 4 509, the 3-D view
+ * after a chest 7 158, the opener panel 4 754, a QTE still 72).
+ */
+export function panelInk(image: RgbaImage): number {
+  const { data, width } = image;
+  let count = 0;
+  for (let y = MAP_INK_Y; y < MAP_INK_Y + MAP_INK_H; y += 1) {
+    const row = y * width;
+    for (let x = MAP_INK_X; x < MAP_INK_X + MAP_INK_W; x += 1) {
+      const offset = (row + x) * 4;
+      if (isPanelInk(data[offset]!, data[offset + 1]!, data[offset + 2]!)) count += 1;
+    }
+  }
+  return count;
+}
+
 export function titleBarInk(image: RgbaImage): number {
   const { data, width } = image;
   const radius = TITLE_STROKE_RADIUS;
@@ -1082,19 +1120,13 @@ function scanPanel(data: Uint8Array, width: number): Panel {
       const r = data[offset];
       const g = data[offset + 1];
       const b = data[offset + 2];
-      const luma = ((r * 299 + g * 587 + b * 114) / 1000) | 0;
-
-      if (luma > MAP_INK_LUMA) {
-        const max = r > g ? (r > b ? r : b) : g > b ? g : b;
-        const min = r < g ? (r < b ? r : b) : g < b ? g : b;
-        if (max - min < MAP_INK_SAT) {
-          if (x >= MAP_INK_X && x < MAP_INK_X + MAP_INK_W && y < MAP_INK_Y + MAP_INK_H) {
-            mapInk += 1;
-          }
-          if (x < LATTICE_X + LATTICE_W && y >= LATTICE_Y && y < LATTICE_Y + LATTICE_H) {
-            columns[x - LATTICE_X] += 1;
-            rows[y - LATTICE_Y] += 1;
-          }
+      if (isPanelInk(r, g, b)) {
+        if (x >= MAP_INK_X && x < MAP_INK_X + MAP_INK_W && y < MAP_INK_Y + MAP_INK_H) {
+          mapInk += 1;
+        }
+        if (x < LATTICE_X + LATTICE_W && y >= LATTICE_Y && y < LATTICE_Y + LATTICE_H) {
+          columns[x - LATTICE_X] += 1;
+          rows[y - LATTICE_Y] += 1;
         }
       }
 

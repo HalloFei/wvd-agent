@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import type { Frame, MapIcon, MapState, RgbaImage } from '../src/contracts.ts';
-import { MapPerceiver, readMap, readMapDetailed, tileOnScreen } from '../src/perception/map.ts';
+import { MapPerceiver, panelInk, readMap, readMapDetailed, tileOnScreen } from '../src/perception/map.ts';
 import { floorKeyDistance } from '../src/tasks/steps.ts';
 
 /**
@@ -200,6 +200,47 @@ describe('readMap', () => {
     const frame: Frame = { atMs: 1, width: 64, height: 64, toRgba: async () => image };
 
     expect(await readMap(frame)).toBeNull();
+  });
+});
+
+/**
+ * The 第二区-城内1F canvas (2026-11-08): the map that stranded the run.
+ *
+ * The operator asked why the loop could not name it. It is legible; the panel's white ink is what is
+ * short — **13 047 px** against a floor of 15 000 that the 第三区/第四区 captures had set. The live raw
+ * frame therefore refused at `map-ink`; the saved JPEG refuses one gate earlier at
+ * `readout-digit-unmatched`, the usual JPEG-vs-raw asymmetry (the raw frame's readout parsed — the
+ * reader reached the ink gate). The floor is 10 500 now, measured against the corpus: maps 13 047–39 466,
+ * non-maps 72–7 158.
+ */
+describe('the 第二区-城内1F canvas (2026-11-08)', () => {
+  const SECOND_2F = new URL('../testdata/screens/2026-11-08-second-2f/map-1920.jpg', import.meta.url);
+
+  it('draws 13 047 px of panel ink — the floor the research set was too high for it', async () => {
+    const bytes = await readFile(SECOND_2F);
+    const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+    const image: RgbaImage = { data: decoded.data, width: decoded.width, height: decoded.height };
+
+    expect(panelInk(image)).toBe(13_047);
+    // The control the floor must keep out: the 3-D view with its HUD, whose readout refuses first and
+    // whose white ink is an order of magnitude short.
+    const hud = await jpegFrame('minimap-and-hud.jpg');
+    expect(panelInk(await hud.toRgba())).toBe(1_330);
+  });
+
+  it('is refused on this JPEG at the readout, not at the ink — the raw frame passed the readout', async () => {
+    // The saved frame is the World's own snapshot (q75). It cannot prove the live read: the encode
+    // smears a readout digit. It can prove the gate moved, which is what this pins.
+    const bytes = await readFile(SECOND_2F);
+    const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+    const frame: Frame = {
+      atMs: 0,
+      width: decoded.width,
+      height: decoded.height,
+      toRgba: async () => ({ data: decoded.data, width: decoded.width, height: decoded.height }),
+    };
+
+    expect(await readMapDetailed(frame)).toEqual({ ok: false, gate: 'readout-digit-unmatched' });
   });
 });
 
