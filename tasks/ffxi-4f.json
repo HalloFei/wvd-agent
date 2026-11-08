@@ -24,7 +24,7 @@
       {
         "op": "expect",
         "screen": "dungeonmap",
-        "timeoutMs": 8000
+        "timeoutMs": 12000
       },
       {
         "op": "key",
@@ -37,7 +37,7 @@
       {
         "op": "expect",
         "screen": "dungeon",
-        "timeoutMs": 8000
+        "timeoutMs": 20000
       },
       {
         "op": "open-map"
@@ -45,7 +45,7 @@
       {
         "op": "expect",
         "screen": "dungeonmap",
-        "timeoutMs": 8000
+        "timeoutMs": 12000
       },
       {
         "op": "key",

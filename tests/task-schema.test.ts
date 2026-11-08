@@ -44,7 +44,7 @@ describe('parseTask', () => {
     // third cycle's exit stopped at step 1 because the map was already open).
     expect(exit.slice(0, 2)).toEqual([
       { op: 'open-map' },
-      { op: 'expect', screen: 'dungeonmap', timeoutMs: 8000 },
+      { op: 'expect', screen: 'dungeonmap', timeoutMs: 12000 },
     ]);
     expect(exit).toContainEqual({ op: 'tap', at: [960, 714], count: 1 });
     expect(exit.at(-2)).toEqual({ op: 'travel', to: 'vnh' });
