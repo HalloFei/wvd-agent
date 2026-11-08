@@ -39,6 +39,7 @@ import type {
   Observation,
   Perceiver,
   RgbaImage,
+  ScreenId,
 } from '../contracts.ts';
 import { NO_FACTS, readFacts, type FrameFacts } from './facts.ts';
 import { screenStandings } from './screens.ts';
@@ -51,10 +52,16 @@ export interface Recogniser {
 
 export class CompositePerceiver implements Classifier {
   private readonly recognisers: readonly Recogniser[];
+  private readonly floorFactor: (screen: ScreenId) => number;
 
-  /** `recognisers` is in try order. */
-  constructor(recognisers: readonly Recogniser[]) {
+  /**
+   * `recognisers` is in try order. `floorFactor` scales a screen's floor by how much that screen has
+   * earned (policy/trust.ts: verification by action) — 1 when no book is passed, so the seam's own
+   * behaviour is unchanged for a caller that has no memory.
+   */
+  constructor(recognisers: readonly Recogniser[], options: { readonly floorFactor?: (screen: ScreenId) => number } = {}) {
     this.recognisers = recognisers;
+    this.floorFactor = options.floorFactor ?? (() => 1);
   }
 
   async observe(frame: Frame): Promise<Observation> {
@@ -70,9 +77,13 @@ export class CompositePerceiver implements Classifier {
     let seen = 0;
     for (const { perceiver, floor } of this.recognisers) {
       const observation = await perceiver.observe(shared);
+      // The floor is the screen's own, scaled by what that screen has earned (trust.ts). A contradicted
+      // screen needs more; a screen with a streak needs less. Never below the reader's own refusal: the
+      // answer's screen must still be named and not ruled out.
+      const scaled = floor * this.floorFactor(observation.screen);
       if (observation.screen !== 'unknown'
         && !ruledOut.has(observation.screen)
-        && observation.confidence >= floor) {
+        && observation.confidence >= scaled) {
         return { atMs: frame.atMs, standings, answer: observation };
       }
       if (observation.confidence > seen) seen = observation.confidence;

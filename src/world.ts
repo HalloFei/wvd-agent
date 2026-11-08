@@ -72,6 +72,7 @@ import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
 import { advanceMode, INITIAL_MODE, type ModeMemory } from './policy/mode.ts';
 import { nextPageCloseTries } from './policy/page-episode.ts';
+import { createTrust } from './policy/trust.ts';
 import { HealSequence } from './policy/heal-sequence.ts';
 import { isExpectedFloor } from './tasks/steps.ts';
 import { OPERATION_PACE_MS, Pacer, STABLE_FRAMES } from './policy/pacing.ts';
@@ -752,6 +753,12 @@ export class WvdWorld implements World {
   #mode: ModeMemory = INITIAL_MODE;
   #lastProgressAtMs = 0;
   #lastScreen: ScreenId | null = null;
+  /**
+   * What each screen's reads have been worth, learned from whether the action worked (policy/trust.ts).
+   * The composite scales that screen's floor by this, so a screen that keeps being right may act from a
+   * weaker read and one the loop just contradicted must clear a higher bar.
+   */
+  #trust = createTrust();
   #lastMapRead: MapRead | null = null;
   #lastIntent: { readonly intent: Intent; readonly atMs: number } | null = null;
   #lastObservation: Observation | null = null;
@@ -1073,6 +1080,20 @@ export class WvdWorld implements World {
   /** One line for the operator console, from a module this World owns (the task runner). */
   note(line: string): void {
     this.#host?.log.info(line);
+  }
+
+  /**
+   * A screen's confidence-floor multiplier, for the composite (policy/trust.ts). 1 until that screen has
+   * a record; `main.ts` wires it into `CompositePerceiver`'s `floorFactor`, so the loop's own outcome
+   * evidence decides how strictly the next read of that screen is held.
+   */
+  trustFactor(screen: ScreenId): number {
+    return this.#trust.factor(screen);
+  }
+
+  /** What the trust book believes, for the run report (one entry per screen with a record). */
+  trustSnapshot(): ReadonlyArray<{ readonly screen: ScreenId; readonly streak: number; readonly factor: number }> {
+    return this.#trust.snapshot();
   }
 
   async start(host: WorldHost): Promise<void> {
@@ -1966,6 +1987,8 @@ export class WvdWorld implements World {
    * again.
    */
   #openerClickAnswered(screen: ScreenId, now: number): void {
+    // The click's prediction came true on the chest's own screen: that screen's reads are worth more.
+    if (this.#inFlight !== null) this.#trust.confirmed(this.#inFlight.fromScreen);
     this.#inFlight = null;
     this.#lastProgressAtMs = now;
     this.#failed.clear();
@@ -2071,6 +2094,8 @@ export class WvdWorld implements World {
     if (!isWalk) {
       if (observation.screen === 'dungeonmap') {
         this.#inFlight = null;
+        // The key did what the read predicted on that screen (policy/trust.ts: verification by action).
+        this.#trust.confirmed(inFlight.fromScreen);
         this.#host?.log.info('wvd: open-map took effect: the map is open');
         return false;
       }
@@ -2092,6 +2117,7 @@ export class WvdWorld implements World {
         const where = observation.screen === 'dungeonmap'
           ? 'the party is moving on the map'
           : `the map closed (${observation.screen})`;
+        this.#trust.confirmed(inFlight.fromScreen);
         this.#host?.log.info(`wvd: ${inFlight.kind} took effect: ${where}`);
       }
     }
@@ -2107,6 +2133,7 @@ export class WvdWorld implements World {
         this.#inFlight = null;
         this.#lastProgressAtMs = now;
         this.#failed.clear();
+        this.#trust.confirmed(inFlight.fromScreen);
         this.#host?.log.info(`wvd: ${inFlight.kind} arrived: the scene has been still for ${stillMs} ms`);
         return false;
       }
@@ -2142,6 +2169,9 @@ export class WvdWorld implements World {
   }
 
   #gaveUp(inFlight: InFlight, evidence: Record<string, number>): void {
+    // The read said this key belonged here; the screen did not answer it. That screen's floor is
+    // stricter until a confirmation returns it (policy/trust.ts — trust is easy to lose).
+    this.#trust.contradicted(inFlight.fromScreen);
     const target = inFlight.target;
     if (inFlight.kind === 'move' && target !== null) {
       this.#skip(target, 'the walk never started', evidence);

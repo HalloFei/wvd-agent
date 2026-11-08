@@ -219,6 +219,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       `wvd: opener panel: ${template} fields on the template tier, ${ocr} escalated`,
     ),
   });
+  // Verification by action: the World's outcome record scales each screen's floor (policy/trust.ts).
   const perceiver = new CompositePerceiver([
     { perceiver: chestPerceiver, floor: ACTING_CONFIDENCE_FLOOR },
     { perceiver: mapReader, floor: ACTING_CONFIDENCE_FLOOR },
@@ -263,7 +264,11 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     // party member's revive QTE is the battle's modal ring (2026-11-05), and a frame a chest, the
     // list or the dungeon already named must win before this one is asked.
     { perceiver: new ReviveQtePerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-  ]);
+  ], {
+    // The loop's own outcome record, per screen: a screen that keeps being right may act from a weaker
+    // read; one the loop just contradicted must clear a higher bar (policy/trust.ts, 2026-11-08).
+    floorFactor: (screen) => world?.trustFactor(screen) ?? 1,
+  });
 
   const openSession = async (): Promise<SessionOpen> => {
     // The task file is read per session, so an edited file is picked up by the next start; a bad
