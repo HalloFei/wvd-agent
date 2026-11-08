@@ -370,12 +370,14 @@ describe('the heart corpus', () => {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The template tier refuses exactly one of the twelve sharpened proxy crops: card 1's 陷阱解除 (49),
- * the one field the live panel escalated (`readers-opener.test.ts`). Pinned **by field name**, not as
- * a count: a tier that starts answering that crop or refusing a different one is a re-record, and a
- * count cannot tell a swap from a steady eleven.
+ * The sharpened proxy crops the template tier **refuses**. Empty today: measured 2026-11-09 the tier
+ * names every one of the twelve proxy crops as its measured value, card 1's 陷阱解除 (49) included —
+ * the crop the live panel escalated (`readers-opener.test.ts`) before the parser geometry of
+ * 6a15f10. The set stays as the **pin**, by field name, not as a count: a tier that starts refusing a
+ * crop is the live failure the proxy stands in for, and a count cannot tell a swap from a steady
+ * eleven.
  */
-const TEMPLATE_PROXY_REFUSALS: ReadonlySet<string> = new Set(['card-1-disarm-sharp.ppm']);
+const TEMPLATE_PROXY_REFUSALS: ReadonlySet<string> = new Set<string>();
 
 describe('the template tier over the corpus', () => {
   it('reads every decoded crop as the measured value', async () => {
@@ -406,10 +408,10 @@ describe('the template tier over the corpus', () => {
       expect(read.value, entry.file).toBe(entry.expected);
       expect(read.tier, entry.file).toBe('template');
     }
-    // Both directions are pinned **by field name**: exactly one proxy crop is the refusal, and every
-    // other proxy crop is an answer. A swap — card 1's 49 starting to answer while another crop starts
-    // refusing — was invisible to an `answers === 11` count; it fails here, because the answered set
-    // would name a crop the refusal set does not, and vice versa.
+    // Both directions are pinned **by field name**: every named refusal is refused, and every other
+    // proxy crop is an answer. A swap — one crop starting to refuse while another starts answering —
+    // was invisible to an `answers === 11` count; it fails here, because the answered set would name
+    // a crop the refusal set does not, and vice versa.
     const expectedAnswers = sharp.map((entry) => entry.file)
       .filter((file) => !TEMPLATE_PROXY_REFUSALS.has(file));
     expect(answered).toEqual(expectedAnswers);
