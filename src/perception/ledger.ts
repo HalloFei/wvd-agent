@@ -14,7 +14,7 @@
  * It writes bytes and nothing else: no game, no loop, no policy. `scripts/triage-refusals.ts` is what
  * promotes a record to a fixture and a test.
  */
-import { deflateSync } from 'node:zlib';
+import { deflateSync, inflateSync } from 'node:zlib';
 import type { RgbaImage } from '../contracts.ts';
 
 /** What the reader refused, and what it measured. */
@@ -74,6 +74,96 @@ export function encodePng(image: RgbaImage): Buffer {
     chunk('IDAT', deflateSync(raw)),
     chunk('IEND', Buffer.alloc(0)),
   ]);
+}
+
+/**
+ * The inverse of {@link encodePng}, so a filed refusal can be **re-read** — by the triage script, by a
+ * test, by a reader run by hand.
+ *
+ * This is the function the lossless ledger was for: the frame production refused was raw BGRA, and a
+ * q75 JPEG snapshot of it hides the very detail the gate measured (2026-11-08, twice). A PNG of that
+ * frame carries the same bytes, so re-classifying it with the production chain answers the same
+ * question the loop asked — which is what a stall diagnosis needs.
+ *
+ * 8-bit RGB/RGBA, non-interlaced: what this project writes, and what every screenshot tool here emits.
+ * Anything else is refused by name rather than decoded into a lie.
+ */
+export function decodePng(file: Buffer): RgbaImage {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  for (let i = 0; i < signature.length; i += 1) {
+    if (file[i] !== signature[i]) throw new Error('not a PNG');
+  }
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colourType = 0;
+  let interlace = 0;
+  const data: Buffer[] = [];
+  while (offset + 8 <= file.length) {
+    const length = file.readUInt32BE(offset);
+    const type = file.toString('ascii', offset + 4, offset + 8);
+    const body = file.subarray(offset + 8, offset + 8 + length);
+    offset += 12 + length;
+    if (type === 'IHDR') {
+      width = body.readUInt32BE(0);
+      height = body.readUInt32BE(4);
+      bitDepth = body[8]!;
+      colourType = body[9]!;
+      interlace = body[12]!;
+    } else if (type === 'IDAT') {
+      data.push(body);
+    } else if (type === 'IEND') {
+      break;
+    }
+  }
+  if (width === 0 || height === 0) throw new Error('PNG has no IHDR');
+  if (bitDepth !== 8) throw new Error(`PNG bit depth ${bitDepth} is not supported`);
+  if (colourType !== 6 && colourType !== 2) throw new Error(`PNG colour type ${colourType} is not supported`);
+  if (interlace !== 0) throw new Error('an interlaced PNG is not supported');
+  const channels = colourType === 6 ? 4 : 3;
+  const raw = inflateSync(Buffer.concat(data));
+  const stride = width * channels;
+  const out = new Uint8Array(width * height * 4);
+  let previous = Buffer.alloc(stride);
+  for (let y = 0; y < height; y += 1) {
+    const start = y * (stride + 1);
+    const line = Buffer.from(raw.subarray(start + 1, start + 1 + stride));
+    unfilter(raw[start]!, line, previous, channels);
+    for (let x = 0; x < width; x += 1) {
+      const from = x * channels;
+      const to = (y * width + x) * 4;
+      out[to] = line[from]!;
+      out[to + 1] = line[from + 1]!;
+      out[to + 2] = line[from + 2]!;
+      out[to + 3] = channels === 4 ? line[from + 3]! : 255;
+    }
+    previous = line;
+  }
+  return { data: out, width, height };
+}
+
+/** The PNG filter types, in place (§9.2 of the format): 0 none, 1 sub, 2 up, 3 average, 4 paeth. */
+function unfilter(filter: number, line: Buffer, previous: Buffer, channels: number): void {
+  const paeth = (a: number, b: number, c: number): number => {
+    const p = a + b - c;
+    const pa = Math.abs(p - a);
+    const pb = Math.abs(p - b);
+    const pc = Math.abs(p - c);
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+  };
+  for (let i = 0; i < line.length; i += 1) {
+    const left = i >= channels ? line[i - channels]! : 0;
+    const up = previous[i]!;
+    switch (filter) {
+      case 0: break;
+      case 1: line[i] = (line[i]! + left) & 0xff; break;
+      case 2: line[i] = (line[i]! + up) & 0xff; break;
+      case 3: line[i] = (line[i]! + ((left + up) >> 1)) & 0xff; break;
+      case 4: line[i] = (line[i]! + paeth(left, up, i >= channels ? previous[i - channels]! : 0)) & 0xff; break;
+      default: throw new Error(`PNG filter ${filter} is not supported`);
+    }
+  }
 }
 
 /** A file name for one record: sortable, and it names the gate so a directory listing is a triage. */

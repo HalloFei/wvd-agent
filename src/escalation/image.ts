@@ -13,7 +13,10 @@
  * back native (the snapshot is never upscaled), and the width is always carried with the bytes,
  * which is what keeps `wvd_act`'s coordinate mapping correct.
  */
+import jpeg from 'jpeg-js';
 import type { BlobInput } from 'cortico/core/types.ts';
+import type { RgbaImage } from '../contracts.ts';
+import { encodePng } from '../perception/ledger.ts';
 
 /** Encoded pixels, with the size the model is reading them at. */
 export interface Snapshot {
@@ -56,6 +59,89 @@ export function losslessBlob(snapshot: Snapshot): BlobInput {
     name: 'wvd-frame.png',
     fallbackText: `lossless frame ${snapshot.width}×${snapshot.height}`,
   };
+}
+
+/**
+ * The evidence of one refusal, encoded **from the frame the reader judged** rather than from a second
+ * capture.
+ *
+ * A second capture is a different instant, and on 2026-11-08 that difference cost an hour of
+ * diagnosis: the loop escalated a correct \`dungeon 0.94\`, the snapshot taken some tens of milliseconds
+ * later showed a menu the Esc had just opened, and the saved frame then classified \`ui-menu 0.93\`.
+ * The evidence contradicted the claim — not because perception was wrong, but because the two were
+ * not the same picture. A filed refusal must be the picture the loop acted on, or triage is guessing.
+ *
+ * The cost is paid only when a question is asked (the escalation budget is twenty an hour), so both
+ * encodes happen here rather than in the tick: \`jpeg\` is what the model reads, \`png\` is the ledger's
+ * lossless bytes and the one a triage script can re-classify against the production chain.
+ */
+export interface JudgedFrame {
+  /** The model's copy: JPEG at \`maxWidth\`, the format the escalation always carried. */
+  readonly jpeg: Snapshot;
+  /** The ledger's copy: the same pixels, losslessly. */
+  readonly png: Snapshot;
+}
+
+/** Encode a judged frame for the escalation. `null` when the pixels cannot be read or encoded. */
+export async function judgeSnapshot(
+  frame: { readonly width: number; readonly height: number; toRgba(): Promise<RgbaImage> },
+  maxWidth: number,
+): Promise<JudgedFrame | null> {
+  try {
+    const pixels = await frame.toRgba();
+    // The pixels must be the frame they claim to be. A source whose decode disagrees with its own
+    // declared size cannot be filed as evidence — the caller then falls back to its own capture,
+    // which is the old behaviour (a second instant, and the reason this function exists).
+    if (pixels.width !== frame.width || pixels.height !== frame.height) return null;
+    const image = fitTo(pixels, maxWidth);
+    const encoded = jpeg.encode({ data: Buffer.from(image.data), width: image.width, height: image.height }, 75);
+    if (encoded.data.length === 0) return null;
+    return {
+      jpeg: { bytes: new Uint8Array(encoded.data), width: encoded.width, height: encoded.height },
+      png: { bytes: encodePng(image), width: image.width, height: image.height },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Downscale to `maxWidth` by averaging each target pixel's box, never upscale: the same rule the
+ * source's own capture path used, so the model reads the size it is told it reads.
+ */
+function fitTo(image: RgbaImage, maxWidth: number): RgbaImage {
+  if (maxWidth <= 0 || maxWidth >= image.width) return image;
+  const width = Math.max(1, Math.round(maxWidth));
+  const height = Math.max(1, Math.round((image.height * width) / image.width));
+  const data = new Uint8Array(width * height * 4);
+  const sx = image.width / width;
+  const sy = image.height / height;
+  for (let y = 0; y < height; y += 1) {
+    const y0 = Math.floor(y * sy);
+    const y1 = Math.max(y0 + 1, Math.floor((y + 1) * sy));
+    for (let x = 0; x < width; x += 1) {
+      const x0 = Math.floor(x * sx);
+      const x1 = Math.max(x0 + 1, Math.floor((x + 1) * sx));
+      const sums = [0, 0, 0, 0];
+      let count = 0;
+      for (let py = y0; py < y1; py += 1) {
+        for (let px = x0; px < x1; px += 1) {
+          const at = (py * image.width + px) * 4;
+          sums[0]! += image.data[at]!;
+          sums[1]! += image.data[at + 1]!;
+          sums[2]! += image.data[at + 2]!;
+          sums[3]! += image.data[at + 3]!;
+          count += 1;
+        }
+      }
+      const to = (y * width + x) * 4;
+      data[to] = Math.round(sums[0]! / count);
+      data[to + 1] = Math.round(sums[1]! / count);
+      data[to + 2] = Math.round(sums[2]! / count);
+      data[to + 3] = Math.round(sums[3]! / count);
+    }
+  }
+  return { data, width, height };
 }
 
 /**

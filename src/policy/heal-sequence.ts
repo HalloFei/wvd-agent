@@ -121,6 +121,17 @@ export class HealSequence {
     this.#lastTapAtMs = nowMs;
   }
 
+  /**
+   * What the sequence is waiting on, for the log: the step it owes and how many it has sent.
+   *
+   * A give-up is the one outcome that needs this. `gave-up` alone says the bound was hit, not which
+   * step was owed — and on 2026-11-08 a live give-up was diagnosable only by replaying the four steps
+   * from a saved frame. The line names the step, so the next one names its cause.
+   */
+  get owed(): { readonly step: HealStepKind; readonly sent: number } {
+    return { step: STEPS[Math.min(this.#next, STEPS.length - 1)]!, sent: this.#next };
+  }
+
   /** The \`escape\` was sent: the grace clock restarts from it. */
   escaped(nowMs: number): void {
     this.#lastTapAtMs = nowMs;

@@ -8,12 +8,14 @@
  * - one tick is capture → observe → classify → policy → act, exactly once each;
  * - a tick that overruns is skipped, never queued;
  * - a stall becomes an escalation and, past `stallStopSeconds`, a stop;
- * - the escalation is one `pushEvent` with `trigger:'flush'`, `tags:['snapshot']` and one JPEG
- *   `BlobInput`, and it ends in the answer, the timeout or a cancel — never in a second question;
+ * - the escalation is one `pushEvent` with `trigger:'flush'`, `tags:['snapshot']` and the judged
+ *   frame's two blobs (JPEG for the model, lossless PNG for the ledger), and it ends in the answer,
+ *   the timeout or a cancel — never in a second question;
  * - the three tools answer with prose receipts and refuse what they must.
  */
 import { describe, expect, it } from 'vitest';
 import type { EventEnvelope, LogLevel, Logger, ToolCallContext, ToolOutcome, WorldHost } from 'cortico/core/types.ts';
+import { decodePng } from '../src/perception/ledger.ts';
 import type {
   ActionResult,
   Actuator,
@@ -74,6 +76,12 @@ class ScriptedSource implements FrameSource {
   gate: Promise<void> | null = null;
   /** When true every capture is a different scene: the party is walking. */
   moving = false;
+  /**
+   * The frame this source serves instead of the stub. The stub declares 1920×1080 but hands back one
+   * pixel (perception is scripted, so no test reads them); a test about the escalation's **evidence**
+   * needs pixels that agree with the frame, because the evidence is now encoded from them.
+   */
+  script: ((atMs: number) => Frame) | null = null;
   private seed = 0;
 
   async capture(): Promise<Frame> {
@@ -85,6 +93,7 @@ class ScriptedSource implements FrameSource {
       throw new Error('capture timeout: no-frame');
     }
     if (this.moving) this.seed = (this.seed + 40) % 256;
+    if (this.script) return this.script(this.captures * 100);
     return frame(this.captures * 100, this.seed);
   }
 }
@@ -2028,6 +2037,49 @@ describe('the escalation exchange', () => {
     expect(actuator.calls).toEqual([`key ${SCAN.ESC} 60`]);
     // exactly one question, counting pushes: the hourly budget is the loop's
     expect(world.escalationsThisHour()).toBe(1);
+  });
+
+  it('files the frame the reader judged, not a second capture', async () => {
+    // The evidence rule (2026-11-08): a second capture is a different instant, and twice a saved frame
+    // showed the page an `Esc` had just opened while the loop had escalated a correct dungeon. The
+    // question now carries the pixels of the frame the verdict was taken on — filed, lossless, beside
+    // it — so a triage script re-classifies the same picture the loop saw.
+    const source = new ScriptedSource();
+    source.script = (atMs) => ({
+      atMs,
+      width: 8,
+      height: 8,
+      toRgba: async () => {
+        const data = new Uint8Array(8 * 8 * 4);
+        for (let index = 0; index < data.length; index += 4) {
+          data[index] = 0x42;
+          data[index + 3] = 255;
+        }
+        return { data, width: 8, height: 8 };
+      },
+    });
+    const { world, host, actuator, snapshotCalls } = makeWorld({
+      source,
+      observation: unknownButSeen,
+      cfg: { escalateTimeoutMs: 20, escalationImageWidth: 8 },
+    });
+    await started(world, host);
+
+    await world.tick();
+
+    const stuck = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck');
+    expect(stuck).toHaveLength(1);
+    // No second capture: the evidence did not come from the window.
+    expect(snapshotCalls).toEqual([]);
+    const blobs = stuck[0]!.event.blobs!;
+    expect(blobs.map((blob) => blob.mime)).toEqual(['image/jpeg', 'image/png']);
+    const pngBytes = blobs[1]!.bytes;
+    if (pngBytes === undefined) throw new Error('the lossless blob carries no bytes');
+    const png = decodePng(Buffer.from(pngBytes));
+    expect([png.width, png.height]).toEqual([8, 8]);
+    expect(Array.from(png.data.subarray(0, 4))).toEqual([0x42, 0, 0, 255]);
+    // The fallback is unchanged: an unnamed frame is one Esc.
+    expect(actuator.calls).toEqual([`key ${SCAN.ESC} 60`]);
   });
 
   it('raises the main character\'s death to Coo once, and presses nothing', async () => {

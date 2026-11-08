@@ -28,23 +28,11 @@ import { connectEngine, startEngine } from '../src/engine/child.ts';
 import { captureJpeg, focusGame, sendInput, Win32Capture } from '../src/engine/win32.ts';
 import { openMapping } from '../src/engine/vision/channel-mapping.ts';
 import { createChannel, layoutChannel } from '../src/engine/vision/frame-channel.ts';
-import { ChestPerceiver } from '../src/perception/chest.ts';
 import { CompositePerceiver } from '../src/perception/composite.ts';
-import { ChestPromptPerceiver } from '../src/perception/prompt.ts';
-import { ChestOpeningPerceiver } from '../src/perception/chest-opening.ts';
-import { LootPerceiver } from '../src/perception/loot.ts';
-import { CharacterPagePerceiver } from '../src/perception/character-page.ts';
-import { HarkenMenuPerceiver } from '../src/perception/harken.ts';
-import { InnPerceiver } from '../src/perception/inn.ts';
-import { MessagePerceiver } from '../src/perception/message.ts';
-import { MainCharacterDeathPerceiver } from '../src/perception/death.ts';
-import { ReviveQtePerceiver } from '../src/perception/revive-qte.ts';
-import { CombatPerceiver } from '../src/perception/combat.ts';
-import { HudPerceiver } from '../src/perception/hud.ts';
-import { TownPerceiver, WorldMapPerceiver } from '../src/perception/location.ts';
-import { DungeonSelectPerceiver } from '../src/perception/dungeon-select.ts';
+import { ACTING_CONFIDENCE_FLOOR, createScreenReaders } from '../src/perception/reader-set.ts';
+import { FFXI_GCN } from '../src/perception/sites/ffxi-gcn.ts';
 import { TRAVEL_IDS, LOCATIONS } from '../src/perception/locations.ts';
-import { MapPerceiver, readMapDetailed } from '../src/perception/map.ts';
+import { readMapDetailed } from '../src/perception/map.ts';
 import { travelTo, travelViaAtlas, zoomWorldMap, type WorldMapEnv } from '../src/actions/worldmap.ts';
 import { createTaskRunner } from '../src/tasks/runner.ts';
 import { parseTask } from '../src/tasks/schema.ts';
@@ -65,27 +53,14 @@ const log = (line: string): void => { console.error(line); };
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * The app's own chain, exactly (perception/reader-set.ts, 2026-11-08): the CLI used to keep a shorter
+ * copy — sixteen readers against the app's eighteen, no site descriptor, no inn rest scene — so a stall
+ * the CLI could not reproduce was diagnosed against a chain the loop does not run. The site descriptor
+ * goes in too: the map's numbers are then the ones production uses.
+ */
 function perceiver(): CompositePerceiver {
-  return new CompositePerceiver([
-    { perceiver: new ChestPerceiver(), floor: 0.5 },
-    { perceiver: new MapPerceiver(), floor: 0.5 },
-    { perceiver: new ChestPromptPerceiver(), floor: 0.5 },
-    // The loot result banner also clears the opening's gates; the composite names it first (main.ts
-    // does the same). A CLI that answered chest-opening for a loot screen was the 2026-11-02 find.
-    { perceiver: new LootPerceiver(), floor: 0.5 },
-    { perceiver: new ChestOpeningPerceiver(), floor: 0.5 },
-    { perceiver: new CharacterPagePerceiver(), floor: 0.5 },
-  { perceiver: new HarkenMenuPerceiver(), floor: 0.5 },
-  { perceiver: new InnPerceiver(), floor: 0.5 },
-  { perceiver: new MessagePerceiver(), floor: 0.5 },
-  { perceiver: new MainCharacterDeathPerceiver(), floor: 0.5 },
-  { perceiver: new CombatPerceiver(), floor: 0.5 },
-    { perceiver: new HudPerceiver(), floor: 0.5 },
-    { perceiver: new WorldMapPerceiver(), floor: 0.5 },
-    { perceiver: new TownPerceiver(), floor: 0.5 },
-    { perceiver: new DungeonSelectPerceiver(), floor: 0.5 },
-    { perceiver: new ReviveQtePerceiver(), floor: 0.5 },
-  ]);
+  return createScreenReaders({ site: FFXI_GCN, floor: ACTING_CONFIDENCE_FLOOR }).composite;
 }
 
 type Client = ReturnType<typeof connectEngine>;

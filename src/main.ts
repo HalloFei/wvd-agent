@@ -26,15 +26,7 @@ import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
 import { BATTLE_OPENERS, tapOpenerConfirm, tapOpenerSlot } from './actions/battle.ts';
 import { locateSkillPanelConfirm } from './perception/battle-panel.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from './actions/chest.ts';
-import { CharacterPagePerceiver } from './perception/character-page.ts';
-import { MainCharacterDeathPerceiver } from './perception/death.ts';
-import { ReviveQtePerceiver } from './perception/revive-qte.ts';
-import { InnPerceiver } from './perception/inn.ts';
-import { MessagePerceiver } from './perception/message.ts';
-import { InnRestPerceiver } from './perception/inn-rest.ts';
-import { UiMenuPerceiver } from './ui/menu.ts';
 import { restAtInn } from './actions/inn.ts';
-import { HarkenMenuPerceiver } from './perception/harken.ts';
 import { closeCharacterPage, confirmAutoHeal, openAutoHeal, openCharacterPage } from './actions/heal.ts';
 import { timeQte } from './actions/qte.ts';
 import { createQteFileRecorder } from './actions/qte-record.ts';
@@ -50,15 +42,9 @@ import { captureJpeg, capturePng, focusGame, sendInput, Win32Capture } from './e
 import { takeSnapshot } from './escalation/image.ts';
 import { ChestPerceiver } from './perception/chest.ts';
 import { ocrReader } from './perception/readers/index.ts';
-import { CombatPerceiver } from './perception/combat.ts';
-import { ChestPromptPerceiver } from './perception/prompt.ts';
-import { ChestOpeningPerceiver } from './perception/chest-opening.ts';
-import { LootPerceiver } from './perception/loot.ts';
 import { activePartyMember } from './perception/party.ts';
 import { CompositePerceiver } from './perception/composite.ts';
-import { HudPerceiver } from './perception/hud.ts';
-import { TownPerceiver, WorldMapPerceiver } from './perception/location.ts';
-import { DungeonSelectPerceiver } from './perception/dungeon-select.ts';
+import { ACTING_CONFIDENCE_FLOOR, screenRecognisers } from './perception/reader-set.ts';
 import { TRAVEL_IDS } from './perception/locations.ts';
 import { MapPerceiver, tileOnScreen } from './perception/map.ts';
 import { FFXI_GCN } from './perception/sites/ffxi-gcn.ts';
@@ -68,12 +54,6 @@ import { createTaskRunner } from './tasks/runner.ts';
 import { parseTask } from './tasks/schema.ts';
 import { classify } from './policy/session.ts';
 import { WvdWorld, type SessionOpen, type WvdSession } from './world.ts';
-
-/**
- * The route's acting floor (contracts §6): a screen below it is not identified well enough to act
- * on, so it is also the floor at which a recogniser's answer is trusted for the loop.
- */
-const ACTING_CONFIDENCE_FLOOR = 0.5;
 
 export interface WvdComposition {
   /** The live `worlds.wvd` section. Keys are read per decision; nothing is copied into a module. */
@@ -219,56 +199,18 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       `wvd: opener panel: ${template} fields on the template tier, ${ocr} escalated`,
     ),
   });
+  // The order and the try-order comments live in **one** place (perception/reader-set.ts), so the app,
+  // the live CLI and the triage script compose the same chain and a saved frame answers the question
+  // the loop asked. Only the ingredients differ here — the site, the OCR tiers, the trust book.
   // Verification by action: the World's outcome record scales each screen's floor (policy/trust.ts).
-  const perceiver = new CompositePerceiver([
-    { perceiver: chestPerceiver, floor: ACTING_CONFIDENCE_FLOOR },
-    { perceiver: mapReader, floor: ACTING_CONFIDENCE_FLOOR },
-    { perceiver: new ChestPromptPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The item-claim screen comes before the opening: the result banner (`获得了…` over the opened chest)
-    // also clears the opening's gates — live 2026-11-01 it was named `chest-opening` 0.60 and the
-    // loop waited on it — while the loot recogniser's caption + AUTO test separates the two.
-    { perceiver: new LootPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The inn's rest scene (2026-11-07): a defocused inn with the rest caption and the yellow continue
-    // mark. It must be named before the chest-opening perceiver, whose gates it used to pass (blurred
-    // inn = no HUD text, warm interior = the chest's warm mass), stalling the cycle's rest.
-    { perceiver: new InnRestPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The opening is named after the prompt: both draw no HUD, and only the prompt's own recogniser
-    // can tell the 打开 menu from the lid lifting.
-    { perceiver: new ChestOpeningPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The main character's death is the game's greyscale scene (2026-11-05): named before anything
-    // that keys on the dungeon's own HUD, so a death is never an unnamed frame again.
-    { perceiver: new MainCharacterDeathPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The character page is a full-screen menu: its X 关闭 tile is the evidence, and it must be named
-    // before the HUD can mistake the scene under it for the 3-D view (2026-11-03).
-    { perceiver: new CharacterPagePerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-  { perceiver: new HarkenMenuPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The rest town's inn dialog (2026-11-06): its own rows are the evidence, and it must be named
-    // before the HUD or the town, or the room rows are walked around instead of pressed.
-    { perceiver: new InnPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The game's one-off message box (2026-11-06): named before the HUD/town so the panel is answered
-    // instead of the screen behind it being steered.
-    { perceiver: new MessagePerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The knowledge base's other pages (2026-11-06): a page whose title the reader knows, named before
-    // the HUD so the loop closes it instead of steering the scene behind it. Its own perceiver answers
-    // with the catalog's exit, so the World's branch for it is one tap.
-    { perceiver: new UiMenuPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    { perceiver: new CombatPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    { perceiver: new HudPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The HUD refuses both of these at 0.2; they run last so a dungeon frame never pays for them.
-    { perceiver: new WorldMapPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    { perceiver: new TownPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // The DLL-style list between the world map and the dungeon; named last because only its own
-    // row recogniser speaks and a normal frame must not pay for it.
-    { perceiver: new DungeonSelectPerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-    // Last, because the screens it could be confused with are named by recognisers above it: the
-    // party member's revive QTE is the battle's modal ring (2026-11-05), and a frame a chest, the
-    // list or the dungeon already named must win before this one is asked.
-    { perceiver: new ReviveQtePerceiver(), floor: ACTING_CONFIDENCE_FLOOR },
-  ], {
-    // The loop's own outcome record, per screen: a screen that keeps being right may act from a weaker
-    // read; one the loop just contradicted must clear a higher bar (policy/trust.ts, 2026-11-08).
-    floorFactor: (screen) => world?.trustFactor(screen) ?? 1,
-  });
+  const perceiver = new CompositePerceiver(
+    screenRecognisers({ map: mapReader, chest: chestPerceiver }, ACTING_CONFIDENCE_FLOOR),
+    {
+      // The loop's own outcome record, per screen: a screen that keeps being right may act from a
+      // weaker read; one the loop just contradicted must clear a higher bar (policy/trust.ts).
+      floorFactor: (screen) => world?.trustFactor(screen) ?? 1,
+    },
+  );
 
   const openSession = async (): Promise<SessionOpen> => {
     // The task file is read per session, so an edited file is picked up by the next start; a bad

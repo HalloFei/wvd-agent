@@ -86,7 +86,7 @@ import {
 } from './escalation/event.ts';
 import { sceneIsStill, sceneSignature, type SceneSignature } from './frames/stillness.ts';
 import { nowIso } from 'cortico/core/util.ts';
-import { losslessBlob, snapshotBlob, takeSnapshot, takeSnapshotLossless, type SnapshotSource } from './escalation/image.ts';
+import { judgeSnapshot, losslessBlob, snapshotBlob, takeSnapshot, takeSnapshotLossless, type SnapshotSource } from './escalation/image.ts';
 import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
 import { tapOpenerCard } from './actions/opener.ts';
 import { bandSampler, REFERENCE_FRAME, type QteOutcome, type QteRefusal, type QteTimer } from './actions/qte.ts';
@@ -1477,9 +1477,16 @@ export class WvdWorld implements World {
         if (step.kind === 'wait') return;
         if (step.kind === 'done') {
           const gaveUp = step.why === 'gave-up';
+          // Read before the sequence is dropped: the owed step is what a give-up has to name.
+          const owed = this.#heal.owed;
           this.#heal = null;
-          if (gaveUp) this.#host?.log.warn('wvd: the heal gave up at its deadline; the farm continues');
-          else this.#host?.log.info('wvd: healed the party');
+          if (gaveUp) {
+            this.#host?.log.warn(
+              `wvd: the heal gave up at its deadline; the ${owed.step} step was owed (${owed.sent} of 4 sent)`,
+            );
+          } else {
+            this.#host?.log.info('wvd: healed the party');
+          }
           return;
         }
         if (step.kind === 'escape') {
@@ -1488,6 +1495,11 @@ export class WvdWorld implements World {
           await this.#commands.escape();
           return;
         }
+        // One line per step, from the frame it is being sent from: a heal that gives up must say
+        // what it was waiting on at each step, not only that its bound ran out (2026-11-08).
+        this.#host?.log.info(
+          `wvd: heal step ${step.kind} from ${observation.screen} (stable ${this.#stableCount})`,
+        );
         const sent = await this.#commands.healStep(step.kind);
         if (sent.ok) this.#heal.completed(this.#now());
         else {
@@ -2268,10 +2280,15 @@ export class WvdWorld implements World {
     // The snapshot is a second capture at the escalation width; the verdict's frame stays the
     // authority for the decision, and its `atMs` is what the event dates the question by.
     const maxWidth = this.#cfg.escalationImageWidth;
-    const snapshot = await takeSnapshot(session.snapshot, maxWidth);
+    // The evidence is the frame the reader judged, encoded here rather than captured again: a second
+    // capture is a different instant, and on 2026-11-08 that difference was an hour of diagnosis — the
+    // loop escalated a correct `dungeon 0.94`, the snapshot caught the menu an Esc had just opened, and
+    // the saved frame classified `ui-menu 0.93`. Only a source with no pixels falls back to its capture.
+    const judged = await judgeSnapshot(frame, maxWidth);
+    const snapshot = judged?.jpeg ?? await takeSnapshot(session.snapshot, maxWidth);
     // The same frame, losslessly: the refused bytes are the evidence, and a q75 re-encode hid the very
     // detail that caused a refusal twice on 2026-11-08. A source without a PNG path simply has none.
-    const lossless = await takeSnapshotLossless(session.snapshot, maxWidth);
+    const lossless = judged?.png ?? await takeSnapshotLossless(session.snapshot, maxWidth);
     // A stop can land inside that capture. Nothing may be asked — or acted on — after it.
     if (!this.#running || this.#session !== session) return;
     const image = snapshot ? snapshotBlob(snapshot) : null;
