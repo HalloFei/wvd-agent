@@ -46,7 +46,7 @@ import { writeFile } from 'node:fs/promises';
 import { CaptureHost } from './engine/vision/capture-host.ts';
 import { openMapping } from './engine/vision/channel-mapping.ts';
 import { createChannel, layoutChannel, type FrameChannel } from './engine/vision/frame-channel.ts';
-import { captureJpeg, focusGame, sendInput, Win32Capture } from './engine/win32.ts';
+import { captureJpeg, capturePng, focusGame, sendInput, Win32Capture } from './engine/win32.ts';
 import { takeSnapshot } from './escalation/image.ts';
 import { ChestPerceiver } from './perception/chest.ts';
 import { ocrReader } from './perception/readers/index.ts';
@@ -304,6 +304,12 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       // encoded in the World (contracts §5). A failure is null, not a throw: the question still goes
       // out without an image.
       snapshot: {
+        capturePng: async (maxWidth?: number) => {
+          const live = host;
+          if (live === null) return null;
+          const sessionChannel = channelOf();
+          return await capturePng(source, sessionChannel.channel, maxWidth);
+        },
         captureJpeg: async (maxWidth?: number) => {
           try {
             return await captureJpeg(source, sessionChannel.channel, maxWidth, cfg.jpegQuality);

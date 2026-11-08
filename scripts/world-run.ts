@@ -152,18 +152,22 @@ const host = {
     const type = event.type ?? 'wvd.event';
     events.push({ at: new Date().toISOString(), type, text: event.text ?? '' });
     if (type === 'wvd.note' || type === 'wvd.stuck') console.log(stamp() + ' EVENT ' + type + ' ' + (event.text ?? ''));
-    const blob = event.blobs?.find((entry) => entry.bytes !== undefined && (entry.mime ?? '').startsWith('image/'));
-    if (blob?.bytes !== undefined) {
-      const ext = (blob.mime ?? 'image/jpeg').split('/')[1] ?? 'jpg';
+    // Every image the event carries: the JPEG the model reads **and** the lossless PNG the ledger keeps
+    // (a q75 re-encode hid the ink column that split a digit — 2026-11-08).
+    const images = (event.blobs ?? []).filter((entry) => entry.bytes !== undefined && (entry.mime ?? '').startsWith('image/'));
+    if (images.length > 0) {
       frameCount += 1;
-      const path = join(REPORT_DIR, 'frames', String(frameCount).padStart(3, '0') + '-' + type.replaceAll('.', '-') + '.' + ext);
-      try {
-        mkdirSync(join(REPORT_DIR, 'frames'), { recursive: true });
-        writeFileSync(path, blob.bytes);
-        frames.push(path);
-        console.log(stamp() + ' SNAPSHOT ' + path);
-      } catch {
-        // scratch only: a missing directory changes nothing about the run
+      for (const blob of images) {
+        const ext = (blob.mime ?? 'image/jpeg').split('/')[1] ?? 'jpg';
+        const path = join(REPORT_DIR, 'frames', String(frameCount).padStart(3, '0') + '-' + type.replaceAll('.', '-') + '.' + ext);
+        try {
+          mkdirSync(join(REPORT_DIR, 'frames'), { recursive: true });
+          writeFileSync(path, blob.bytes);
+          frames.push(path);
+          console.log(stamp() + ' SNAPSHOT ' + path);
+        } catch {
+          // scratch only: a missing directory changes nothing about the run
+        }
       }
     }
     if (PAUSE_ON_STALL && type === 'wvd.stuck') {

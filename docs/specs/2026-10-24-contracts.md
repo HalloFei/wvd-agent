@@ -573,7 +573,7 @@ object (§0 rule 3).
 | `jpegQuality` | integer 30–95 | `75` | World | escalation snapshot quality; the loop encodes no frame |
 | `engineTimeoutMs` | integer | `5000` | engine | one child request |
 | `pressHoldMs` | integer 40–500 | `60` | actuator | press duration; 0 ms is dropped at 30 fps |
-| `escalationImageWidth` | integer | `1280` | World | downscale before sending a frame to the model |
+| `escalationImageWidth` | integer | `1920` | World | downscale before sending a frame to the model (the harness sets 1920: a stall frame must be the bytes the readers refused) |
 
 ### 8.3 Navigation
 

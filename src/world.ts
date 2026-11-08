@@ -85,7 +85,7 @@ import {
 } from './escalation/event.ts';
 import { sceneIsStill, sceneSignature, type SceneSignature } from './frames/stillness.ts';
 import { nowIso } from 'cortico/core/util.ts';
-import { snapshotBlob, takeSnapshot, type SnapshotSource } from './escalation/image.ts';
+import { losslessBlob, snapshotBlob, takeSnapshot, takeSnapshotLossless, type SnapshotSource } from './escalation/image.ts';
 import { Supervisor, type EscalationOutcome } from './escalation/supervisor.ts';
 import { tapOpenerCard } from './actions/opener.ts';
 import { bandSampler, REFERENCE_FRAME, type QteOutcome, type QteRefusal, type QteTimer } from './actions/qte.ts';
@@ -2224,9 +2224,13 @@ export class WvdWorld implements World {
     // authority for the decision, and its `atMs` is what the event dates the question by.
     const maxWidth = this.#cfg.escalationImageWidth;
     const snapshot = await takeSnapshot(session.snapshot, maxWidth);
+    // The same frame, losslessly: the refused bytes are the evidence, and a q75 re-encode hid the very
+    // detail that caused a refusal twice on 2026-11-08. A source without a PNG path simply has none.
+    const lossless = await takeSnapshotLossless(session.snapshot, maxWidth);
     // A stop can land inside that capture. Nothing may be asked — or acted on — after it.
     if (!this.#running || this.#session !== session) return;
     const image = snapshot ? snapshotBlob(snapshot) : null;
+    const imageLossless = lossless ? losslessBlob(lossless) : null;
     const imageVisible = this.#supervisor.imageAccepted();
     const question = this.#question(observation);
     const id = `esc-${this.#nextEscalationId++}`;
@@ -2237,6 +2241,7 @@ export class WvdWorld implements World {
     const fallback = fallbackFor(observation);
 
     const envelope = stuckEvent({
+      imageLossless,
       timezone: this.#timezone,
       at: new Date(),
       atMs: frame.atMs,

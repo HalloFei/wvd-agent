@@ -1434,6 +1434,35 @@ a QTE still 72). `panelInk()` is exported so the numbers are pinned by a test ra
 **Not yet proven:** with the gate moved the raw frame would reach the gates after it (title, lattice,
 chevron, icons), which it had never been tried on. One live run on that floor settles it.
 
+## Graded evidence, the site descriptor, and a lossless ledger (2026-11-08)
+
+The first three steps of the robustness change, in the order the operator asked for.
+
+**1. Graded evidence (`e91fc00`).** `perception/evidence.ts` is the one place a frame's facts become a
+decision: **anchors veto, metrics weigh**, and the product of the weights is the confidence the composite
+acts on. `map.ts` is the first reader migrated — its structural facts are named anchors (size, uniform,
+readout, title-bar, title, lattice, lattice-support, chevron) and the panel ink is a metric with the
+measured band `[15 000, 200 000]` and a 6 000 soft margin. The 第二区-城内1F canvas (13 047 px) now reads
+`0.85 × 0.6745 = 0.57` instead of being refused; the good fixtures keep their 0.85 because their ink is
+inside the band, and the negative controls are still vetoed by their anchors before any metric is weighed.
+
+**2. The site descriptor (`340013f`).** `perception/site.ts` + `sites/ffxi-gcn.ts`: the per-site numbers
+leave the readers — the floors (the farm's `第三区-城内2F-` and the `第四区-城内2F深处-` the harken reached),
+the screen floors, and band overrides. `metricFor`/`floorFor` fall back to the reader's own measured
+default, so a partial descriptor degrades to today's behaviour instead of inventing a number.
+
+**3. The refusal ledger (`<this commit>`).** `perception/ledger.ts` files a refusal as a **lossless PNG**
+plus a JSON of the screen, the gate, the confidence and every measured value — and the escalation event
+now carries that PNG beside the JPEG the model reads, through `SnapshotSource.capturePng`, so the
+evidence that outlives a run is the bytes the reader refused. The harness writes both images.
+
+Proved by: `tests/evidence.test.ts`, `tests/site-schema.test.ts`, `tests/ledger.test.ts`,
+`tests/map.test.ts` (46) and `tests/world.test.ts` + `tests/console.test.ts` (162), `tsc` clean.
+
+**Next in the order:** verification-by-action (trust), probes for unnamed frames, the escalation payload
++ availability line, the margins tool, then the fan-out to opener/harken/inn/location/battle-panel/chest,
+and finally the live 3-cycle and 99-cycle acceptance.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

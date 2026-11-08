@@ -114,6 +114,11 @@ export interface StuckInput {
   readonly escalationsThisHour: number;
   readonly maxPerHour: number;
   readonly image: BlobInput | null;
+  /**
+   * The same frame, lossless: the ledger's copy of the evidence, beside the JPEG the model reads.
+   * Absent when the source has no PNG path — the event then carries the JPEG alone.
+   */
+  readonly imageLossless?: BlobInput | null;
   /** Whether the active endpoint can attach the image; false is said in words, never silent. */
   readonly imageVisible: boolean;
 }
@@ -158,7 +163,9 @@ export function stuckEvent(input: StuckInput): WvdEvent {
           : { mime: input.image.mime, bytes: input.image.bytes.length },
       },
     },
-    ...(input.image ? { blobs: [input.image] } : {}),
+    ...(input.image
+      ? { blobs: input.imageLossless ? [input.image, input.imageLossless] : [input.image] }
+      : {}),
   };
 }
 

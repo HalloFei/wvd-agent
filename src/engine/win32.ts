@@ -17,6 +17,7 @@ import type {
   RgbaImage,
 } from '../contracts.ts';
 import { cropBgra } from './crop.mjs';
+import { encodePng } from '../perception/ledger.ts';
 import { scaleBgra } from './scale.mjs';
 import {
   isStaleFrame,
@@ -240,6 +241,36 @@ const DEFAULT_SNAPSHOT_QUALITY = 75;
  * A failure is the same `EngineCaptureError` the plain capture throws: the caller decides whether a
  * question without an image is still worth asking (it is — the text carries the perception line).
  */
+/**
+ * The **lossless** snapshot: the same newest frame as `captureJpeg`, encoded as PNG instead.
+ *
+ * It exists because the evidence that outlives a run must not be re-encoded. Twice on 2026-11-08 a
+ * refusal could not be reproduced from the run's own snapshot: the q75 encode smoothed the one ink
+ * column that split a digit, and the saved frame parsed where the live raw frame had refused. The JPEG
+ * still goes to the model (it reads either); the PNG goes to the ledger, where a triage pass can replay
+ * the refusal byte for byte.
+ */
+export async function capturePng(
+  source: FrameSource,
+  channel: FrameChannel,
+  maxWidth?: number,
+): Promise<CapturedJpeg> {
+  if (
+    maxWidth !== undefined
+    && (!Number.isInteger(maxWidth) || maxWidth < MIN_CAPTURE_WIDTH || maxWidth > MAX_CAPTURE_WIDTH)
+  ) {
+    throw new EngineCaptureError('rejected', 'maxWidth-out-of-range');
+  }
+  await source.capture();
+  const served = latest(channel, { nowMs: Date.now() });
+  if (served === null) throw new EngineCaptureError('timeout', 'stale-frame');
+  const scaled = maxWidth === undefined
+    ? { pixels: served.pixels, width: served.width, height: served.height }
+    : scaleBgra(served.pixels, served.width, served.height, maxWidth);
+  const bytes = encodePng({ data: toRgba(scaled.pixels), width: scaled.width, height: scaled.height });
+  return { bytes: Uint8Array.from(bytes), width: scaled.width, height: scaled.height };
+}
+
 export async function captureJpeg(
   source: FrameSource,
   channel: FrameChannel,
