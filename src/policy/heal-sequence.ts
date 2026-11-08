@@ -22,7 +22,11 @@ export type HealStepKind = 'card' | 'sparkle' | 'restore' | 'close';
 
 export type HealStep =
   | { readonly kind: 'wait'; readonly why: 'settle' | 'unstable' | 'paced' | 'page-closing' }
-  | { readonly kind: HealStepKind; readonly at: 'dungeon' | 'page' }
+  /**
+   * One of the four taps. `redo` marks a step that was already sent and is being sent again (a tap
+   * the game swallowed): the pace restarts, nothing advances.
+   */
+  | { readonly kind: HealStepKind; readonly at: 'dungeon' | 'page'; readonly redo?: true }
   | { readonly kind: 'escape' }
   | { readonly kind: 'done'; readonly why: 'closed' | 'gave-up' };
 
@@ -31,6 +35,11 @@ export interface HealPhase {
   readonly screen: ScreenId;
   readonly stable: number;
   readonly page: boolean;
+  /**
+   * The frame is the game's own blank one (a load or a fade, named \`loading\`). Time spent blind is not
+   * time spent failing: see the deadline in \`next\`.
+   */
+  readonly blank?: boolean;
 }
 
 export interface HealOptions {
@@ -51,6 +60,17 @@ export interface HealOptions {
    * with their settles are ~4.5 s, so 12 s is the whole heal plus two chances at every step.
    */
   readonly deadlineMs: number;
+  /**
+   * The wall-clock bound that even blank frames count against. `deadlineMs` is the whole heal plus two
+   * chances at every step **on a screen the loop can see**; a fade is the game's, so it is not the
+   * heal's — but something has to stop a page that never comes at all. Three deadlines by default.
+   */
+  readonly hardDeadlineMs?: number;
+  /**
+   * How many times the card tap may be sent again while the page has not appeared. A swallowed tap is
+   * not a reason to wait out the bound: the second attempt is the cheaper answer (live 2026-11-08).
+   */
+  readonly cardRetries?: number;
 }
 
 const STEPS: readonly HealStepKind[] = ['card', 'sparkle', 'restore', 'close'];
@@ -62,9 +82,18 @@ export class HealSequence {
   #lastTapAtMs: number | null = null;
   #closeAtMs: number | null = null;
   #escapedAtMs: number | null = null;
+  /** The blank run in progress, and how much of the sequence was spent blank (never counted). */
+  #blankAtMs: number | null = null;
+  #blankMs = 0;
+  /** The card taps sent again for a page that never appeared. */
+  #cardRetries = 0;
+  readonly #hardMs: number;
+  readonly #cardRetriesMax: number;
 
   constructor(options: HealOptions) {
     this.#options = options;
+    this.#hardMs = options.hardDeadlineMs ?? options.deadlineMs * 3;
+    this.#cardRetriesMax = options.cardRetries ?? 1;
   }
 
   enter(nowMs: number): void {
@@ -74,17 +103,39 @@ export class HealSequence {
   /** One step for this tick, or a reason to wait. The caller sends at most one tap. */
   next(phase: HealPhase, nowMs: number): HealStep {
     if (this.#enteredAtMs === null) return { kind: 'wait', why: 'settle' };
-    // The deadline is the sequence's own bound: nothing it waits for may outlive it.
-    if (nowMs - this.#enteredAtMs >= this.#options.deadlineMs) return { kind: 'done', why: 'gave-up' };
+    // The deadline is the sequence's own bound, on the frames it could **see**. A blank frame is the
+    // game's fade, and a battle's fade holds the screen dark longer than the whole sequence: a bound
+    // that counted it made the heal give up on a page that was open underneath the whole time (live
+    // 2026-11-08 20:44 and 20:46 — the sparkle was owed, and the recovery then closed the page without
+    // healing). The wall clock still bounds the episode, so a screen that never comes back stops.
+    if (phase.blank === true) this.#blankAtMs ??= nowMs;
+    else if (this.#blankAtMs !== null) {
+      this.#blankMs += nowMs - this.#blankAtMs;
+      this.#blankAtMs = null;
+    }
+    const wallMs = nowMs - this.#enteredAtMs;
+    const blankMs = this.#blankAtMs === null ? 0 : nowMs - this.#blankAtMs;
+    const seenMs = wallMs - this.#blankMs - blankMs;
+    if (seenMs >= this.#options.deadlineMs || wallMs >= this.#hardMs) {
+      return { kind: 'done', why: 'gave-up' };
+    }
     const paced = this.#lastTapAtMs === null || nowMs - this.#lastTapAtMs >= this.#options.stepMs;
     if (!paced) return { kind: 'wait', why: 'paced' };
 
     // The page's own steps: once the card opened it, the rest are sent from the page's frames, and the
     // page is the only thing that may be on screen until it is gone.
     if (this.#next > 0 && this.#next < STEPS.length) {
-      if (phase.stable < this.#options.stableFrames) return { kind: 'wait', why: 'unstable' };
-      if (!phase.page) return { kind: 'wait', why: 'unstable' };
-      return { kind: STEPS[this.#next]!, at: 'page' };
+      if (phase.page && phase.stable >= this.#options.stableFrames) {
+        return { kind: STEPS[this.#next]!, at: 'page' };
+      }
+      // The page never came back. The card tap was swallowed — by the fade, by the battle's own page,
+      // by a panel closing over it — and the owed step is the card again, not silence until the bound.
+      if (phase.screen === 'dungeon' && phase.stable >= this.#options.stableFrames
+        && this.#cardRetries < this.#cardRetriesMax) {
+        this.#cardRetries += 1;
+        return { kind: 'card', at: 'dungeon', redo: true };
+      }
+      return { kind: 'wait', why: phase.page ? 'unstable' : 'settle' };
     }
 
     // The close has been sent: the page must leave before the heal is done.
@@ -114,6 +165,11 @@ export class HealSequence {
       if (STEPS[this.#next] === 'close') this.#closeAtMs = nowMs;
       this.#next += 1;
     }
+  }
+
+  /** A step that is being sent **again** (a swallowed tap): the pace restarts, nothing advances. */
+  retried(nowMs: number): void {
+    this.#lastTapAtMs = nowMs;
   }
 
   /** A refused or failed tap: the pace applies, the step stays owed. */

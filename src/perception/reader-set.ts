@@ -38,6 +38,7 @@ import { HudPerceiver } from './hud.ts';
 import { InnPerceiver } from './inn.ts';
 import { InnRestPerceiver } from './inn-rest.ts';
 import { TownPerceiver, WorldMapPerceiver } from './location.ts';
+import { LoadingPerceiver } from './loading.ts';
 import { LootPerceiver } from './loot.ts';
 import { MapPerceiver } from './map.ts';
 import { MessagePerceiver } from './message.ts';
@@ -83,6 +84,10 @@ export function screenRecognisers(readers: {
 }, floor: number = ACTING_CONFIDENCE_FLOOR): Recogniser[] {
   const { map, chest } = readers;
   return [
+    // The blank frame first: the game's own load/fade, which nothing named until 2026-11-08 (a fade
+    // answered `unknown` at 0.20 and the loop escalated it, pressing Esc into a page that was open).
+    // It is also the cheapest gate — a drawn frame leaves it after a few dozen samples.
+    { perceiver: new LoadingPerceiver(), floor },
     { perceiver: chest, floor },
     { perceiver: map, floor },
     { perceiver: new ChestPromptPerceiver(), floor },

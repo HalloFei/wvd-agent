@@ -721,6 +721,11 @@ export class WvdWorld implements World {
    * (`policy/heal-sequence.ts`). Non-null means the heal owns the tick until it is done or gives up.
    */
   #heal: HealSequence | null = null;
+  /**
+   * The screen the heal is waiting on, so one wait costs one log line (see the heal branch). Reset
+   * whenever the heal starts or is dropped: it belongs to the episode, not to the World.
+   */
+  #healWaitOn: ScreenId | null = null;
   /** The screen the last frames named, and how many in a row: the stable-frame gate. */
   #stableScreen: ScreenId | null = null;
   #stableCount = 0;
@@ -1451,6 +1456,7 @@ export class WvdWorld implements World {
         deadlineMs: HEAL_DEADLINE_MS,
       });
       this.#heal.enter(now);
+      this.#healWaitOn = null;
       this.#host?.log.info('wvd: the heal starts; one step per frame that names what it acts on');
     }
     if (this.#heal !== null) {
@@ -1466,20 +1472,36 @@ export class WvdWorld implements World {
         // Abandoned, and the tick carries on into this screen's own dispatch: the battle that took the
         // frame is the order now.
         this.#heal = null;
+        this.#healWaitOn = null;
         this.#host?.log.info(`wvd: the heal was interrupted by ${observation.screen}; the farm continues`);
       } else {
         const phase = {
           screen: observation.screen,
           stable: this.#stableCount,
           page: observation.screen === 'character-page',
+          // The game's blank frame (perception/loading.ts): the heal's bound must not count the fade.
+          blank: observation.screen === 'loading',
         };
         const step = this.#heal.next(phase, now);
-        if (step.kind === 'wait') return;
+        if (step.kind === 'wait') {
+          // A wait is the only thing a give-up cannot explain afterwards, and 2026-11-08 proved it
+          // twice: two live heals gave up with the sparkle owed, and the log could not say what the
+          // frames were between the card tap and the deadline. One line per screen the heal waits on.
+          if (this.#healWaitOn !== observation.screen) {
+            this.#healWaitOn = observation.screen;
+            this.#host?.log.info(
+              `wvd: heal waiting on ${observation.screen} ${observation.confidence.toFixed(2)}`
+              + ` (stable ${this.#stableCount}, page ${phase.page}): ${step.why}`,
+            );
+          }
+          return;
+        }
         if (step.kind === 'done') {
           const gaveUp = step.why === 'gave-up';
           // Read before the sequence is dropped: the owed step is what a give-up has to name.
           const owed = this.#heal.owed;
           this.#heal = null;
+          this.#healWaitOn = null;
           if (gaveUp) {
             this.#host?.log.warn(
               `wvd: the heal gave up at its deadline; the ${owed.step} step was owed (${owed.sent} of 4 sent)`,
@@ -1498,11 +1520,15 @@ export class WvdWorld implements World {
         // One line per step, from the frame it is being sent from: a heal that gives up must say
         // what it was waiting on at each step, not only that its bound ran out (2026-11-08).
         this.#host?.log.info(
-          `wvd: heal step ${step.kind} from ${observation.screen} (stable ${this.#stableCount})`,
+          `wvd: heal step ${step.kind}${step.redo === true ? ' again' : ''} from ${observation.screen}`
+          + ` (stable ${this.#stableCount})`,
         );
         const sent = await this.#commands.healStep(step.kind);
-        if (sent.ok) this.#heal.completed(this.#now());
-        else {
+        if (sent.ok) {
+          // A step sent **again** restarts the pace and advances nothing.
+          if (step.redo === true) this.#heal.retried(this.#now());
+          else this.#heal.completed(this.#now());
+        } else {
           this.#heal.refused(this.#now());
           this.#host?.log.warn(`wvd: the heal's ${step.kind} tap was refused (${sent.reason}); the step stays owed`);
         }
@@ -1636,7 +1662,10 @@ export class WvdWorld implements World {
     // ended an unattended run two minutes after the climb and the chest had both worked). The
     // classifier's stop is held for `escalateSettleMs` while the frames stay blank; the bound is what
     // keeps a dead game fatal, and the stall clock is the backstop behind it.
-    const blank = observation.confidence <= 0;
+    // Nothing to act on: a frame nothing named, or the game's own blank one (perception/loading.ts).
+    // The named load is not an *unknown* frame — it is a known wait — but for the settle window's
+    // purpose it is the same fact: no screen is there to judge yet.
+    const blank = observation.confidence <= 0 || observation.screen === 'loading';
     if (blank) this.#blankSinceMs ??= now;
     else this.#blankSinceMs = null;
 
