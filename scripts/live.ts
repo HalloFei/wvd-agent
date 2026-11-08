@@ -172,7 +172,7 @@ try {
     sleep: wait,
     log,
     atlas: true,
-    pointer: false,
+    pointer: true,
   });
 
   switch (command) {

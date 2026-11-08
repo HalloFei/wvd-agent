@@ -106,37 +106,24 @@ export async function travelToSite(
   let view = 0;
   let pushes = 0;
 
-  /** Put the map at level 0: two zoom-outs, verified as presses that were accepted. */
-  for (let step = 0; step < 2; step += 1) {
-    if (!(await input.zoom('out'))) return { ok: false, reason: 'refused', detail: 'the zoom-out was refused' };
-    await input.sleep(420);
-  }
-
+  // **Everything happens at level 1** (operator, 2026-11-09): at level 1 every title is drawn and every
+  // site is clickable, so the pair is the identification and the ring is the confirmation — no level-0
+  // icons-only stage, which is where the first two live runs found nothing. The caller puts the map at
+  // level 1 before calling.
   for (;;) {
     if (overBudget()) return { ok: false, reason: 'budget', detail: 'the travel exceeded its ' + budgetMs + ' ms' };
 
-    // 1. Look for the target on this view, at the coarse level where icons are drawn.
-    const found = await senses.site(0, false);
+    const found = await senses.site(1, true);
     if (found !== null) {
-      // 2. Level 1: every title is drawn, and a site is clickable — the pair is the identification.
-      if (!(await input.zoom('in'))) return { ok: false, reason: 'refused', detail: 'the zoom-in was refused' };
-      await input.sleep(420);
-      const verified = await senses.site(1, true);
-      if (verified === null) {
-        // The icon was real but its title was not: not this site. Back out to the coarse level.
-        if (!(await input.zoom('out'))) return { ok: false, reason: 'refused', detail: 'the zoom-out was refused' };
-        await input.sleep(420);
-      } else {
-        // 3. The pointer to the icon, then the game's own ring — the only evidence a tap may rest on.
-        const moved = await steerTo(senses, input, verified.at, pointerRate, maxHold);
-        if (moved !== null) return moved;
-        if (!(await senses.ring(verified.at))) {
-          return { ok: false, reason: 'no-ring', detail: 'the icon is not clickable on this frame' };
-        }
-        const tapped = await input.tap(verified.at);
-        if (!tapped.ok) return { ok: false, reason: 'refused', detail: tapped.reason };
-        return { ok: true, at: verified.at, pushes, level: 1 };
+      // The pointer to the icon, then the game's own ring — the only evidence a tap may rest on.
+      const moved = await steerTo(senses, input, found.at, pointerRate, maxHold);
+      if (moved !== null) return moved;
+      if (!(await senses.ring(found.at))) {
+        return { ok: false, reason: 'no-ring', detail: 'the icon is not clickable on this frame' };
       }
+      const tapped = await input.tap(found.at);
+      if (!tapped.ok) return { ok: false, reason: 'refused', detail: tapped.reason };
+      return { ok: true, at: found.at, pushes, level: 1 };
     }
 
     // 4. Not on this view: push one view along, and measure what that push actually did.

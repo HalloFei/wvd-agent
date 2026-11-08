@@ -1032,6 +1032,10 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
   const now = env.now ?? (() => Date.now());
   const opened = await openWorldMap(env);
   if (!opened.ok) return { ok: false, reason: 'refused', detail: opened.reason };
+  // One zoom out: the map opens at its most zoomed-in level, and **level 1** is where every title is
+  // drawn and every site is clickable (operator, 2026-11-09) — the only level the travel needs.
+  await env.actuator.holdKey(ZOOM_KEY_OUT, 60);
+  await env.sleep(420);
   const levels = (level: 0 | 1 | 2): number[] => iconScalesAt(level);
   const image = async (): Promise<RgbaImage | null> => decode(await env.capture());
   // The catalogue's art is the **whole node** (icon over its banner); at every zoom the game draws the
@@ -1066,7 +1070,7 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
       const current = await image();
       if (current === null) return null;
       const found = findSites(current, catalogue, {
-        strip: MAP_STRIP, iconScales: levels(0), wantTitle: false, minIconScore: ATLAS_ICON_FLOOR,
+        strip: MAP_STRIP, iconScales: levels(1), wantTitle: false, minIconScore: ATLAS_ICON_FLOOR,
       });
       const best = found[0];
       return best === undefined ? null : { id: best.id, at: best.point };
