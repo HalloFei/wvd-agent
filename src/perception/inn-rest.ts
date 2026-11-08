@@ -62,10 +62,13 @@ export const REST_CAPTION_SHARE = 0.02;
  * nothing there — it is a dark, blurred room.
  *
  * Operator, 2026-11-09: *the biggest decider is this title; all dungeon floor selection holds a title of
- * the current dungeon, plus two stable options, 入口 + 打开世界地图*. Measured on the corpus (share of
- * bright ink, luma > 150, in x 0.30-0.70, y 0.15-0.70): the rest scene **0.0156**, the inn's confirmation
- * page 0.0122, the inn's room list **0.0600**, the world map 0.1299. A page with a dungeon title sits far
- * above the rest scene, so 0.03 separates them with 2x margin on the one rest fixture there is.
+ * the current dungeon, plus two stable options, 入口 + 打开世界地图*.
+ *
+ * Measured with **this** gate (white ink: all three channels > 150, x 0.30-0.70, y 0.15-0.70): the rest
+ * scene **0.0156**, the inn's room list 0.0197. So 0.03 sits above everything in the corpus that is not a
+ * title page — and **no Dungeon Select frame is in the corpus yet**, so the bound is a separation from the
+ * rest scene, not a measured cut against the page it is meant to refuse. Capture one (the title is white
+ * and large; the measured value will be well above 0.03) before trusting this as the sole veto.
  */
 export const REST_TITLE_INK_MAX = 0.03;
 
