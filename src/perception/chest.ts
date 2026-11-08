@@ -415,6 +415,12 @@ export interface ChestPerceiverOptions {
   readonly trapReader?: NumeralsReader;
   /** Called once per recognised opener panel with the tiers that answered its 陷阱 fields. */
   readonly onOpenerTiers?: (summary: OpenerTierSummary) => void;
+  /**
+   * How late after its first escalation a panel may start a second, ms (the opener's R6 allowance).
+   * Absent keeps the opener's own default; `main.ts` sets it to the operator's 4 s allowance for
+   * 由谁打开 — the template tier answers in milliseconds, so the window only bounds the fallback.
+   */
+  readonly ocrWindowMs?: number;
 }
 
 /**
@@ -443,11 +449,12 @@ export class ChestPerceiver implements Perceiver {
     this.#options = options;
   }
 
+
   async observe(frame: Frame): Promise<Observation> {
     const opener = await parseOpenerDetailed(frame, {
       trapReader: this.#options.trapReader,
       // One allowance for the panel, shared by every observation of it (R6, F1).
-      ocrBudget: (this.#budget ??= createOcrBudget()),
+      ocrBudget: (this.#budget ??= createOcrBudget({ windowMs: this.#options.ocrWindowMs })),
       // At most one line per panel: the same undecided panel observed twice is still one panel.
       onTiers: (summary) => {
         if (this.#tiersReported) return;

@@ -200,8 +200,16 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
   // tier — that tier names this font's 4 as a 3 and would silently name a refused field 93 where the
   // screen says 92. The seam's strategy is a constructor argument (R12), not a config value: the
   // config switch returns with the map readout migration, its first real consumer.
+  /**
+   * The operator's allowance for the 由谁打开 page, ms (2026-11-08): it must be read and pressed inside
+   * four seconds, never sat on. The template tier answers in **milliseconds** (4.5 ms median on the
+   * live panel), so this window bounds only the fallback — how late a *second* OCR call may start; the
+   * call's own bound is the harness's 3 s.
+   */
+  const PANEL_OCR_WINDOW_MS = 2_500;
   const chestPerceiver = new ChestPerceiver({
     trapReader: ocrReader,
+    ocrWindowMs: PANEL_OCR_WINDOW_MS,
     // The tier mix, once per panel (acceptance 2): a run that starts falling to the escalation must
     // be visible in the log before it dies, and the line names the counts, never a glyph.
     onOpenerTiers: ({ template, ocr }) => world?.note(

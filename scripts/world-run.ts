@@ -65,15 +65,15 @@ const REPORT_PATH = join(REPORT_DIR, 'report.json');
  * The numerals OCR tier, wired before the World is built (`main.ts` reads the environment when it
  * constructs the readers).
  *
- * The opener's 陷阱 atlas was recorded through the old **JPEG** decode (2026-10-24), and the vision
- * module now delivers **raw** frames whose crisper glyphs miss it — the design says so in
- * `perception/opener.ts`: *"a raw capture does exactly that to an atlas recorded through the old JPEG
- * decode"*. The escalation named there is this tier. Measured live 2026-11-08, the 由谁打开 panel:
- * with no tier, `template 0, ocr 0` and the panel refused (the run then sat on it); with the tier,
- * `template 11, ocr 1` and the panel parsed — 6 members, the numbers the screen shows.
+ * The opener's 陷阱 atlas is recorded for **both** codecs now (`perception/opener.ts`: the 2026-10-24
+ * JPEG-era means plus the 2026-11-08 raw-era instances), so this tier answers the live panel on its
+ * own — live 12:56, `12 fields on the template tier, 0 escalated`, 4.5 ms median. The OCR tier is the
+ * **net** for a glyph the atlas has never seen: a run without it refuses the panel outright (live
+ * 12:40: `template 0, ocr 0`, and the loop sat on 由谁打开 for seven minutes).
  *
- * So a run launched without it stalls on every chest panel the atlas refuses. The harness sets it from
- * the documented venv when the operator has not, and says which tier the run has either way.
+ * The operator's allowance for that page is 4 s (`ChestPerceiver.OCR_WINDOW_MS` bounds how late a
+ * second escalation may start), so a single call is bounded here too: past 3 s the page must decide,
+ * not wait.
  */
 const OCR_PYTHON = process.env.WVD_OCR_PYTHON ?? resolve('.tmp', 'ocr-venv', 'Scripts', 'python.exe');
 const OCR_SCRIPT = process.env.WVD_OCR_SCRIPT ?? resolve('scripts', 'ocr-readout.py');
@@ -81,6 +81,8 @@ const ocrWired = existsSync(OCR_PYTHON) && existsSync(OCR_SCRIPT);
 if (ocrWired) {
   process.env.WVD_OCR_PYTHON = OCR_PYTHON;
   process.env.WVD_OCR_SCRIPT = OCR_SCRIPT;
+  // The 4 s allowance for 由谁打开: one call that outlived 3 s would spend it before the card is pressed.
+  process.env.WVD_OCR_TIMEOUT_MS ??= '3000';
 }
 
 const cfg = {
