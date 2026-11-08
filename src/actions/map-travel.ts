@@ -54,6 +54,13 @@ export interface MapTravelOptions {
   readonly pointerPxPerMs?: number;
   /** The longest one push or pointer hold may be, ms. */
   readonly maxHoldMs?: number;
+  /**
+   * Which way the next push should go. **The atlas may hint this** (operator, 2026-11-09: other sites
+   * help, never gate): knowing which quadrant the target is in turns a diagonal crawl into one push in
+   * the right direction. Absent, the loop alternates `d`/`s` — which searches right and down only, and
+   * never found a target that was left or up.
+   */
+  readonly nextDirection?: (push: number) => Promise<'w' | 'a' | 's' | 'd'>;
   readonly now?: () => number;
 }
 
@@ -176,7 +183,10 @@ export async function travelToSite(
     // travel whose cursor was already at the wall — 2026-11-09 02:10.)
     await moveCursorTo(senses, input, { x: strip.x + strip.width - 40, y: Math.round(strip.height / 2) }, pointerRate, maxHold);
     const before = await senses.landmark();
-    const held = await input.hold(pushes % 2 === 0 ? 'd' : 's', holdMs);
+    const direction = options.nextDirection === undefined
+      ? (pushes % 2 === 0 ? 'd' as const : 's' as const)
+      : await options.nextDirection(pushes);
+    const held = await input.hold(direction, holdMs);
     if (!held.ok) return { ok: false, reason: 'refused', detail: held.reason };
     await input.sleep(420);
     const after = await senses.landmark();

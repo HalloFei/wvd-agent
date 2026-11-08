@@ -1033,6 +1033,15 @@ const POINTER_KEYS: Readonly<Record<'w' | 'a' | 's' | 'd', number>> = { w: 0x11,
 const ZOOM_KEY_IN = 0x10;
 const ZOOM_KEY_OUT = 0x12;
 
+/**
+ * The bank the senses search at. **One ladder cannot serve every site**: each catalogue template has its
+ * own native size, so the same drawn icon matches at a different scale per site — measured live
+ * 2026-11-09: vnh at ~0.45-0.5, ffxi-gcn at 0.90. A per-level ladder therefore misses whichever sites do
+ * not happen to fit it, which is why the level-1 travels found neither the target nor a landmark. The
+ * bank covers the whole live range instead; the level only decides which end of it is likely.
+ */
+const ICON_SCALES_ANY = [0.4, 0.45, 0.5, 0.55, 0.6, 0.67, 0.75, 0.83, 0.9, 1, 1.1, 1.21, 1.3] as const;
+
 /** The travel through the new senses: icon + title, the white ring, the pointer's edge push. */
 async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<MapTravelResult> {
   const now = env.now ?? (() => Date.now());
@@ -1061,12 +1070,37 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
   };
   const target = iconOnly(entry);
   const catalogue = [...LOCATIONS.values()].map(iconOnly);
+
+  // The level is verified from the frame, not from the number of presses: an icon that matched at ~1.21
+  // is level 2, at ~0.90 level 1, at ~0.67 level 0 (measured 2026-11-09). One correction each way.
+  for (let repair = 0; repair < 2; repair += 1) {
+    const current = await image();
+    if (current === null) break;
+    const wide = findSite(current, target, {
+      strip: MAP_STRIP, iconScales: [0.6, 0.67, 0.75, 0.83, 0.9, 0.98, 1.08, 1.21, 1.3], titleScales: [1], wantTitle: false,
+    });
+    if (wide === null) break;
+    if (wide.iconScale > 1.05) {
+      env.log?.('wvd: the level reads ' + wide.iconScale + ' (too close); zooming out once');
+      await env.actuator.holdKey(ZOOM_KEY_OUT, 60);
+      await env.sleep(420);
+    } else if (wide.iconScale < 0.75) {
+      env.log?.('wvd: the level reads ' + wide.iconScale + ' (too far); zooming in once');
+      await env.actuator.holdKey(ZOOM_KEY_IN, 60);
+      await env.sleep(420);
+    } else {
+      break;
+    }
+  }
+  // The atlas hint: which way the target lies from the view's own centre (other sites inform, never gate).
+  const atlasPoint = siteById(entry.id);
   const senses: MapSenses = {
     site: async (level, wantTitle) => {
       const current = await image();
       if (current === null) return null;
       const found = findSite(current, target, {
-        strip: MAP_STRIP, iconScales: levels(level), titleScales: [1], wantTitle,
+        strip: MAP_STRIP, iconScales: [...ICON_SCALES_ANY], titleScales: [1], wantTitle,
+        minIconScore: 0.78,
       });
       return found === null ? null : { at: found.point, confidence: found.confidence };
     },
@@ -1082,7 +1116,7 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
       const current = await image();
       if (current === null) return null;
       const found = findSites(current, catalogue, {
-        strip: MAP_STRIP, iconScales: levels(1), wantTitle: false, minIconScore: ATLAS_ICON_FLOOR,
+        strip: MAP_STRIP, iconScales: [...ICON_SCALES_ANY], wantTitle: false, minIconScore: ATLAS_ICON_FLOOR,
       });
       const best = found[0];
       return best === undefined ? null : { id: best.id, at: best.point };
@@ -1106,7 +1140,19 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
     sleep: (ms) => env.sleep(ms),
     log: (line) => env.log?.(line),
   };
-  const travelled = await travelToSite(senses, input, { now });
+  const travelled = await travelToSite(senses, input, {
+    now,
+    nextDirection: async () => {
+      const site = atlasPoint;
+      const current = await image();
+      if (site === null || current === null) return 'd';
+      const located = locateView(current, undefined);
+      if (located === null) return 'd';
+      const dx = site.x - (located.offset.x + MAP_STRIP.width / 2);
+      const dy = site.y - (located.offset.y + MAP_STRIP.height / 2);
+      return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'd' : 'a') : (dy > 0 ? 's' : 'w');
+    },
+  });
   if (!travelled.ok) return travelled;
   const left = await poll(env, (screen) => screen !== 'worldmap', LEAVE_TIMEOUT_MS, now, 'location-not-found');
   return left.ok ? travelled : { ok: false, reason: 'not-found', detail: 'the map did not leave after the tap' };
