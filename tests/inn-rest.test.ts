@@ -5,6 +5,8 @@ import type { Frame, RgbaImage } from '../src/contracts.ts';
 import { InnRestPerceiver, REST_BLUR_MAX, REST_CAPTION_SHARE, REST_TITLE_INK_MAX, blurScore, captionShare, titleInk } from '../src/perception/inn-rest.ts';
 
 const REST = new URL('../testdata/screens/2026-11-07-inn-rest/', import.meta.url);
+/** The dungeon floor-selection page, captured from the game: its title is the decider. */
+const SELECT = new URL('../testdata/screens/2026-11-09-dungeon-select/', import.meta.url);
 const CHEST = new URL('../testdata/chest/2026-10-24-live-qte/', import.meta.url);
 const MESSAGE = new URL('../testdata/screens/2026-11-06-message/', import.meta.url);
 const ITEM = new URL('../testdata/screens/2026-11-07-item-detail/', import.meta.url);
@@ -37,9 +39,13 @@ describe('the title veto', () => {
     expect(titleInk(rest)).toBeLessThan(REST_TITLE_INK_MAX);
     expect((await new InnRestPerceiver().observe(frameOf(rest))).screen).toBe('inn-rest');
 
-    // No Dungeon Select frame is in the corpus, so what is asserted here is the *margin* the veto has:
-    // the rest scene passes, and the nearest non-rest page in the corpus stays under it too (the veto is
-    // for a page with a title, which this corpus does not hold yet). The frame is the missing fixture.
+    // The page itself, captured live on 2026-11-09 03:12 with the engine's own capture: its title band
+    // carries the dungeon's name, and the gate reads 0.1685 against the bound 0.03 — 5.6x over, while the
+    // rest scene reads 0.0000.
+    const list = await image('frame.jpg', SELECT);
+    expect(titleInk(list)).toBeGreaterThan(REST_TITLE_INK_MAX * 3);
+    expect((await new InnRestPerceiver().observe(frameOf(list))).screen).not.toBe('inn-rest');
+
     const rooms = await image('inn-rooms-1280.jpg', new URL('../testdata/screens/2026-11-06-inn/', import.meta.url));
     expect(titleInk(rooms)).toBeLessThan(REST_TITLE_INK_MAX);
     expect((await new InnRestPerceiver().observe(frameOf(rooms))).screen).not.toBe('inn-rest');
