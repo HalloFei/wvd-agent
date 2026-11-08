@@ -158,7 +158,10 @@ describe('travelViaAtlas', () => {
     expect(result.ok).toBe(true);
     expect(result.trace?.located).toMatchObject({ by: 'anchor', offset: { x: 100, y: 60 } });
     expect(result.trace?.placed).toMatchObject({ offset: { x: 228, y: 0 }, level: 3 });
-    expect(result.trace?.zooms).toBe(3);
+    // One zoom, not the plan's three: since 2026-11-07 the travel confirms the node on the map it
+    // already has and zooms only while it does not (the operator's rule — already visible, tap it).
+    // The fake's icon confirms at level 1 for this placement.
+    expect(result.trace?.zooms).toBe(1);
     expect(result.trace?.confirmed?.by).toBe('icon');
     expect(session.left).toBe(true);
     expect(session.taps).toHaveLength(1);

@@ -1302,6 +1302,22 @@ was made from — the 2026-11-08 clean had deleted `.tmp/map-live2.jpg`, the onl
 (task t-mw7bd15m-jnzs3k). (2) A stall snapshot should be lossless, or the refusal it documents is not
 reproducible from it.
 
+## One `G`, not two — the map opener's second press was a walk order (2026-11-08)
+
+`openMap` pressed `G` twice: the reading was "G opens the menu, G again opens the map" (2026-10-24,
+the JPEG-capture era), and the second press waited `MENU_SETTLE_MS`.
+
+Measured live 2026-11-08, eight trials from the walking view: **one `G` opens the map every time**,
+every frame reading `dungeonmap 0.85`. And the second press is not free: on the open map `G` is
+移動至目的地, so it orders a walk to the cursor and the frame then carries the destination marker
+instead of the party's chevron. Live 12:12 the exit script's pair did exactly that, the map stopped
+reading (`no-chevron`) for the whole 8 s the step waited, and the run stopped at exit step 2 with
+`expect-timeout` — 15 s into a three-cycle run whose map had just been made readable.
+
+**Fix.** `openMap` is one press, and the task file's two exit openers are one `G` each (`MENU_SETTLE_MS`
+is gone). Proved by `tests/automove.test.ts` (17), `tests/world.test.ts` + `tests/console.test.ts` +
+`tests/tasks.test.ts` + `tests/task-run.test.ts` (188) and the full suite.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

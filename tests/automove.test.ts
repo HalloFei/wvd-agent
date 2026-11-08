@@ -85,36 +85,19 @@ describe('the automove command chain (navigation §3d)', () => {
     });
   });
 
-  it('opens the map with G, waits for the menu, then presses G again', async () => {
-    vi.useFakeTimers();
+  it('opens the map with a single G — the second press would be a walk order', async () => {
+    // Measured live 2026-11-08: one G from the walking view opens the map in 8 of 8 trials. On the
+    // open map G is 移動至目的地, so the old pair ordered a walk and the destination marker replaced
+    // the party's chevron, which the map reader needs (the run of 12:12 stopped on it at exit step 2).
     const actuator = fakeActuator();
-    const opening = openMap(actuator);
-
-    // Only the menu press has happened yet: the second G waits for the menu to be drawn.
-    await vi.advanceTimersByTimeAsync(0);
+    await expect(openMap(actuator)).resolves.toEqual({ ok: true });
     expect(actuator.presses).toEqual([{ scan: SCAN.destination, holdMs: PRESS_MS }]);
-
-    await vi.advanceTimersByTimeAsync(5_000);
-    await expect(opening).resolves.toEqual({ ok: true });
-    expect(actuator.presses).toEqual([
-      { scan: SCAN.destination, holdMs: PRESS_MS },
-      { scan: SCAN.destination, holdMs: PRESS_MS },
-    ]);
   });
 
-  it('stops after the first G when the menu press is rejected, and returns it unchanged', async () => {
+  it('returns a rejected press unchanged instead of retrying it', async () => {
     const actuator = fakeActuator(REJECTED);
     await expect(openMap(actuator)).resolves.toBe(REJECTED);
     expect(actuator.presses).toEqual([{ scan: SCAN.destination, holdMs: PRESS_MS }]);
-  });
-
-  it('returns a rejected map press unchanged instead of retrying', async () => {
-    vi.useFakeTimers();
-    const actuator = fakeActuator({ ok: true }, REJECTED);
-    const opening = openMap(actuator);
-    await vi.advanceTimersByTimeAsync(5_000);
-    await expect(opening).resolves.toBe(REJECTED);
-    expect(actuator.presses).toHaveLength(2);
   });
 
   it('walks to a tile in pointer mode: R, the tile, then the popup above it', async () => {
@@ -184,7 +167,6 @@ describe('the automove command chain (navigation §3d)', () => {
     await expect(tileWalk).resolves.toEqual({ ok: true });
 
     expect(actuator.presses).toEqual([
-      { scan: SCAN.destination, holdMs: configured },
       { scan: SCAN.destination, holdMs: configured },
       { scan: SCAN.exit, holdMs: configured },
       { scan: SCAN.pointer, holdMs: configured },

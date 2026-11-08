@@ -1687,7 +1687,7 @@ export class WvdWorld implements World {
       return;
     }
     if (COMMAND_KINDS.has(intent.kind) && this.#failed.has(intent.kind)) {
-      // A blind retry is not a decision: `openMap`'s second `G` on an already-open map is
+      // A blind retry is not a decision: `openMap` presses `G` once now, but a `G` on an already-open map is
       // 移动至目的地. The stall clock turns this into an escalation instead.
       this.#host?.log.warn(`wvd: ${intent.kind} already changed nothing on this screen; not sending it again`);
       return;

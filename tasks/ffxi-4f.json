@@ -23,10 +23,6 @@
         "key": "g"
       },
       {
-        "op": "key",
-        "key": "g"
-      },
-      {
         "op": "expect",
         "screen": "dungeonmap",
         "timeoutMs": 8000
@@ -43,10 +39,6 @@
         "op": "expect",
         "screen": "dungeon",
         "timeoutMs": 8000
-      },
-      {
-        "op": "key",
-        "key": "g"
       },
       {
         "op": "key",

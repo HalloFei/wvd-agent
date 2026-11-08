@@ -39,7 +39,12 @@ describe('parseTask', () => {
     // The exit walks back through both floors, harkens out, then returns to town.
     expect(task.exit).toBeDefined();
     const exit = task.exit!.steps;
-    expect(exit).toContainEqual({ op: 'tap', at: [1787, 96], count: 1 });
+    // The opener is the loop's own action, one `G` (2026-11-08: a second press is 移動至目的地 on the
+    // map); the blind tap on the minimap icon it replaced was never verified on the live client.
+    expect(exit.slice(0, 2)).toEqual([
+      { op: 'key', key: 'g' },
+      { op: 'expect', screen: 'dungeonmap', timeoutMs: 8000 },
+    ]);
     expect(exit).toContainEqual({ op: 'tap', at: [960, 714], count: 1 });
     expect(exit.at(-2)).toEqual({ op: 'travel', to: 'vnh' });
     expect(exit.at(-1)).toEqual({ op: 'expect', screen: 'town', timeoutMs: 30000 });

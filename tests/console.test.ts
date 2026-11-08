@@ -528,7 +528,7 @@ describe('cancel-escalation', () => {
     expect(status.question).toBeNull();
     expect(status.canCancel).toBe(false);
     // The resumed tick takes the loop's own fallback: opening the map (G twice, never F blind).
-    expect(actuator.calls).toEqual(['key 34 60', 'key 34 60']);
+    expect(actuator.calls).toEqual(['key 34 60']);
     expect(host.pushed.filter((pushed) => pushed.type === 'wvd.stopped')).toHaveLength(0);
   });
 

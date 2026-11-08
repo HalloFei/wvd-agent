@@ -552,14 +552,14 @@ describe('the tick', () => {
     await world.tick();                                   // one frame of the view: not yet a decision
     expect(actuator.calls).toEqual([]);
     await world.tick();                                   // the second frame: the route may command
-    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`]);
 
     // mapOpenTimeoutMs passes with the 3-D view still up: the map command changed nothing.
     clock.advance(3_100);
     await world.tick();
     clock.advance(100);
     await world.tick();
-    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`]);
 
     // The farm advances: the map is up and the party moved. The guard clears, and the loop acts on
     // the new readout instead of staying silent.
@@ -572,7 +572,6 @@ describe('the tick', () => {
     clock.advance(100);
     await world.tick();
     expect(actuator.calls).toEqual([
-      `key ${SCAN.G} 60`,
       `key ${SCAN.G} 60`,
       ...walkCalls(mapOf(moved)),
     ]);
@@ -1071,7 +1070,6 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(actuator.calls).toEqual([
       ...walkOne(),
       `key ${SCAN.G} 60`,
-      `key ${SCAN.G} 60`,
     ]);
   });
 
@@ -1532,7 +1530,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     await world.tick();
     clock.advance(500);
     await world.tick();
-    expect(actuator.calls.slice(fightCalls)).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    expect(actuator.calls.slice(fightCalls)).toEqual([`key ${SCAN.G} 60`]);
   });
 
   it('heals once after a battle, and again after a chest, and not twice on the same view', async () => {
@@ -1636,7 +1634,6 @@ describe('the command gates', () => {
     expect(actuator.calls).toEqual([
       `key ${SCAN.F} 60`,
       `key ${SCAN.G} 60`,
-      `key ${SCAN.G} 60`,
     ]);
   });
 
@@ -1699,7 +1696,7 @@ describe('the task entry hand-off', () => {
     clock.advance(200);
     await world.tick();
     // Arrival releases the hand-off and the route's first command goes out in the same tick.
-    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`]);
   });
 });
 
@@ -1725,7 +1722,7 @@ describe('the stall policy', () => {
     expect(stuck).toHaveLength(1);
     // no answer → the policy's own recovery: open the map (G twice), never `F` blind — on the 3D
     // view F is 調査, and the exit is only a command on the map (navigation §3d)
-    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`]);
   });
 
   it('stops at stallStopSeconds, after the escalation has had its chance', async () => {
@@ -2067,7 +2064,7 @@ describe('the escalation exchange', () => {
     await world.tick();
 
     expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(0);
-    expect(actuator.calls).toEqual(['key ' + SCAN.G + ' 60', 'key ' + SCAN.G + ' 60']);
+    expect(actuator.calls).toEqual(['key ' + SCAN.G + ' 60']);
     expect(host.logRecords.some((record) => record.message.includes('opening the map to ask the game'))).toBe(true);
   });
 
@@ -2092,7 +2089,7 @@ describe('the escalation exchange', () => {
     await world.tick();
 
     expect(host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck')).toHaveLength(0);
-    expect(actuator.calls.slice(0, 2)).toEqual(['key ' + SCAN.G + ' 60', 'key ' + SCAN.G + ' 60']);
+    expect(actuator.calls.slice(0, 2)).toEqual(['key ' + SCAN.G + ' 60']);
   });
 
   it('says "cooling down" once per cooldown, not once per tick', async () => {
@@ -2186,7 +2183,7 @@ describe('the escalation exchange', () => {
     await tick;
 
     // the intent the model named, not the fallback
-    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`, `key ${SCAN.G} 60`]);
+    expect(actuator.calls).toEqual([`key ${SCAN.G} 60`]);
 
     // a late answer hears "nothing is waiting" before its arguments are even looked at
     const late = outcome(await resume.handler({ intent: { kind: 'dance' } }, CTX));
@@ -2853,8 +2850,8 @@ describe('the orientation', () => {
     return { task, calls };
   }
 
-  /** The two presses of openMap, as the fake actuator records them. */
-  const GG = ['key ' + SCAN.G + ' 60', 'key ' + SCAN.G + ' 60'];
+  /** The one press of openMap (2026-11-08: the second was a walk order), as the fake records it. */
+  const GG = ['key ' + SCAN.G + ' 60'];
 
 
   it('reads the harken menu: the named row when it is offered, 归还 when it is not', async () => {
@@ -3642,7 +3639,7 @@ describe('the recovery', () => {
     clock.advance(600);
     await world.tick();
 
-    expect(actuator.calls).toEqual(['key ' + SCAN.G + ' 60', 'key ' + SCAN.G + ' 60']);
+    expect(actuator.calls).toEqual(['key ' + SCAN.G + ' 60']);
     // Not a recover intent at all: the loop's own fallback is the last decision it took.
     expect(host.logRecords.some((line) => line.message.includes('no step to press'))).toBe(false);
     const status = outcome(await tool(world, 'wvd_status').handler({}, CTX));
