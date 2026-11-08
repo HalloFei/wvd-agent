@@ -8,85 +8,14 @@
     "site": "ffxi-gcn",
     "zone": "ffxi-zone3"
   },
+  "leave": {
+    "to": "vnh"
+  },
   "rest": {
     "at": [
       916,
       488
     ],
     "timeoutMs": 90000
-  },
-  "exit": {
-    "timeoutMs": 300000,
-    "steps": [
-      {
-        "op": "open-map"
-      },
-      {
-        "op": "expect",
-        "screen": "dungeonmap",
-        "timeoutMs": 12000
-      },
-      {
-        "op": "key",
-        "key": "f"
-      },
-      {
-        "op": "wait",
-        "ms": 8000
-      },
-      {
-        "op": "expect",
-        "screen": "dungeon",
-        "timeoutMs": 20000
-      },
-      {
-        "op": "open-map"
-      },
-      {
-        "op": "expect",
-        "screen": "dungeonmap",
-        "timeoutMs": 12000
-      },
-      {
-        "op": "key",
-        "key": "f"
-      },
-      {
-        "op": "wait",
-        "ms": 8000
-      },
-      {
-        "op": "tap",
-        "at": [
-          960,
-          714
-        ]
-      },
-      {
-        "op": "wait",
-        "ms": 800
-      },
-      {
-        "op": "tap",
-        "at": [
-          960,
-          714
-        ]
-      },
-      {
-        "op": "expect",
-        "screen": "dungeon-select",
-        "timeoutMs": 20000
-      },
-      {
-        "op": "travel",
-        "to": "vnh"
-      },
-      {
-        "op": "expect",
-        "screen": "town",
-        "timeoutMs": 30000
-      }
-    ]
   }
 }

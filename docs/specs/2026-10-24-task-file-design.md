@@ -307,12 +307,21 @@ script a task may name.
    tolerance), return `{ kind: 'stop', reason }` naming both keys. This runs on the frame the loop
    would steer from, before `inner.next` can yield a `move`.
 2. `inner.next(state)` — unchanged, so every existing test keeps its meaning.
-3. If the intent is `exit` and the task has an exit script → `{ kind: 'run-script', name: 'exit' }`.
+3. If the intent is `exit` and the task has an exit script **or a leave goal** →
+   `{ kind: 'run-script', name: 'exit' }`.
 4. Otherwise pass the intent through.
 
-No other rule; the session ends when the exit script returns. The gate is not in `enter` because a
+No other rule; the session ends when the exit stage returns. The gate is not in `enter` because a
 blind script cannot wait out a game-driven walk, a fight or the 打开 prompt, and the map it would
 have to read is opened by the loop afterwards (see §7.2).
+
+**The leave goal replaces the exit script's cursor** (operator rule 2026-11-09). The runner hands the
+World `{ to, farmFloor, knownFloors }` (`SessionTask.leave`), and the World asks
+`policy/leave.ts` every tick which order the frame and floor allow — farm floor → F; another site
+floor → F; harken page → the **matched** 归还 row (never a coordinate, and never on the farm floor);
+off-site floor → stop; town → arrived; `loading`/`unknown` → wait; anything else → yield. There is no
+step index to fall out of sync, which is what the scripted exit did when an interrupted run resumed
+mid-route.
 
 ### 7.10 Config
 

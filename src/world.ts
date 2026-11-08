@@ -67,6 +67,7 @@ import type {
   TravelOutcome,
   BattleMemberReader,
   BattleOpener,
+  TaskLeaveRoute,
 } from './contracts.ts';
 import { WVD_CONFIG_GROUP, WVD_ID, type WvdConfigSection } from './config.ts';
 import { DISARM_SCAN } from './actions/chest.ts';
@@ -75,6 +76,7 @@ import { nextPageCloseTries } from './policy/page-episode.ts';
 import { createTrust } from './policy/trust.ts';
 import { HealSequence } from './policy/heal-sequence.ts';
 import { HealSchedule } from './policy/heal-schedule.ts';
+import { CHEST_PROBE_MS, nextChestProbe } from './policy/chest-probe.ts';
 import { isExpectedFloor } from './tasks/steps.ts';
 import { OPERATION_PACE_MS, Pacer, STABLE_FRAMES } from './policy/pacing.ts';
 import { BattleSequence } from './policy/battle-sequence.ts';
@@ -95,6 +97,7 @@ import { openerCardCentre, openerSlot } from './perception/opener.ts';
 import { openerFor } from './actions/battle.ts';
 import { chooseOpener } from './policy/chest.ts';
 import { nextOrientStep, type OrientCommand } from './policy/orient.ts';
+import { nextLeaveStep, type LeaveCommand } from './policy/leave.ts';
 import { recoverStep } from './policy/recover.ts';
 import { chooseInnRest } from './policy/inn.ts';
 import { restAtInn } from './actions/inn.ts';
@@ -136,6 +139,12 @@ export interface RouteCommands {
    */
   automoveToTile(cell: Point, pointerOn: boolean | null): Promise<ActionResult>;
   automoveToExit(): Promise<ActionResult>;
+  /**
+   * 移动至宝箱 (**E** on the open map, measured live 2026-11-09): the game walks the party to a chest
+   * it picks. Not the farm's way to claim a chest — the last check before the exit asks the game
+   * whether any chest is reachable at all (`policy/chest-probe.ts`).
+   */
+  automoveToChest(): Promise<ActionResult>;
   /** Accept the `打开` prompt of the chest the party stands at. */
   acceptChestPrompt(): Promise<ActionResult>;
   /** Collect the chest loot card with one tap at its measured centre. */
@@ -398,6 +407,12 @@ const HEAL_DEADLINE_MS = 12_000;
  * screen that never comes back, not the budget of the heal's own steps.
  */
 const HEAL_HARD_DEADLINE_MS = 60_000;
+/**
+ * How long the party may be walking after the E check before the leave may act again, ms. The walk is
+ * the game's own (it knows the route); 20 s covers the floor's longest measured chest walk, and the
+ * bound only exists so a walk that never ends cannot hold the leave.
+ */
+const CHEST_PROBE_WALK_MS = 20_000;
 /**
  * How long the skill panel's 確定 may stay owed before the cast is given up, ms. Measured: the panel
  * is drawn within one frame of the slot tap; four seconds is four chances at it.
@@ -814,6 +829,13 @@ export class WvdWorld implements World {
   #healSchedule: HealSchedule;
   /** The run stats' completed counts as of the previous tick, so each battle/chest is one event. */
   #healSeen: { readonly battles: number; readonly chests: number } = { battles: 0, chests: 0 };
+  /**
+   * The last reachable-chest check before the exit (policy/chest-probe.ts, operator 2026-11-09): the
+   * floor the E press was sent on and when, and the floor it already answered for (never asked twice).
+   * While a probe runs the leave waits — the probe owns the frame until the game answers.
+   */
+  #chestProbe: { readonly floor: string; readonly atMs: number } | null = null;
+  #chestProbeDone: string | null = null;
 
   /**
    * The orientation phase (contracts §10, the goal form). True from the session start until the map
@@ -825,6 +847,14 @@ export class WvdWorld implements World {
   #orientAbort: AbortController | null = null;
   #orientTravelFailures = 0;
   #orientClimbs = 0;
+  /**
+   * The leave goal in progress (contracts §10, 2026-11-09): the policy said exit and the party is not
+   * back in town yet. There is **no cursor** — each tick's frame and floor decide (policy/leave.ts),
+   * so an interrupted leave resumes on whatever screen the game is actually on.
+   */
+  #leaving = false;
+  /** Travel failures spent on the leave, so a dead destination cannot be retried forever. */
+  #leaveTravelFailures = 0;
   /** Until this instant the loop only watches: a travel or a climb just landed on a loading fade. */
   #settleUntilMs = 0;
   /** The screen the settle started from: the frame that still shows it is not the load finishing. */
@@ -1207,6 +1237,8 @@ export class WvdWorld implements World {
       this.#restGate = null;
       this.#battlesEntered = 0;
       this.#orienting = false;
+      this.#leaving = false;
+      this.#leaveTravelFailures = 0;
       this.#orientAbort = null;
       this.#orientTravelFailures = 0;
       this.#orientClimbs = 0;
@@ -1424,6 +1456,36 @@ export class WvdWorld implements World {
     // One command at a time: a sent command owns the loop until its own effect answers it. The
     // verdict is still taken — a stalled action has to be able to escalate — but nothing is sent.
     const waiting = await this.#advanceInFlight(observation, frame, now);
+
+    // The last reachable-chest check's answer (policy/chest-probe.ts, operator 2026-11-09): a chest
+    // screen is the game's yes, the map closing is its walk, and the map staying past the window is its
+    // no. A "no" releases the walk it is holding and lets the leave press F.
+    if (this.#chestProbe !== null) {
+      const probe = this.#chestProbe;
+      const decision = nextChestProbe(observation, {
+        probe,
+        done: this.#chestProbeDone,
+        farmFloor: this.#task?.leave?.farmFloor ?? null,
+        chestsShown: this.#lastMapRead?.chests.length ?? 0,
+      }, now);
+      if (decision.kind === 'found') {
+        this.#chestProbeDone = probe.floor;
+        this.#chestProbe = null;
+        this.#host?.log.info('wvd: the E check found a chest; the farm continues');
+      } else if (decision.kind === 'none') {
+        this.#chestProbeDone = probe.floor;
+        this.#chestProbe = null;
+        this.#inFlight = null;
+        this.#host?.log.info(
+          `wvd: the E check found no reachable chest in ${CHEST_PROBE_MS / 1000} s; the exit proceeds`,
+        );
+      } else if (decision.kind === 'walking' && now - probe.atMs >= CHEST_PROBE_WALK_MS) {
+        this.#chestProbeDone = probe.floor;
+        this.#chestProbe = null;
+        this.#inFlight = null;
+        this.#host?.log.warn('wvd: the E check has been walking too long; the exit proceeds');
+      }
+    }
 
     // A probe's outcome is evidence, not a side effect: the Esc that was owed for an unnamed frame has
     // been answered by a named screen, so the log says what the frame was. This is the line that was
@@ -1678,7 +1740,20 @@ export class WvdWorld implements World {
     // farm floor's row; when the menu offers it the World taps it (the teleport). When it does not, the
     // 归还 row backs the party out and the stair icon is the way up.
     if (!waiting && observation.screen === 'harken-menu') {
+      // One owner per page (operator rule 2026-11-09): while the leave goal runs, the leave judges this
+      // page from the frame and the floor (policy/leave.ts); this branch is the orientation's.
+      if (this.#leaving) return;
       if (!this.#pacer.ready(now)) return;
+      // The farm floor may never take 归还 (operator rule 2026-11-09): the party's way off the floor
+      // it farms is that floor's own exit, never the harken. Back out of the page instead of leaving.
+      const farmFloor = this.#task?.orient?.floor ?? null;
+      const floor = this.#lastMapRead?.floor ?? null;
+      if (farmFloor !== null && floor !== null && isExpectedFloor(farmFloor, floor)) {
+        this.#pacer.act(now);
+        this.#host?.log.warn('wvd: the harken page is open on the farm floor; backing out instead of taking 归还');
+        await this.#commands.escape();
+        return;
+      }
       const destination = this.#task?.orient?.goal.climb?.destination;
       const wanted = destination === undefined
         ? null
@@ -1764,7 +1839,10 @@ export class WvdWorld implements World {
     // escalated six times and the fallback's map presses opened the inn dialog, which no recogniser
     // names). Its own step is progress the loop cannot see, exactly as a finished script is.
     if (verdict === 'ok' && !waiting && this.#staging !== null && !WORLD_SCREENS.has(observation.screen)) {
-      this.#lastProgressAtMs = now;
+      // A cursor stage's step is progress the loop cannot see; the leave goal is judged per frame, so
+      // only its own commands count as progress (it marks them) — a leave waiting on an unnamed frame
+      // must still reach the stall clock.
+      if (this.#task?.leave === undefined) this.#lastProgressAtMs = now;
       await this.#execute({ kind: 'run-script', name: this.#staging }, observation.screen, {
         session,
         frame,
@@ -2558,6 +2636,10 @@ export class WvdWorld implements World {
     this.#qteRerolls = 0;
     this.#rearmBattle();
     this.#askedForMap = false;
+    // A leave that was interrupted by the cycle boundary is over: the next exit is a fresh goal,
+    // judged from its own first frame (there is no cursor to carry).
+    this.#leaving = false;
+    this.#leaveTravelFailures = 0;
     this.#pacer.reset();
     this.#lootTapAtMs = null;
     this.#lootTaps = 0;
@@ -2572,6 +2654,9 @@ export class WvdWorld implements World {
     this.#healSchedule.resetCycle();
     this.#heal = null;
     this.#healWaitOn = null;
+    // A fresh cycle asks the game again: the floor's chests may have been reset by the new visit.
+    this.#chestProbe = null;
+    this.#chestProbeDone = null;
   }
 
   /**
@@ -3213,6 +3298,15 @@ export class WvdWorld implements World {
         // observed and keeps its own tick, so a battle, the chest after it, or the death scene is
         // dispatched by the loop and the stage resumes from its cursor.
         this.#staging = intent.name;
+        // The exit as a goal (contracts §10, 2026-11-09): no cursor and no step — the frame and the
+        // floor decide. The staging pump keeps it alive; this sends at most one command per tick, so
+        // an interrupted leave resumes on whatever screen the game is actually on.
+        if (task.leave !== undefined && intent.name === 'exit') {
+          this.#leaving = true;
+          if (context === undefined) return;
+          await this.#leaveStep(task.leave, context);
+          return;
+        }
         const result = context === undefined
           ? await task.runScript(intent.name)                 // no frame: the script runs blocking
           : await task.runScript(intent.name, context.observation);
@@ -3237,20 +3331,9 @@ export class WvdWorld implements World {
         // The stage's own screens and presses are progress the loop could not see while it ran.
         this.#lastProgressAtMs = this.#now();
         if (intent.name !== 'exit') return;
-        // The cycle ends where it began: asleep at the inn (operator rule 2026-11-06). The exit script
-        // only brings the party back to the town; the inn is one measured control from there and the
-        // visit is the plug-in's. The cycle counts once the party is back on the town's own screen.
-        const rest = this.#task?.rest;
-        if (rest === undefined) {
-          await this.#finishCycle();
-          return;
-        }
-        this.#restGate = { sinceMs: this.#now(), timeoutMs: rest.timeoutMs, seenInn: false };
-        this.#host?.log.info(`wvd: the cycle ends with a rest at the inn: tapping the town's inn control at ${rest.at.x},${rest.at.y}`);
-        const opened = await this.#commands.tapPoint(rest.at);
-        if (!opened.ok) {
-          this.#host?.log.warn(`wvd: the inn control tap was refused (${opened.reason})`);
-        }
+        // The cycle ends where it began: asleep at the inn (operator rule 2026-11-06). The same gate
+        // closes a scripted exit and a leave goal, so the two cannot drift.
+        await this.#beginRestGate();
         return;
       }
       case 'stop':
@@ -3269,6 +3352,166 @@ export class WvdWorld implements World {
    * The two presses go through `#press` so they share the loop's in-flight rules: a map that never
    * opens is not pressed twice, and a walk is waited out by arrival like any other.
    */
+  /**
+   * One tick of the leave goal (contracts §10, 2026-11-09): ask the frame what this floor allows and
+   * send that one command. There is **no cursor** — so an interrupted leave resumes on whatever
+   * screen and floor the game is actually on, which is the defect this replaces.
+   */
+  async #leaveStep(route: TaskLeaveRoute, context: TickContext): Promise<void> {
+    const { observation } = context;
+    // The last reachable-chest check (operator, 2026-11-09): before the leave presses F on the farm
+    // floor, ask the game itself with E (移动至宝箱) when the map draws no chest. A chest answer is the
+    // farm continuing; the probe's own tick check (above) owns the wait.
+    if (this.#chestProbe !== null) return;
+    const probe = nextChestProbe(observation, {
+      probe: null,
+      done: this.#chestProbeDone,
+      farmFloor: route.farmFloor,
+      chestsShown: this.#lastMapRead?.chests.length ?? 0,
+    }, this.#now());
+    if (probe.kind === 'start' && observation.screen === 'dungeonmap') {
+      const at = this.#now();
+      if (!this.#pacer.ready(at)) return;
+      this.#pacer.act(at);
+      const sent = await this.#press('exit', observation.screen, () => this.#commands.automoveToChest());
+      if (sent !== null && sent.ok) {
+        this.#chestProbe = { floor: observation.map.titleKey, atMs: at };
+        this.#host?.log.info('wvd: the map shows no chest; asking the game with E (移动至宝箱) before the exit');
+      } else if (sent !== null) {
+        this.#chestProbeDone = observation.map.titleKey;
+        this.#host?.log.warn(`wvd: the E check could not be pressed (${sent.reason}); the exit proceeds`);
+      }
+      return;
+    }
+    const decision = nextLeaveStep(observation, {
+      to: route.to,
+      farmFloor: route.farmFloor,
+      knownFloors: route.knownFloors,
+      floor: this.#lastMapRead?.floor ?? null,
+    });
+    switch (decision.kind) {
+      case 'arrived':
+        this.#leaving = false;
+        this.#staging = null;
+        this.#lastProgressAtMs = this.#now();
+        this.#host?.log.info('wvd: the leave arrived in the town');
+        await this.#beginRestGate();
+        return;
+      case 'yield':
+        // The loop's own branches ran before this pump for every screen they own (a chest, a fight,
+        // a loot card, a page, the heal); a screen that still reaches here is a transition. Press
+        // nothing and ask again on the next frame.
+        return;
+      case 'wait':
+        return;
+      case 'stop':
+        this.#leaving = false;
+        this.#staging = null;
+        await this.#stopWithEvidence(context.session, context.frame, decision.reason);
+        return;
+      case 'command':
+        await this.#leaveCommand(decision.command, observation.screen);
+        return;
+      default:
+        return assertNever(decision);
+    }
+  }
+
+  /** Send the one command the leave's frame allowed. */
+  async #leaveCommand(command: LeaveCommand, fromScreen: ScreenId): Promise<void> {
+    const now = this.#now();
+    switch (command.kind) {
+      case 'open-map':
+      case 'exit': {
+        // A command that already changed nothing on this screen is not re-sent: the stall clock is
+        // what escalates it, exactly as on the farm path.
+        if (this.#failed.has(command.kind)) {
+          this.#host?.log.warn(`wvd: leaving: ${command.kind} already changed nothing here; not sending it again`);
+          return;
+        }
+        this.#lastProgressAtMs = now;
+        this.#host?.log.info(command.kind === 'open-map'
+          ? 'wvd: leaving: opening the map to read this floor'
+          : 'wvd: leaving: walking to this floor exit with F');
+        const send = command.kind === 'open-map'
+          ? () => this.#commands.openMap()
+          : () => this.#commands.automoveToExit();
+        await this.#press(command.kind, fromScreen, send);
+        return;
+      }
+      case 'tap-row': {
+        if (!this.#pacer.ready(now)) return;
+        this.#pacer.act(now);
+        this.#lastProgressAtMs = now;
+        const tapped = await this.#commands.tapPoint(command.at);
+        if (tapped.ok) {
+          this.#host?.log.info(`wvd: leaving: tapped the matched ${command.label} row at ${command.at.x},${command.at.y}`);
+        } else {
+          this.#host?.log.warn(`wvd: the ${command.label} row tap was refused (${tapped.reason})`);
+        }
+        return;
+      }
+      case 'back': {
+        if (!this.#pacer.ready(now)) return;
+        this.#pacer.act(now);
+        this.#host?.log.warn('wvd: leaving: backing out of the harken page (this floor may not take 归还)');
+        await this.#commands.escape();
+        return;
+      }
+      case 'travel': {
+        if (this.#cfg.dryRun) {
+          this.#host?.log.info(`wvd: dry run, would travel to ${command.to}`);
+          return;
+        }
+        this.#leaving = true;
+        this.#staging = 'exit';
+        this.#orientAbort ??= new AbortController();
+        this.#host?.log.info(`wvd: leaving: travelling to ${command.to}`);
+        const result = await this.#commands.travel(command.to, this.#orientAbort.signal);
+        if (!this.#running) return;
+        if (result.ok) {
+          this.#leaveTravelFailures = 0;
+          this.#lastProgressAtMs = this.#now();
+          this.#settleUntilMs = this.#now() + ORIENT_SETTLE_MS;
+          this.#settleFrom = this.#lastScreen;
+          return;
+        }
+        this.#leaveTravelFailures += 1;
+        const detail = result.detail === undefined ? '' : ` (${result.detail})`;
+        if (this.#leaveTravelFailures >= ORIENT_TRAVEL_TRIES) {
+          await this.#endSession(
+            `the leave travel to ${command.to} failed ${this.#leaveTravelFailures} times: ${result.reason}${detail}`,
+            { report: true, failed: true },
+          );
+          return;
+        }
+        this.#host?.log.warn(`wvd: the leave travel to ${command.to} failed (${result.reason}${detail}); trying once more`);
+        return;
+      }
+      default:
+        return assertNever(command);
+    }
+  }
+
+  /**
+   * The cycle ends where it began: asleep at the inn (operator rule 2026-11-06). The leave only
+   * brings the party back to the town; the inn is one measured control from there and the visit is
+   * the plug-in's. The cycle counts once the party is back on the town's own screen.
+   */
+  async #beginRestGate(): Promise<void> {
+    const rest = this.#task?.rest;
+    if (rest === undefined) {
+      await this.#finishCycle();
+      return;
+    }
+    this.#restGate = { sinceMs: this.#now(), timeoutMs: rest.timeoutMs, seenInn: false };
+    this.#host?.log.info(`wvd: the cycle ends with a rest at the inn: tapping the town inn control at ${rest.at.x},${rest.at.y}`);
+    const opened = await this.#commands.tapPoint(rest.at);
+    if (!opened.ok) {
+      this.#host?.log.warn(`wvd: the inn control tap was refused (${opened.reason})`);
+    }
+  }
+
   async #orientTo(command: OrientCommand, fromScreen: ScreenId): Promise<void> {
     // The orientation's commands are primitives like every other tap (operator rule 2026-11-03): one per
     // pace, on a frame that has stopped moving. Without this the loop pressed G twice a tick while the

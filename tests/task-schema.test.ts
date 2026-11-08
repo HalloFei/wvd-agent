@@ -36,23 +36,44 @@ describe('parseTask', () => {
     // from the farm area, and its list is not fixed (a harken offers a floor only once it is restored).
     expect(task.goal?.climb).toBeUndefined();
 
-    // The exit walks back through both floors, harkens out, then returns to town.
-    expect(task.exit).toBeDefined();
-    const exit = task.exit!.steps;
-    // The opener is `open-map`: "the map is open", with the runner looking before it presses (one `G`
-    // from the walking view; a `G` on an already-open map is 移動至目的地 — live 2026-11-08 13:32, the
-    // third cycle's exit stopped at step 1 because the map was already open).
-    expect(exit.slice(0, 2)).toEqual([
-      { op: 'open-map' },
-      { op: 'expect', screen: 'dungeonmap', timeoutMs: 12000 },
-    ]);
-    expect(exit).toContainEqual({ op: 'tap', at: [960, 714], count: 1 });
-    expect(exit.at(-2)).toEqual({ op: 'travel', to: 'vnh' });
-    expect(exit.at(-1)).toEqual({ op: 'expect', screen: 'town', timeoutMs: 30000 });
+    // The exit is a **goal**, not a script (operator rule 2026-11-09): the World judges the frame and
+    // the floor every tick, so an interrupted exit is re-derived instead of resuming a cursor. The
+    // only data is where the cycle returns to.
+    expect(task.exit).toBeUndefined();
+    expect(task.leave).toEqual({ to: 'vnh' });
 
     // The cycle ends asleep at the inn (operator rule 2026-11-06): the rest town's 旅店 control,
     // measured 2026-11-06, and the visit's bound (the whole visit measured 23 s).
     expect(task.rest).toEqual({ at: { x: 916, y: 488 }, timeoutMs: 90000 });
+  });
+
+  it('parses a leave goal, and refuses the two exit forms at once', () => {
+    const goal = {
+      id: 't', label: 't', floor: { titleKey: 'a'.repeat(32) },
+      goal: { site: 'vnh' }, leave: { to: 'vnh' },
+    };
+    const loaded = parseTask(text(goal), TRAVEL_IDS);
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    expect(loaded.task.leave).toEqual({ to: 'vnh' });
+    expect(loaded.task.exit).toBeUndefined();
+
+    // Two answers to one question.
+    expect(parseTask(text({ ...goal, exit: { steps: [{ op: 'wait', ms: 1 }] } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'exclusive-field' });
+
+    // The leave belongs to the goal form; a scripted task keeps its measured exit.
+    const { goal: _goal, ...scripted } = goal;
+    expect(parseTask(text({ ...scripted, entry: { steps: [{ op: 'wait', ms: 1 }] } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'missing-field' });
+
+    // A destination the catalog does not know refuses at load, not mid-leave.
+    expect(parseTask(text({ ...goal, leave: { to: 'nowhere' } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'unknown-location' });
+
+    // An unknown field in the leave is refused, never ignored.
+    expect(parseTask(text({ ...goal, leave: { to: 'vnh', when: 'after' } }), TRAVEL_IDS))
+      .toMatchObject({ ok: false, reason: 'unknown-field' });
   });
 
   it('accepts a task without an exit script', () => {

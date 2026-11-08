@@ -26,6 +26,12 @@ export interface TaskRunnerDeps {
   readonly perceiver: Perceiver;
   readonly actuator: Actuator;
   readonly log: (line: string) => void;
+  /**
+   * Every floor of the site this deployment runs, the farm floor included: the leave goal judges a
+   * map against them (policy/leave.ts). Absent means the task's own floor only — an entry floor then
+   * reads as unknown and the leave stops rather than presses, which is the safe side.
+   */
+  readonly knownFloors?: readonly string[];
 }
 
 /** How long the exit script waits for the map to close before it refuses to press anything. */
@@ -199,5 +205,16 @@ export function createTaskRunner(deps: TaskRunnerDeps): SessionTask {
     // The cycle's rest (operator rule 2026-11-06): the task's measured inn control, handed to the
     // World unchanged — the World owns the tap and the end-of-cycle condition.
     ...(deps.task.rest === undefined ? {} : { rest: deps.task.rest }),
+    // The leave goal (2026-11-09): the World judges the exit from each frame, so what crosses to it
+    // is the destination, the farm floor and the floors the site can recognise — never a cursor.
+    ...(deps.task.leave === undefined
+      ? {}
+      : {
+        leave: {
+          to: deps.task.leave.to,
+          farmFloor: deps.task.floor.titleKey,
+          knownFloors: deps.knownFloors ?? [deps.task.floor.titleKey],
+        },
+      }),
   };
 }

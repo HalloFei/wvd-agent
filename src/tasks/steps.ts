@@ -28,6 +28,9 @@ import {
  */
 export const TASK_KEYS: Readonly<Record<TaskKeyName, number>> = {
   g: 0x22,
+  // 移动至宝箱: **E** on the current build's legend (measured live 2026-11-09 — one press walks the
+  // party to a chest); `l` stays mapped to the old L code for a task file written against it.
+  e: 0x12,
   l: 0x26,
   q: 0x10,
   f: 0x21,
@@ -176,13 +179,27 @@ async function runStep(step: TaskStep, index: number, env: ScriptEnv, floorKey: 
     case 'open-map': {
       // "The map is open" is the step's meaning, so it looks before it presses: one `G` opens it from
       // the walking view (8 of 8 live, 2026-11-08), and a `G` on an already-open map is 移動至目的地.
-      const captured = await captureWithRetry(env);
-      if (isStop(captured)) return stopped(index, captured.reason, captured.detail);
-      const observation = await env.observe(captured);
-      if (observation.screen === 'dungeonmap') return null;
-      const pressed = await env.actuator.holdKey(TASK_KEYS.g, DEFAULT_HOLD_MS);
-      if (pressed.ok) return null;
-      return stopped(index, pressed.reason, pressed.detail);
+      //
+      // It presses only from a **named** screen: a `G` sent into an unnamed frame is dropped. The
+      // leave cutscene after 移動至出口 holds a HUD-less 3-D view (2026-11-08/09), and pressing into it
+      // is how the exit died at its second `expect dungeonmap` (live 2026-11-09 03:39, step 6).
+      const deadline = Date.now() + DEFAULT_EXPECT_TIMEOUT_MS;
+      for (;;) {
+        if (env.abort.aborted) return stopped(index, 'cancelled');
+        const captured = await captureWithRetry(env);
+        if (isStop(captured)) return stopped(index, captured.reason, captured.detail);
+        const observation = await env.observe(captured);
+        if (observation.screen === 'dungeonmap') return null;
+        if (observation.screen !== 'unknown' && observation.screen !== 'loading') {
+          const pressed = await env.actuator.holdKey(TASK_KEYS.g, DEFAULT_HOLD_MS);
+          if (pressed.ok) return null;
+          return stopped(index, pressed.reason, pressed.detail);
+        }
+        if (Date.now() >= deadline) {
+          return stopped(index, 'expect-timeout', `screen stayed ${observation.screen}`);
+        }
+        await sleepUnlessAborted(env, OBSERVE_INTERVAL_MS);
+      }
     }
     case 'wait':
       await sleepUnlessAborted(env, step.ms!);
@@ -354,6 +371,15 @@ export async function advanceSteps(
           continue;
         }
         if (screen === null) return { kind: 'waiting' };
+        // A `G` into an unnamed frame is dropped (the leave cutscene after 移動至出口). Wait for the
+        // game to name a screen before pressing — the step's own deadline still bounds the wait.
+        if (screen === 'unknown' || screen === 'loading') {
+          cursor.untilMs ??= Date.now() + DEFAULT_EXPECT_TIMEOUT_MS;
+          if (Date.now() >= cursor.untilMs) {
+            return { kind: 'failed', stop: stopped(cursor.index, 'expect-timeout', `screen stayed ${screen}`) };
+          }
+          return { kind: 'waiting' };
+        }
         const pressed = await env.actuator.holdKey(TASK_KEYS.g, DEFAULT_HOLD_MS);
         if (!pressed.ok) return { kind: 'failed', stop: stopped(cursor.index, pressed.reason, pressed.detail) };
         cursor.untilMs = null;

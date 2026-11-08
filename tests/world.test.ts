@@ -33,7 +33,7 @@ import type {
   BattleMemberReader,
   BattleOpener,
 } from '../src/contracts.ts';
-import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
+import { automoveToChest, automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 import { acceptChestPrompt, cancelQte, DISARM_SCAN, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from '../src/actions/chest.ts';
 import { closeCharacterPage } from '../src/actions/heal.ts';
 import { timeQte, type QteTimer, type QteTimingOptions } from '../src/actions/qte.ts';
@@ -485,6 +485,7 @@ function makeWorld(options: {
         },
       })),
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
+      automoveToChest: () => automoveToChest(actuator, cfg.pressHoldMs),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
       dismissLoot: () => dismissLoot(actuator),

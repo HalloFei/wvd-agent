@@ -22,7 +22,7 @@ import {
   type EngineEvent,
   type Point,
 } from './contracts.ts';
-import { automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
+import { automoveToChest, automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
 import { BATTLE_OPENERS, tapOpenerConfirm, tapOpenerSlot } from './actions/battle.ts';
 import { locateSkillPanelConfirm } from './perception/battle-panel.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from './actions/chest.ts';
@@ -281,6 +281,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
       perceiver: session.perceiver,
       actuator: session.actuator,
       log: (line) => world?.note(line),
+      // The floors the leave goal may cross and recognise: the site's own list, beside the reader
+      // that reads them (the composition root is where the site descriptor lives).
+      knownFloors: FFXI_GCN.floors.map((floor) => floor.titleKey),
     });
     return taskRunner === undefined ? { ok: true, session } : { ok: true, session, task: taskRunner };
   };
@@ -329,6 +332,8 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
         }, pointerOn);
       },
       automoveToExit: () => automoveToExit(actuator, pressHoldMs()),
+      // 移动至宝箱 (E): the last reachable-chest check before the exit (policy/chest-probe.ts).
+      automoveToChest: () => automoveToChest(actuator, pressHoldMs()),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
       dismissLoot: () => dismissLoot(actuator),

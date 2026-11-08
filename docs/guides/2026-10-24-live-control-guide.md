@@ -160,26 +160,31 @@ The rows, top to bottom, are:
 
   | Command | Key |
   | --- | --- |
-  | 移动至宝箱 (move to chest) | **L** |
+  | 移动至宝箱 (move to chest) | **E** (2026-11-09 build; **L** on the build measured 2026-10-24) |
   | 移动至标记 (move to marker) | **Q** |
   | 移动至出口 (move to exit) | **F** |
   | 移动至目的地 (move to destination) | **G** |
   | 切换指针模式 (toggle pointer mode) | **R** |
 
-- The legend is live: **L does move the party to a chest** (verified 2026-10-24 night, see §4.5).
-  The earlier "L did nothing" was a focus problem — the window was not foreground, so the engine
-  refused or the game ignored the key. `G` on the map is 移动至目的地, not close.
+- The legend is live, and **the key moved**: on 2026-11-09 the legend printed **E** for 移动至宝箱 on
+  第四区 (the operator's screenshot), and one E press on the open map closed it and the screen came up
+  `chest-prompt` — the game walked the party to a chest. The 2026-10-24 measurement's **L** (`0x26`)
+  is the old code and is inert on this build; `SCAN.chest` is now `0x12` (E) and `SCAN.chestLegacy`
+  keeps L for a task file written against it. `G` on the map is 移动至目的地, not close.
 - Close the map with `关闭` at about **(961, 1060)**, or `Esc`.
 
 ### 4.5 Automove to a chest — **solved**
 
 Two ways, both verified live:
 
-**Fast path — the key (use this).** With the map open, press **L** (移动至宝箱). The map closes and
-the party walks to a chest, fighting anything on the way; auto-battle resolves those. Measured
-during the night's run: `X:19 Y:21` → `X:11 Y:19` after one `L`, with two encounters fought on the
-route. The game chooses the chest — the command means "go to a chest", not "go to the chest I
-picked".
+**Fast path — the key (use this).** With the map open, press **E** (移动至宝箱; **L** on the
+2026-10-24 build). The map closes and the party walks to a chest, fighting anything on the way;
+auto-battle resolves those. Measured on 2026-10-24 with `L`: `X:19 Y:21` → `X:11 Y:19` after one
+press, with two encounters fought on the route; measured on 2026-11-09 with `E` on the FFXI farm
+floor: the map closed and the screen came up `chest-prompt`. The game chooses the chest — the
+command means "go to a chest", not "go to the chest I picked". The loop uses it as the **last
+reachable-chest check before the exit** (`policy/chest-probe.ts`): when the map draws no chest, one
+E press asks the game whether any is reachable; 5 s of the map staying up is its no.
 
 **Slow path — pointer mode.** Press **R** first, then click a **black tile**. Black is the road:
 the dark cells are walkable floor, the white lines are walls, and a click on anything that is not a
@@ -188,16 +193,18 @@ party walks. Verified 2026-10-24 night: one click on a dark tile at `(878, 384)`
 `B1F -巨坑-` started the move. Two interactions, and a detector for the element; that is the cost of
 choosing a *specific* tile rather than letting `L` choose.
 
-**On the FFXI floors the slow path is the only path (measured 2026-10-24, round 4).** `L` is inert
-on 第三区 and 第四区 even when the map reads three chests, so the World does not press it: its
-`move` is `R` → the tile → the element. The element sits **79–84 px above the clicked tile** (three
+**On the FFXI floors the slow path is the only path for a *chosen* chest (measured 2026-10-24,
+round 4; the key was `L` then and is `E` now).** The route's `move` is `R` → the tile → the element,
+because the key lets the *game* choose the chest. `E` itself does answer on 第三区/第四区 on the
+2026-11-09 build (measured: one press walked to a chest), which is why it serves as the exit's last
+reachability check rather than as a replacement for an aimed walk. The element sits **79–84 px above the clicked tile** (three
 instances) and is clicked blind at that offset; the World converts the route's grid cell to a
 screen point with the map's `origin` (`MapState.origin`, contracts §3). `docs/specs/
 2026-10-24-navigation-design.md` §3e is the record.
 
 Two facts that bound it:
 
-- **The chest command stays on the floor; the exit command crosses.** `L` never leaves the floor.
+- **The chest command stays on the floor; the exit command crosses.** 移动至宝箱 (`E`, formerly `L`) never leaves the floor.
   `F` does: pressed on `B1F -巨坑-`, the party walked to the exit and the screen came up
   `B2F -圣堂-` with no further input (observed). Going back *up* is not established.
 - **Opening the map takes `G` twice** from the 3D view: the first opens the menu (地图 `G`, 调查

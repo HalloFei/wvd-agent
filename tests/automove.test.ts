@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import jpeg from 'jpeg-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActionResult, Actuator, Frame, Point } from '../src/contracts.ts';
-import { SCAN, automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
+import { SCAN, automoveToChest, automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 
 /** One `holdKey` call, as the fake actuator saw it. */
 interface Press { readonly scan: number; readonly holdMs: number }
@@ -80,7 +80,8 @@ describe('the automove command chain (navigation §3d)', () => {
       destination: 0x22, // G — 移动至目的地
       mark: 0x10,        // Q — 移动至标记
       exit: 0x21,        // F — 移动至出口
-      chest: 0x26,       // L — 移动至宝箱
+      chest: 0x12,       // E — 移动至宝箱 (measured live 2026-11-09)
+      chestLegacy: 0x26, // L — the old mobility-era 移动至宝箱 (inert on this build)
       pointer: 0x13,     // R — 切换指针模式
     });
   });
@@ -149,6 +150,16 @@ describe('the automove command chain (navigation §3d)', () => {
     const actuator = fakeActuator();
     await expect(automoveToExit(actuator)).resolves.toEqual({ ok: true });
     expect(actuator.presses).toEqual([{ scan: SCAN.exit, holdMs: PRESS_MS }]);
+  });
+
+  it('asks the game for a chest with exactly one E', async () => {
+    // 移动至宝箱 is **E** on the current legend (measured live 2026-11-09: one press closed the map and
+    // the screen came up chest-prompt on the FFXI farm floor); L (0x26) is the old mobile-era code.
+    const actuator = fakeActuator();
+    await expect(automoveToChest(actuator)).resolves.toEqual({ ok: true });
+    expect(actuator.presses).toEqual([{ scan: SCAN.chest, holdMs: PRESS_MS }]);
+    expect(SCAN.chest).toBe(0x12);
+    expect(SCAN.chestLegacy).toBe(0x26);
   });
 
   it('presses for the configured hold when one is handed in, on every command', async () => {

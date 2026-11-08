@@ -178,6 +178,33 @@ describe('the open-map step', () => {
     expect(recorder.calls).toEqual([]);
     expect(cursor.index).toBe(0);
   });
+
+  it('waits on an unnamed frame instead of pressing into it (the leave cutscene)', async () => {
+    // Live 2026-11-09 03:39: the exit's second map-open pressed G while the unnamed leave cutscene
+    // held the screen; the press was dropped and the step's expect timed out. A named frame is the
+    // only frame this step may press from.
+    const { env, recorder } = makeEnv();
+    const cursor: StepCursor = { script: script([{ op: 'open-map' }]), index: 0, untilMs: null, startedAtMs: Date.now() };
+
+    const outcome = await advanceSteps(cursor, env, 'k'.repeat(32), { screen: 'unknown', atMs: 1, confidence: 0.2 } as Observation);
+
+    expect(outcome.kind).toBe('waiting');
+    expect(recorder.calls).toEqual([]);
+    expect(cursor.index).toBe(0);
+    expect(cursor.untilMs).not.toBeNull();
+  });
+
+  it('spends its own deadline on the unnamed wait, then fails rather than pressing blind', async () => {
+    const { env, recorder } = makeEnv();
+    const cursor: StepCursor = {
+      script: script([{ op: 'open-map' }]), index: 0, untilMs: Date.now() - 1, startedAtMs: Date.now(),
+    };
+
+    const outcome = await advanceSteps(cursor, env, 'k'.repeat(32), { screen: 'loading', atMs: 1, confidence: 1 } as Observation);
+
+    expect(outcome.kind).toBe('failed');
+    expect(recorder.calls).toEqual([]);
+  });
 });
 
 describe('runSteps', () => {
@@ -240,7 +267,10 @@ describe('runSteps', () => {
 
   it('agrees with the automove table on the keys it shares', () => {
     expect(TASK_KEYS.g).toBe(SCAN.destination);
-    expect(TASK_KEYS.l).toBe(SCAN.chest);
+    // 移动至宝箱 is **E** on the current legend (measured live 2026-11-09); a task file written
+    // against the old L still names the old code.
+    expect(TASK_KEYS.e).toBe(SCAN.chest);
+    expect(TASK_KEYS.l).toBe(SCAN.chestLegacy);
     expect(TASK_KEYS.f).toBe(SCAN.exit);
     expect(TASK_KEYS.q).toBe(SCAN.mark);
   });

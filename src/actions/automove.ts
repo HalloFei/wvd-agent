@@ -8,10 +8,12 @@
  * - on the map, a **tile** is walked to in pointer mode: `R` (切换指针模式), a click on the walkable
  *   cell, and a click on the 自动移动 element that click raises.
  *
- * `L` (移动至宝箱) is **not** used here. It works on the map floors measured on 2026-10-24 night, but
- * it is inert on both FFXI collab floors even when the map shows three chests (measured 2026-10-24,
- * `docs/status.md`), and the FFXI 4F route is the one this World runs. Pointer mode is the path that
- * answers on every floor, so a walk is aimed at a tile rather than left to the game's own choice.
+ * `E` (移动至宝箱) is the game's own chest walk, and it **does** answer on the FFXI farm floor:
+ * measured live 2026-11-09 (the legend prints E there; one press closed the map and the screen came
+ * up `chest-prompt`). It is not the farm's first choice — the route aims at the chest cell it read,
+ * because the game picks a chest of its own — but it is the **last** check before the exit: when the
+ * map draws no chest, `automoveToChest` asks the game whether one is reachable at all
+ * (`policy/chest-probe.ts`). `L` (0x26) was the mobile-era code and is inert on this build.
  *
  * The 自动移动 element the tile click raises is **detected** (`perception/automove.ts`, measured
  * 2026-11-02) and tapped where the game drew it; the measured 79–84 px rise is only the fallback for a
@@ -36,7 +38,8 @@ export const SCAN = {
   destination: 0x22, // G — 移动至目的地; from the 3D view this same key is the menu, then the map
   mark: 0x10,        // Q — 移动至标记 (part of the legend; no command here uses it)
   exit: 0x21,        // F — 移动至出口
-  chest: 0x26,       // L — 移动至宝箱 (the legend's code; a task script may press it)
+  chest: 0x12,       // E — 移动至宝箱 (the current legend; measured live 2026-11-09)
+  chestLegacy: 0x26, // L — the old legend's 移动至宝箱 (inert on this build; a task may still name it)
   pointer: 0x13,     // R — 切换指针模式
 } as const;
 
@@ -216,4 +219,16 @@ export async function automoveToExit(
   holdMs: number = DEFAULT_HOLD_MS,
 ): Promise<ActionResult> {
   return press(actuator, SCAN.exit, holdMs);
+}
+
+/**
+ * 移动至宝箱: **E** on the open dungeon map. The game chooses the chest and walks the party to it, so
+ * this is not how the farm claims a specific chest — it is the last check before the exit, asking
+ * whether the floor has a reachable chest the map's own read missed (measured live 2026-11-09).
+ */
+export async function automoveToChest(
+  actuator: Actuator,
+  holdMs: number = DEFAULT_HOLD_MS,
+): Promise<ActionResult> {
+  return press(actuator, SCAN.chest, holdMs);
 }

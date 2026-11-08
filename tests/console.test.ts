@@ -26,7 +26,7 @@ import type {
   Point,
 } from '../src/contracts.ts';
 import { WVD_DEFAULTS, type WvdConfigSection } from '../src/config.ts';
-import { automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
+import { automoveToChest, automoveToExit, automoveToTile, openMap } from '../src/actions/automove.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from '../src/actions/chest.ts';
 import { timeQte } from '../src/actions/qte.ts';
 import { tileOnScreen } from '../src/perception/map.ts';
@@ -213,6 +213,7 @@ function makeConsole(options: {
         },
       }),
       automoveToExit: () => automoveToExit(actuator, cfg.pressHoldMs),
+      automoveToChest: () => automoveToChest(actuator, cfg.pressHoldMs),
       acceptChestPrompt: () => acceptChestPrompt(actuator),
       tapLoot: () => tapLoot(actuator),
       dismissLoot: () => dismissLoot(actuator),

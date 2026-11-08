@@ -9,8 +9,8 @@
  * a step is how a party walks into the wrong floor.
  */
 import type {
-  Point, ScreenId, TaskClimb, TaskDefinition, TaskFileProblem, TaskGoal, TaskLoad, TaskRest, TaskScript,
-  TaskStep,
+  Point, ScreenId, TaskClimb, TaskDefinition, TaskFileProblem, TaskGoal, TaskLeave, TaskLoad, TaskRest,
+  TaskScript, TaskStep,
 } from '../contracts.ts';
 
 const SCREENS: ReadonlySet<string> = new Set<ScreenId>([
@@ -18,7 +18,7 @@ const SCREENS: ReadonlySet<string> = new Set<ScreenId>([
   'chest-open', 'chest-qte', 'drop-item-claim', 'loading', 'dungeon-select', 'unknown',
 ]);
 
-const KEY_NAMES: ReadonlySet<string> = new Set(['g', 'l', 'q', 'f', 'r', 'tab', 'esc', 'space']);
+const KEY_NAMES: ReadonlySet<string> = new Set(['g', 'e', 'l', 'q', 'f', 'r', 'tab', 'esc', 'space']);
 
 /** How long one script may take when the file does not say. One live entry measured ~45 s. */
 export const DEFAULT_SCRIPT_TIMEOUT_MS = 120_000;
@@ -188,6 +188,8 @@ function parseScript(raw: unknown, name: string, knownLocations?: ReadonlySet<st
 const GOAL_FIELDS: readonly string[] = ['site', 'zone', 'climb'];
 /** The fields a `climb` may carry. */
 const CLIMB_FIELDS: readonly string[] = ['from', 'script', 'destination'];
+/** The fields a `leave` may carry. */
+const LEAVE_FIELDS: readonly string[] = ['to'];
 
 /** A catalog id, checked only when the caller has a catalog to check against. */
 function parseLocationId(raw: unknown, field: string, knownLocations?: ReadonlySet<string>): string | Problem {
@@ -243,12 +245,28 @@ function parseClimb(raw: unknown): TaskClimb | Problem {
 }
 
 /**
+ * The leave goal (contracts §10): where the cycle returns to. The destination is a catalogue id, so a
+ * typo refuses the session at load instead of failing a leave at the Dungeon Select list.
+ */
+function parseLeave(raw: unknown, knownLocations?: ReadonlySet<string>): TaskLeave | Problem {
+  if (!isObject(raw)) return problem('missing-field', 'leave');
+  for (const field of Object.keys(raw)) {
+    if (!LEAVE_FIELDS.includes(field)) return problem('unknown-field', `leave: ${field}`);
+  }
+  const to = parseLocationId(raw.to, 'leave.to', knownLocations);
+  return typeof to === 'string' ? { to } : to;
+}
+
+/**
  * Parse and validate one task file. `text` is the file as written; JSON syntax is checked here so
  * a caller never has to catch.
  *
  * A task carries **either** an `entry` script **or** a `goal`: a scripted entry drives itself from
  * a screen it assumes, and a goal lets the World orient from any screen. Both at once would be two
  * answers to one question, so it is refused rather than silently preferring one.
+ *
+ * The exit is the same choice one level down: a measured `exit` script, or a `leave` goal the loop
+ * judges from each frame. `leave` belongs to the goal form — a scripted task keeps its script.
  */
 export function parseTask(text: string, knownLocations?: ReadonlySet<string>): TaskLoad {
   let raw: unknown;
@@ -259,7 +277,7 @@ export function parseTask(text: string, knownLocations?: ReadonlySet<string>): T
   }
   if (!isObject(raw)) return problem('not-an-object');
   for (const field of Object.keys(raw)) {
-    if (!['id', 'label', 'floor', 'entry', 'exit', 'goal', 'rest'].includes(field)) return problem('unknown-field', field);
+    if (!['id', 'label', 'floor', 'entry', 'exit', 'goal', 'leave', 'rest'].includes(field)) return problem('unknown-field', field);
   }
   if (typeof raw.id !== 'string' || raw.id.length === 0) return problem('missing-field', 'id');
   if (typeof raw.label !== 'string' || raw.label.length === 0) return problem('missing-field', 'label');
@@ -278,6 +296,12 @@ export function parseTask(text: string, knownLocations?: ReadonlySet<string>): T
   if (exit !== undefined && !('steps' in exit)) return exit;
   const goal = raw.goal === undefined ? undefined : parseGoal(raw.goal, knownLocations);
   if (goal !== undefined && 'ok' in goal) return goal;
+  // Two answers to one question, refused in the same spirit as entry-vs-goal: a measured script and
+  // a frame-judged goal would disagree the moment the party is somewhere the script did not assume.
+  if (raw.exit !== undefined && raw.leave !== undefined) return problem('exclusive-field', 'exit and leave');
+  if (raw.leave !== undefined && raw.goal === undefined) return problem('missing-field', 'leave needs goal');
+  const leave = raw.leave === undefined ? undefined : parseLeave(raw.leave, knownLocations);
+  if (leave !== undefined && !('to' in leave)) return leave;
   const rest = raw.rest === undefined ? undefined : parseRest(raw.rest);
   if (rest !== undefined && 'ok' in rest) return rest;
 
@@ -288,6 +312,7 @@ export function parseTask(text: string, knownLocations?: ReadonlySet<string>): T
     ...(entry === undefined ? {} : { entry: entry as TaskScript }),
     ...(exit === undefined ? {} : { exit }),
     ...(goal === undefined || 'ok' in goal ? {} : { goal }),
+    ...(leave === undefined || !('to' in leave) ? {} : { leave }),
     ...(rest === undefined || 'ok' in rest ? {} : { rest }),
   };
   return { ok: true, task };

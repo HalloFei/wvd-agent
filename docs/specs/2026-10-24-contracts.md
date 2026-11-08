@@ -735,6 +735,13 @@ binding shape. A task file declares where to farm and either a script that gets 
 goal the World orients to; the World knows `enter`, `runScript`, `abort` and — for a goal task — the
 `orient` descriptor it drives one command per tick.
 
+The **exit** is the same choice one level down (operator rule 2026-11-09: *the stage must judge from
+the current frame and state; an interrupted action is inferred, never assumed*). A measured `exit`
+script is a cursor of steps that assumes each earlier step ran from the floor it was written for; a
+`leave` goal names only the destination and the World asks the frame every tick which order the floor
+allows (`policy/leave.ts` — no cursor at all). The two are exclusive: a task carries an `exit` script
+or a `leave` goal, never both.
+
 ```ts
 /**
  * `enter` runs at session start (a scripted task only); `exit` when the policy says leave;
@@ -798,17 +805,42 @@ export interface TaskRest {
   readonly timeoutMs: number;
 }
 
+/**
+ * The leave goal (contracts §10, goal form): where a cycle returns to.
+ *
+ * The mirror of `TaskGoal`: a scripted exit assumes the floor it starts on and the steps it has
+ * already taken, which is why an interrupted exit could press 归还 on the farm floor or wait for a
+ * step that never ran. A leave goal names only the destination; the World judges **each frame** (the
+ * screen and the floor the map carries) and sends the one command that frame allows.
+ */
+export interface TaskLeave {
+  /** The catalogue id the leave travels to once the party is out of the dungeon (the rest town). */
+  readonly to: string;
+}
+
 export interface TaskDefinition {
   readonly id: string;
   readonly label: string;
   readonly floor: { readonly titleKey: string };
   /** A scripted entry, for a task that drives itself from a known screen. Absent for a goal task. */
   readonly entry?: TaskScript;
+  /** A scripted exit, for a task whose way out is a measured sequence. Exclusive with `leave`. */
   readonly exit?: TaskScript;
   /** The goal the World orients to, from any screen. Absent for a scripted task. */
   readonly goal?: TaskGoal;
+  /** The exit as a goal: judged from each frame, never a cursor. Exclusive with a scripted `exit`. */
+  readonly leave?: TaskLeave;
   /** The rest the cycle ends with. Absent for a task whose floor cycle has no inn. */
   readonly rest?: TaskRest;
+}
+
+/** The leave goal as the loop consumes it: where to return, and the site's own floor list. */
+export interface TaskLeaveRoute {
+  readonly to: string;
+  /** The task's own `floor.titleKey`: the floor the farm happens on. */
+  readonly farmFloor: string;
+  /** Every floor of the site the loop can recognise, the farm floor included. */
+  readonly knownFloors: readonly string[];
 }
 
 /** What the World needs to orient: where the farm is, and the floor it farms on. */
@@ -874,6 +906,8 @@ export interface SessionTask {
   abort(): void;
   /** The orientation a goal task declares. Absent for a scripted task: its entry drives itself. */
   readonly orient?: TaskOrient | undefined;
+  /** The leave goal the exit is judged by. Absent for a scripted exit, which keeps its cursor. */
+  readonly leave?: TaskLeaveRoute | undefined;
 }
 ```
 
@@ -889,4 +923,14 @@ the farm route once the map shows the task's floor. `climb` is the one measured 
 the climb floor runs the task's own script, gated on `climb.from`; any other floor is a stop, never
 a blind tile. The design and the live measurements are in
 `2026-11-02-orient-goal-design.md`.
+
+**The leave goal has no cursor.** Every tick the World asks `nextLeaveStep(observation, leave)`
+and sends the one order that frame and floor allow: `town` → arrived (the rest gate); `worldmap` /
+`dungeon-select` → travel to `leave.to`; `dungeon` → open the map; `dungeonmap` on the farm floor or
+on another floor of the site → F (移動至出口) — the floor, not a step number, says where F leads; a
+map off the site's floors → a stop (no measured way off it); `harken-menu` → tap the **matched**
+归还 row, never a fixed coordinate, and only when the floor the party stands on is not the farm floor
+(on the farm floor the page is backed out: the floor the farm works may not take 归还); `loading` /
+`unknown` → wait; every other screen → yield to the loop. A leave is never "resumed": an interrupted
+attempt re-enters at whatever frame the game is actually on.
 

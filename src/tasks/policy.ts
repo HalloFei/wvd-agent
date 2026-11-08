@@ -39,7 +39,10 @@ export function createTaskPolicy(
       }
       const intent = inner.next(state);
       if (intent.kind !== 'exit') return intent;
-      return task?.exit === undefined ? intent : { kind: 'run-script', name: 'exit' };
+      // Either exit form is a stage the World runs instead of the game's own exit command: a measured
+      // script (its cursor), or a leave goal (judged from each frame — policy/leave.ts).
+      if (task === null) return intent;
+      return task.exit === undefined && task.leave === undefined ? intent : { kind: 'run-script', name: 'exit' };
     },
   };
 }

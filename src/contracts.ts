@@ -390,7 +390,7 @@ export type SessionVerdict = 'ok' | 'escalate' | 'stop';
  */
 export type ScriptId = 'enter' | 'exit' | 'climb';
 
-export type TaskKeyName = 'g' | 'l' | 'q' | 'f' | 'r' | 'tab' | 'esc' | 'space';
+export type TaskKeyName = 'g' | 'e' | 'l' | 'q' | 'f' | 'r' | 'tab' | 'esc' | 'space';
 
 export interface TaskStep {
   /**
@@ -467,15 +467,34 @@ export interface TaskRest {
   readonly timeoutMs: number;
 }
 
+/**
+ * The leave goal (contracts §10, goal form): where a cycle returns to.
+ *
+ * The mirror of `TaskGoal`: a scripted exit assumes the floor it starts on and the steps it has
+ * already taken, which is exactly why an interrupted exit could press 归还 on the farm floor or wait
+ * for a step that never ran. A leave goal names only the destination; the World judges **each frame**
+ * (the screen and the floor the map carries) and sends the one command that frame allows.
+ */
+export interface TaskLeave {
+  /** The catalogue id the leave travels to once the party is out of the dungeon (the rest town). */
+  readonly to: string;
+}
+
 export interface TaskDefinition {
   readonly id: string;
   readonly label: string;
   readonly floor: { readonly titleKey: string };
   /** A scripted entry, for a task that drives itself from a known screen. Absent for a goal task. */
   readonly entry?: TaskScript;
+  /** A scripted exit, for a task whose way out is a measured sequence. Exclusive with `leave`. */
   readonly exit?: TaskScript;
   /** The goal the World orients to, from any screen. Absent for a scripted task. */
   readonly goal?: TaskGoal;
+  /**
+   * The exit as a goal: the World judges the frame and the floor every tick, so an interrupted step
+   * is re-derived instead of assumed. Exclusive with a scripted `exit` (two answers to one question).
+   */
+  readonly leave?: TaskLeave;
   /** The rest the cycle ends with. Absent for a task whose floor cycle has no inn. */
   readonly rest?: TaskRest;
 }
@@ -485,6 +504,18 @@ export interface TaskOrient {
   readonly goal: TaskGoal;
   /** The task's own `floor.titleKey`: the floor the farm happens on. */
   readonly floor: string;
+}
+
+/**
+ * The leave goal as the loop consumes it: where to return, the farm floor, and every floor of the
+ * site the loop can recognise (the composition root supplies the site's own list).
+ */
+export interface TaskLeaveRoute {
+  readonly to: string;
+  /** The task's own `floor.titleKey`: the floor the farm happens on. */
+  readonly farmFloor: string;
+  /** Every floor of the site the loop can recognise, the farm floor included. */
+  readonly knownFloors: readonly string[];
 }
 
 export type TaskFileProblem =
@@ -596,6 +627,11 @@ export interface SessionTask {
    * exit script and counts the cycle once the party is back on the town's own screen.
    */
   readonly rest?: TaskRest | undefined;
+  /**
+   * The leave goal the exit is judged by (contracts §10): absent for a scripted exit, which keeps
+   * its cursor. A leave goal has no cursor at all — the World asks the frame every tick.
+   */
+  readonly leave?: TaskLeaveRoute | undefined;
 }
 
 // §7 QTE timing

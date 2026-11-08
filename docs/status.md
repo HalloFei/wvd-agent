@@ -1510,6 +1510,32 @@ The operator's goal for this session, recorded verbatim on 2026-10-24:
 The implementation is finished and the tree is green. Two of the gaps above need the operator — a
 captured opener panel and a live multimodal run — so they are recorded here rather than guessed at.
 
+## The exit is a goal, and 归还 is a matched row (2026-11-09)
+
+The operator's rule, from the 03:39 live run: *the stage must judge from the current frame and state;
+an interrupted stage never assumes its action executed.* The exit was a cursor script, and the run
+proved the cost: step 6's `open-map` pressed G into the unnamed leave cutscene (a dropped press, the
+map never opened, `expect dungeonmap` timed out at 12 s), and the old blind taps at (960,714) were
+35 px past 归还's row — the live menu draws it at (960,679), reader `harken-menu 0.947`.
+
+- **contracts §10**: `TaskLeave` / `TaskLeaveRoute`; a task carries an `exit` script **or** a
+  `leave` goal. `tasks/ffxi-4f.json` is goal + `leave: { to: 'vnh' }`.
+- **`policy/leave.ts`**: the exit's decision table, pure and total — farm floor → F; another site
+  floor → F; harken page → tap the **matched** 归还 row (the farm floor backs out instead); a map off
+  the site's floors → stop; town → arrived; `loading`/`unknown` → wait; every other screen → yield.
+  There is no cursor: an interrupted leave re-enters at whatever frame the game is actually on.
+- **`world.ts`**: the leave pump replaces the exit script for a leave task. The World's harken branch
+  yields while the leave owns the page (one owner), and backs out of the harken page on the farm floor
+  when the orientation sees one. The leave's commands mark their own progress, so a leave waiting on an
+  unnamed frame still reaches the stall clock. The rest gate is one helper for both exit forms.
+- **`steps.ts`**: `open-map` presses G only from a **named** screen (both runners), waiting on an
+  unnamed frame within the step's own deadline. This is the step that ended the 03:39 run.
+- The harken's 归还 is the row `HarkenMenuPerceiver` matched, never a coordinate (operator point 1).
+
+Proved by `tests/leave.test.ts` (11) and `tests/task-schema.test.ts` (leave parse, exclusivity, the
+committed task), `tsc` clean. **Owed:** the live acceptance (3 cycles); the floor-key settle (two
+agreeing map frames) and the site descriptor's swapped floor labels are pinned on the board.
+
 ## How the work is tracked
 
 - `docs/status.md` (this file) — the committed record.
