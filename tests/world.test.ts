@@ -1677,6 +1677,29 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(healed()).toBe(2);
   });
 
+  it('does not start the heal while the chest still owns the game mode', async () => {
+    // Live 2026-11-09 04:53-04:56: the chest's post-loot animation interleaves `chest-opening` and the
+    // walking view; the heal started on one of the walking frames, opened the page into the animation,
+    // was abandoned by it, and the page-close branch then fought the animation (open/close, repeating).
+    // A modal mode is left only by two named frames of the next one, and that is the gate.
+    const { world, host, perceiver, clock } = makeWorld({ observation: dungeonView });
+    await started(world, host);
+    const starts = (): number => host.logRecords.filter((record) => record.message.includes('the heal starts')).length;
+
+    perceiver.observation = { screen: 'drop-item-claim', atMs: 100, confidence: 1 };
+    for (let index = 0; index < 2; index += 1) { clock.advance(100); await world.tick(); }
+    // The chest's last screen closes its interval; one walking frame is not the chest being over.
+    perceiver.observation = dungeonView;
+    clock.advance(100);
+    await world.tick();
+    expect(starts()).toBe(0);
+    // The second walking frame leaves the modal mode: the heal may start now.
+    clock.advance(100);
+    await world.tick();
+    for (let index = 0; index < 20 && starts() === 0; index += 1) { clock.advance(500); await world.tick(); }
+    expect(starts()).toBe(1);
+  });
+
   it('waits out an unnamed page after the card instead of giving up on it', async () => {
     // Live 2026-11-09 03:33: the card opened the page **under the battle's XP/level-up animation**, the
     // frames in between read unknown 0.20, and the heal's 12 s bound spent itself on them — the heal gave

@@ -1476,7 +1476,13 @@ export class WvdWorld implements World {
     // the debt. The old hardcoded flag was cleared *before* the sequence ran, so a give-up lost the heal
     // for good and the page-close branch then closed the page the heal had just opened (live 2026-11-09
     // 03:34 — the page was named 14 s after the card tap and the heal had already given up).
-    if (this.#heal === null && !waiting && this.#mode.mode !== 'battle'
+    // The **game's mode** is the gate, not the frame: a chest's post-loot animation interleaves
+    // `chest-opening` frames with the walking view, and a modal mode is held until two named frames of
+    // the next one. A heal started on one of those walking frames opens the page into the chest's
+    // animation, is abandoned by it, and the page-close branch then fights the animation — the repeated
+    // open/close the operator saw live 2026-11-09 04:53-04:56. Only a settled `dungeon` mode means the
+    // chest or the battle is over (the old gate only excluded `battle`).
+    if (this.#heal === null && !waiting && this.#mode.mode === 'dungeon'
       && observation.screen === 'dungeon') {
       const due = this.#healSchedule.due(now);
       // The debt is not windowed. It used to expire 30 s after the event, which cancelled exactly the
