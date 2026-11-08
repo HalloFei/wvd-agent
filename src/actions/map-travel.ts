@@ -65,6 +65,43 @@ export type MapTravelResult =
     readonly detail?: string;
   };
 
+/**
+ * A press the engine refused because the game was not the foreground is not a failed travel: it is a
+ * window that lost focus. Retry it — **re-taking the foreground** each time — five times, three seconds
+ * apart (operator, 2026-11-09), and only then let the refusal stand. The engine itself tries to focus
+ * once per press (`sendInput`), and on 2026-11-09 22:05 that attempt failed twice and the travel aborted
+ * on a transient focus loss.
+ */
+export async function withForegroundRetry<T extends ActionResult>(
+  send: () => Promise<T>,
+  options: {
+    readonly sleep: (ms: number) => Promise<void>;
+    readonly focus?: () => Promise<boolean>;
+    readonly log?: (line: string) => void;
+    readonly attempts?: number;
+    readonly waitMs?: number;
+  },
+): Promise<T> {
+  const attempts = options.attempts ?? 5;
+  const waitMs = options.waitMs ?? 3_000;
+  let result = await send();
+  for (let tried = 0; !result.ok && lostForeground(result) && tried < attempts; tried += 1) {
+    options.log?.('wvd: the press was refused (not-foreground); re-taking the foreground in '
+      + Math.round(waitMs / 1000) + ' s (attempt ' + (tried + 1) + ' of ' + attempts + ')');
+    await options.sleep(waitMs);
+    await options.focus?.();
+    result = await send();
+  }
+  return result;
+}
+
+/** Whether a refusal was the window's focus rather than the game's answer. */
+export function lostForeground(result: ActionResult): boolean {
+  if (result.ok) return false;
+  const detail = (result as { detail?: string }).detail ?? '';
+  return detail.includes('not-foreground');
+}
+
 const DEFAULTS = {
   budgetMs: 30_000,
   railX: 400,

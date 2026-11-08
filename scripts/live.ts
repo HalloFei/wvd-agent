@@ -173,6 +173,7 @@ try {
     log,
     atlas: true,
     pointer: true,
+    focus: () => focusGame(client),
   });
 
   switch (command) {

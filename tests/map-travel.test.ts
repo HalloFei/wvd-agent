@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionResult, Point } from '../src/contracts.ts';
 import type { MapInput, MapSenses } from '../src/actions/map-travel.ts';
-import { travelToSite } from '../src/actions/map-travel.ts';
+import { travelToSite, withForegroundRetry } from '../src/actions/map-travel.ts';
 
 /**
  * The travel is a state machine over injected senses and input, so its test is a toy map: the target
@@ -111,5 +111,37 @@ describe('travelling to a site', () => {
     if (result.ok) return;
     expect(result.reason).toBe('no-ring');
     expect(state.taps).toHaveLength(0);
+  });
+});
+
+
+describe('a refused press', () => {
+  it('re-takes the foreground and retries five times before giving up, three seconds apart', async () => {
+    // Operator, 2026-11-09: a window that lost focus is not a failed travel. The engine tries to focus
+    // once per press; this is the travel's own retry, with a pause long enough for the window to come back.
+    const sleeps: number[] = [];
+    let focuses = 0;
+    let sent = 0;
+    const refused: ActionResult = { ok: false, reason: 'rejected', detail: 'not-foreground' };
+    const outcome = await withForegroundRetry(async () => {
+      sent += 1;
+      return sent <= 3 ? refused : { ok: true };
+    }, {
+      sleep: async (ms) => { sleeps.push(ms); },
+      focus: async () => { focuses += 1; return true; },
+    });
+    expect(outcome.ok).toBe(true);
+    expect(focuses).toBe(3);
+    expect(sleeps).toEqual([3_000, 3_000, 3_000]);
+  });
+
+  it('stops at the fifth attempt and returns the refusal unchanged', async () => {
+    let sent = 0;
+    const outcome = await withForegroundRetry(async () => {
+      sent += 1;
+      return { ok: false, reason: 'rejected', detail: 'not-foreground' };
+    }, { sleep: async () => undefined });
+    expect(outcome.ok).toBe(false);
+    expect(sent).toBe(6);      // the first press, then five retries
   });
 });

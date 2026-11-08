@@ -22,7 +22,7 @@ import { findTemplate, type Match, type MatchTemplate } from '../perception/matc
 import { findSite, findSites } from '../perception/site-finder.ts';
 import { isClickable } from '../perception/map-ring.ts';
 import { pointerAt } from '../perception/pointer.ts';
-import { travelToSite, type MapInput, type MapSenses, type MapTravelResult } from './map-travel.ts';
+import { travelToSite, withForegroundRetry, type MapInput, type MapSenses, type MapTravelResult } from './map-travel.ts';
 import { TOWN_PANEL_CHEVRON_BASE64 } from '../perception/town-template.ts';
 import {
   LABEL_ANCHORS,
@@ -54,6 +54,8 @@ export interface WorldMapEnv {
   readonly atlas?: boolean;
   /** Whether the travel may use the new senses (finder + ring + pointer). Off by default. */
   readonly pointer?: boolean;
+  /** Bring the game window back to the foreground (the travel re-takes it on a refused press). */
+  readonly focus?: () => Promise<boolean>;
 }
 
 export type TravelReason =
@@ -1076,10 +1078,21 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
       return best === undefined ? null : { id: best.id, at: best.point };
     },
   };
+  // Every press goes through the focus retry: a transient window focus loss must not end a travel
+  // (operator, 2026-11-09: re-take the foreground after 3 s, five attempts).
+  const retry = {
+    sleep: (ms: number) => env.sleep(ms),
+    focus: env.focus,
+    log: (line: string) => env.log?.(line),
+  };
   const input: MapInput = {
-    hold: (direction, holdMs) => env.actuator.holdKey(POINTER_KEYS[direction], holdMs),
-    tap: (at) => env.actuator.tap(at),
-    zoom: async (direction) => (await env.actuator.holdKey(direction === 'in' ? ZOOM_KEY_IN : ZOOM_KEY_OUT, 60)).ok,
+    hold: (direction, holdMs) => withForegroundRetry(
+      () => env.actuator.holdKey(POINTER_KEYS[direction], holdMs), retry,
+    ),
+    tap: (at) => withForegroundRetry(() => env.actuator.tap(at), retry),
+    zoom: async (direction) => (await withForegroundRetry(
+      () => env.actuator.holdKey(direction === 'in' ? ZOOM_KEY_IN : ZOOM_KEY_OUT, 60), retry,
+    )).ok,
     sleep: (ms) => env.sleep(ms),
     log: (line) => env.log?.(line),
   };
