@@ -56,6 +56,19 @@ const CAPTION_BRIGHT = 120;
 /** Measured: rest scene 0.034, records 0.0074, item detail 0.0076, message 0.0000. */
 export const REST_CAPTION_SHARE = 0.02;
 
+/**
+ * The veto that keeps this recogniser off the **Dungeon Select** page: it draws a large white **title**
+ * (the dungeon's name, with 「Dungeon Select」 under it) across the upper band, and the rest scene draws
+ * nothing there — it is a dark, blurred room.
+ *
+ * Operator, 2026-11-09: *the biggest decider is this title; all dungeon floor selection holds a title of
+ * the current dungeon, plus two stable options, 入口 + 打开世界地图*. Measured on the corpus (share of
+ * bright ink, luma > 150, in x 0.30-0.70, y 0.15-0.70): the rest scene **0.0156**, the inn's confirmation
+ * page 0.0122, the inn's room list **0.0600**, the world map 0.1299. A page with a dungeon title sits far
+ * above the rest scene, so 0.03 separates them with 2x margin on the one rest fixture there is.
+ */
+export const REST_TITLE_INK_MAX = 0.03;
+
 /** The yellow continue mark under the caption, as a share of the band's area; its centroid is the tap. */
 const MARK_BOX = { x0: 0.55, x1: 0.70, y0: 0.90, y1: 0.97 } as const;
 /** Measured: rest scene 0.0030; the loot banner 0.0013 (and sharp), the battle 0.0010 (and sharp). */
@@ -78,6 +91,7 @@ export class InnRestPerceiver implements Perceiver {
       return { screen: 'unknown', atMs: frame.atMs, confidence: 0 };
     }
     if (blurScore(image) > REST_BLUR_MAX) return unknown(frame);
+    if (titleInk(image) > REST_TITLE_INK_MAX) return unknown(frame);
     if (captionShare(image) < REST_CAPTION_SHARE) return unknown(frame);
     const mark = markCentre(image);
     if (mark === null) return unknown(frame);
@@ -120,6 +134,27 @@ export function blurScore(image: RgbaImage): number {
     }
   }
   return count === 0 ? 0 : sum / count;
+}
+
+/**
+ * Bright ink in the upper band: the Dungeon Select page's **white title** lives there, and the rest scene
+ * has no text at all above its caption (operator, 2026-11-09: the dungeon's title is the biggest decider).
+ */
+export function titleInk(image: RgbaImage): number {
+  const x0 = Math.round(image.width * 0.30);
+  const x1 = Math.round(image.width * 0.70);
+  const y0 = Math.round(image.height * 0.15);
+  const y1 = Math.round(image.height * 0.70);
+  let ink = 0;
+  let area = 0;
+  for (let y = y0; y < y1; y += 2) {
+    for (let x = x0; x < x1; x += 2) {
+      const o = (y * image.width + x) * 4;
+      if (image.data[o]! > 150 && image.data[o + 1]! > 150 && image.data[o + 2]! > 150) ink += 1;
+      area += 1;
+    }
+  }
+  return area === 0 ? 0 : ink / area;
 }
 
 /** Bright, neutral ink in the caption band, as a share of that band's area. */
