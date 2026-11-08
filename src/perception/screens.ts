@@ -65,6 +65,7 @@ export const SCREENS: readonly ScreenId[] = [
   'chest-opening',
   'drop-item-claim',
   'loading',
+  'skill-panel',
   'dungeon-select',
   'character-page',
   'harken-menu',
@@ -104,6 +105,7 @@ export function screenStandings(facts: FrameFacts): readonly ScreenStanding[] {
     { screen: 'chest-opening', support: 0, ruledOut: false },
     { screen: 'drop-item-claim', support: 0, ruledOut: false },
     { screen: 'loading', support: 0, ruledOut: false },
+    { screen: 'skill-panel', support: 0, ruledOut: false },
     // The Dungeon Select rows are the only evidence; its own recogniser speaks.
     { screen: 'dungeon-select', support: 0, ruledOut: false },
   ];

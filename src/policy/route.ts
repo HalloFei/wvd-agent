@@ -108,6 +108,9 @@ export function nextIntent(state: RouteState): Intent {
       return { kind: 'open-chest' };
     case 'chest-qte':
     case 'chest-opening':
+    // The skill panel is the battle sequence's to press (its 確定), not the route's: the route sends
+    // nothing and lets the battle branch act on the same tick.
+    case 'skill-panel':
     case 'loading':
       // The opening is the chest module's moment (the lid and the hands, no bar yet): the loop sends
       // nothing and re-perceives — the bar or the loot is what comes next.

@@ -39,6 +39,7 @@ import { InnPerceiver } from './inn.ts';
 import { InnRestPerceiver } from './inn-rest.ts';
 import { TownPerceiver, WorldMapPerceiver } from './location.ts';
 import { LoadingPerceiver } from './loading.ts';
+import { SkillPanelPerceiver } from './skill-panel.ts';
 import { LootPerceiver } from './loot.ts';
 import { MapPerceiver } from './map.ts';
 import { MessagePerceiver } from './message.ts';
@@ -88,6 +89,9 @@ export function screenRecognisers(readers: {
     // answered `unknown` at 0.20 and the loop escalated it, pressing Esc into a page that was open).
     // It is also the cheapest gate — a drawn frame leaves it after a few dozen samples.
     { perceiver: new LoadingPerceiver(), floor },
+    // The battle's skill detail panel before any chest: its 取消/確定 pair is the page's own evidence,
+    // and a panel left unnamed escalated for 20 s and then had its panel cancelled by the Esc.
+    { perceiver: new SkillPanelPerceiver(), floor },
     { perceiver: chest, floor },
     { perceiver: map, floor },
     { perceiver: new ChestPromptPerceiver(), floor },

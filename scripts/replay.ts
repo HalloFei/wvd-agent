@@ -954,6 +954,7 @@ function frameRate(rate: string | undefined): number | null {
 /** Every id, compiler-enforced: adding a `ScreenId` breaks this literal, not a count. */
 function emptyScreens(): Record<ScreenId, number> {
   return {
+    'skill-panel': 0,
     town: 0,
     worldmap: 0,
     dungeon: 0,

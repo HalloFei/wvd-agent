@@ -42,6 +42,11 @@ export interface FrameSource {
  *  means something is drawn and no recogniser can name it, which escalates. */
 export type ScreenId =
   | 'town' | 'worldmap' | 'dungeon' | 'dungeonmap' | 'combat'
+  /**
+   * The battle's skill detail panel: the slot tap's dialog, its 取消/確定 pair and the 確定 the battle
+   * owes (2026-11-08). Named so a 20 s question and its Esc can never cancel the panel again.
+   */
+  | 'skill-panel'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
   | 'inn' | 'inn-rest' | 'message' | 'ui-menu' | 'unknown';

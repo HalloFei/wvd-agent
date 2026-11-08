@@ -56,6 +56,10 @@ export function modeOf(observation: Observation): GameMode | null {
     // World's inn branch presses its row before the route could treat it as a town to walk out of.
     case 'inn':
       return 'town';
+    // The battle's skill detail panel (2026-11-08): a modal over the battle, and the battle is what
+    // must act on it — its own 確定. The mode is the battle's, so the frame is never "unnamed".
+    case 'skill-panel':
+      return 'battle';
     // The main character's death is its own moment, not a frame that changes a pipeline's mode:
     // named so it stops being an unnamed frame inside whatever mode the party died in.
     // Nothing was named: the mode is not this frame's to change.

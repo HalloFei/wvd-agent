@@ -3003,6 +3003,8 @@ export class WvdWorld implements World {
         // holds it a beat longer, and pressing a battle toggle into that beat lands on whatever the
         // game put there (live 2026-11-07 01:36: the 自動 press opened 每日任务).
         const inBattle = seen.screen === 'combat'
+          // The skill panel is the battle's own page: the 確定 it owes is pressed from it.
+          || seen.screen === 'skill-panel'
           || ((seen.screen === 'unknown' || seen.screen === 'loading') && this.#mode.mode === 'battle');
         if (!inBattle) return;
         const now = context?.now ?? this.#now();

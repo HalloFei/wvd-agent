@@ -34,6 +34,7 @@ export const PARTY_PANEL_COLLAPSE: Point = { x: 696, y: 802 };
 const NAVIGABLE: ReadonlySet<Observation['screen']> = new Set<Observation['screen']>([
   'dungeon', 'dungeonmap', 'worldmap', 'dungeon-select', 'combat', 'chest-prompt', 'chest-open',
   'chest-qte', 'chest-opening', 'drop-item-claim', 'harken-menu', 'inn', 'inn-rest', 'loading',
+  'skill-panel',
 ]);
 
 /** The next control towards a screen the route can act on. */
