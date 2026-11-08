@@ -92,12 +92,18 @@ describe('the 楼梯-门 icon (operator name, 2026-11-03)', () => {
     expect(stairs).toEqual([{ kind: 'stair-door', at: { x: 13, y: 26 } }]);
   });
 
-  it('is found again after the party moves, at the same tile', async () => {
-    // The live run 2026-11-03 21:34 stopped on exactly this: the same floor read six cells and one row
-    // away (player 7,24) and the icon vanished, because the search lattice rides with the party's
-    // chevron while the glyph is drawn a few px off the cell centre. The reader seeds around the cell
-    // before sweeping, so the glyph is found from any party position.
-    const url = new URL('../.tmp/map-live2.jpg', import.meta.url);
+  // The live run 2026-11-03 21:34 stopped on exactly this: the same floor read six cells and one row
+  // away (player 7,24) and the icon vanished, because the search lattice rides with the party's
+  // chevron while the glyph is drawn a few px off the cell centre. The reader seeds around the cell
+  // before sweeping, so the glyph is found from any party position.
+  //
+  // **Skipped, not deleted** (2026-11-08): the frame it was written against was scratch —
+  // `.tmp/map-live2.jpg` — and the scratch clean deleted it. It was never in git, so the claim has no
+  // evidence left to run against; the skip keeps the claim beside the code it guards while the frame
+  // is re-captured into `testdata/screens/2026-11-08-moved-party/` (task t-mw7bd15m-jnzs3k). The 第三区
+  // test above still proves the glyph is found on a committed frame; only the moved-party case is open.
+  it.skip('is found again after the party moves, at the same tile (fixture lost: t-mw7bd15m-jnzs3k)', async () => {
+    const url = new URL('../testdata/screens/2026-11-08-moved-party/map-1920.jpg', import.meta.url);
     const bytes = await readFile(url);
     const image = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
     const map = await readMap({
@@ -194,6 +200,42 @@ describe('readMap', () => {
     const frame: Frame = { atMs: 1, width: 64, height: 64, toRgba: async () => image };
 
     expect(await readMap(frame)).toBeNull();
+  });
+});
+
+/**
+ * The readout of 2026-11-08 (task t-mw6m7445-0f5vgk): the live 第四区-城内2F frame whose `X: 13 Y: 2`
+ * the farm refused for 5.5 min, at `readout-runs`, with the map drawn plainly. The band here is that
+ * frame's own pixels, byte for byte: the capture is lossless, while the run's JPEG snapshots had
+ * already smoothed the one column that splits the glyph, which is why the refusal would not reproduce
+ * from them. The rest of the canvas is the 第四区 map fixture, so every other gate is one a live
+ * frame passes and only the readout is on trial.
+ */
+describe('the live readout of 2026-11-08', () => {
+  it('reads X: 13 Y: 2 whose 3 has a column the chrome filter hides', async () => {
+    const band = await readFile(new URL('../testdata/screens/2026-11-08-readout-split/band-130x16.rgba', import.meta.url));
+    const frame = await liveMapFrame('fourth-2f.jpg');
+    const image = await frame.toRgba();
+    const data = Uint8Array.from(image.data);
+    // The band's own rect, as map.ts measures it (READOUT_X 1010, READOUT_Y 898, 130 × 16).
+    for (let y = 0; y < 16; y += 1) {
+      for (let x = 0; x < 130; x += 1) {
+        const from = (y * 130 + x) * 4;
+        const to = ((898 + y) * image.width + 1010 + x) * 4;
+        data[to] = band[from]!;
+        data[to + 1] = band[from + 1]!;
+        data[to + 2] = band[from + 2]!;
+        data[to + 3] = 255;
+      }
+    }
+    const mutated: Frame = {
+      ...frame,
+      toRgba: async () => ({ data, width: image.width, height: image.height }),
+    };
+
+    const map = await readMap(mutated);
+    expect(map).not.toBeNull();
+    expect(map!.player).toEqual({ x: 13, y: 2 });
   });
 });
 

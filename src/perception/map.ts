@@ -773,7 +773,21 @@ function readReadout(data: Uint8Array, width: number): ReadoutParse {
     lit[x] = columnInk[x] >= READOUT_INK_ROWS_MIN && columnInk[x] < READOUT_CHROME_ROWS ? 1 : 0;
   }
 
-  const allRuns = columnRuns(lit);
+  // R30 (2026-11-08): the chrome filter drops a column lit through most of the band, and a digit's
+  // own column can be that bright. Live 第四区-城内2F: `X: 13 Y: 2` drew the 3's fourth column at 13
+  // of 16 rows, so the filter cut the glyph in two, G1 counted three digit runs and refused with
+  // `readout-runs` — 5.5 min of a legible map read as an unnamed frame. A hidden column is not a
+  // separator: when it is the only column between two runs, the runs are one glyph. A real gap is
+  // dark in that column (ink 0), so nothing else is stitched.
+  const allRuns: Array<[number, number]> = [];
+  for (const [from, to] of columnRuns(lit)) {
+    const previous = allRuns[allRuns.length - 1];
+    if (previous !== undefined && from - previous[1] === 2 && columnInk[from - 1]! >= READOUT_CHROME_ROWS) {
+      previous[1] = to;
+    } else {
+      allRuns.push([from, to]);
+    }
+  }
   // A run touching the band's first column carries the panel's left border (R28c). On a live frame
   // the border can fuse with the X label itself — 2026-11-01, 第三区: one run 0..23 against the
   // fixture's 8..19 and 21..23 — and dropping the run dropped the label with it (`readout-labels`,

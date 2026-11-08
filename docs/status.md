@@ -1270,6 +1270,38 @@ nothing and the confirm stays owed (warned once per battle).
 tap there resolved the panel, and the next frame is the battle's command phase with 爱丽丝 at
 MP 136/161 — the skill was cast and its 25 MP spent. That press is the acceptance for the module; the
 three-cycle run is still owed.
+## The readout's chrome-bright column (2026-11-08)
+
+The run of 2026-11-08 12:01 stalled 5.5 min on a map a human reads instantly (第四区-城内2F深处,
+`X: 13 Y: 2`, the chest at (12,2)), every tick `unknown 0.20`: the raw frame's map parser refused at
+`readout-runs` — 1 770 ticks, no progress, then the stall stop.
+
+**Cause.** G1 counts ink per column of the readout band and drops a column lit through most of the band
+(`READOUT_CHROME_ROWS` 13 of 16) as UI chrome. The live frame draws the digit `3`'s fourth column
+**13** rows deep, so the filter cut the glyph in two: the band produced `1`, `3`'s left half,
+`3`'s right half where two digits belong, G1 counted three, and refused.
+
+**Why it never reproduced.** The escalation snapshots are JPEG. A q75 re-encode of the same pixels
+smoothed that column to 12 rows, so the saved stall frame parsed at 0.85 — the evidence was cleaned by
+the encoder. The failing bytes were only recoverable from a *fresh raw capture*, and it was
+deterministic (10/10 frames, same gate).
+
+**Fix.** A hidden column is not a separator: when it is the only column between two runs, the runs are
+stitched into one glyph (`map.ts` R30). Regression test:
+`testdata/screens/2026-11-08-readout-split/band-130x16.rgba` — that live frame's band, lossless, byte
+for byte — pasted onto a committed map frame; it fails at `readout-runs` without the stitch and reads
+`X: 13 Y: 2` with it.
+
+**Live proof.** The fixed reader on fresh captures: `dungeonmap 0.85`, `player {13,2}`, `titleKey
+000000007f3ffe007ffeff00220bb600` (the farm floor), one chest at (12,2) — the same frame that was
+`unknown 0.20` three minutes earlier.
+
+**Two follow-ups this cost.** (1) The scratch cleaner now keeps any `.tmp` file that `src`, `tests` or
+`scripts` names, and stamps its report to the minute so a dry run cannot overwrite the record a delete
+was made from — the 2026-11-08 clean had deleted `.tmp/map-live2.jpg`, the only frame behind a map test
+(task t-mw7bd15m-jnzs3k). (2) A stall snapshot should be lossless, or the refusal it documents is not
+reproducible from it.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

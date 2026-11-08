@@ -13,7 +13,7 @@
  *
  * Nothing outside the root is ever touched, and a symlink is counted but never followed out of it.
  */
-import { lstatSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 interface Unit {
@@ -71,7 +71,42 @@ try {
  * subtracts from it.
  */
 const KEEP = new Set(['ocr-venv', 'atlas', ...(args.find((arg) => arg.startsWith('--keep='))?.slice(7).split(',') ?? [])]);
-const isKept = (unit: Unit): boolean => KEEP.has(unit.path.split(/[\\/]/).pop() ?? '');
+
+/**
+ * A scratch file a test or a module names is **evidence**, not scratch, however old it is: the
+ * 2026-11-08 clean deleted `.tmp/map-live2.jpg`, the only frame behind a map-reader test, and the
+ * frame was not in git — the test has been unprovable since. The names are read from the code that
+ * uses them (a direct child of `.tmp` that has an extension, so `.tmp/runs` and the reports stay
+ * cleanable), and a name kept this way is printed, so a test that leans on scratch is visible here
+ * instead of failing a week later.
+ */
+function namedByCode(): Set<string> {
+  const names = new Set<string>();
+  const scan = (dir: string): void => {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry);
+      if (lstatSync(path).isDirectory()) {
+        scan(path);
+        continue;
+      }
+      if (!entry.endsWith('.ts') && !entry.endsWith('.mjs')) continue;
+      for (const match of readFileSync(path, 'utf8').matchAll(/\.tmp[\\/]([\w.-]+\.[\w]+)/g)) names.add(match[1]!);
+    }
+  };
+  for (const dir of ['src', 'tests', 'scripts']) scan(dir);
+  return names;
+}
+const NAMED = namedByCode();
+const isKept = (unit: Unit): boolean => {
+  const name = unit.path.split(/[\\/]/).pop() ?? '';
+  return KEEP.has(name) || NAMED.has(name);
+};
 const stale = units.filter((unit) => unit.newestMs < cutoff && !isKept(unit)).sort((a, b) => a.newestMs - b.newestMs);
 const kept = units.filter((unit) => unit.newestMs < cutoff && isKept(unit));
 for (const unit of kept) console.log('  kept (needed): ' + unit.path);
@@ -100,7 +135,8 @@ for (const unit of biggest) console.log('  ' + mb(unit.bytes).padStart(9) + '  '
 
 const lines = stale.map((unit) => when(unit.newestMs) + '  ' + mb(unit.bytes).padStart(9) + '  '
   + String(unit.files).padStart(5) + ' files  ' + (unit.isDir ? 'dir ' : 'file') + '  ' + unit.path);
-const reportPath = join(root, 'clean-report-' + new Date().toISOString().slice(0, 10) + '.txt');
+/** Stamped to the minute: a dry run must not overwrite the record a delete was made from. */
+const reportPath = join(root, 'clean-report-' + new Date().toISOString().slice(0, 16).replaceAll(':', '-') + '.txt');
 writeFileSync(reportPath, lines.join('\n') + '\n');
 console.log('full list: ' + reportPath + ' (' + lines.length + ' lines)');
 
