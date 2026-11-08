@@ -207,11 +207,11 @@ describe('readMap', () => {
  * The 第二区-城内1F canvas (2026-11-08): the map that stranded the run.
  *
  * The operator asked why the loop could not name it. It is legible; the panel's white ink is what is
- * short — **13 047 px** against a floor of 15 000 that the 第三区/第四区 captures had set. The live raw
- * frame therefore refused at `map-ink`; the saved JPEG refuses one gate earlier at
+ * short — **13 047 px** against the 15 000 the 第三区/第四区 captures had set. The live raw frame
+ * therefore refused at `map-ink`; the saved JPEG refuses one gate earlier at
  * `readout-digit-unmatched`, the usual JPEG-vs-raw asymmetry (the raw frame's readout parsed — the
- * reader reached the ink gate). The floor is 10 500 now, measured against the corpus: maps 13 047–39 466,
- * non-maps 72–7 158.
+ * reader reached the ink gate). The ink is a **metric** now (evidence.ts): the same canvas reads at
+ * 0.85 × 0.67 = 0.57, above the composite's floor, instead of being vetoed.
  */
 describe('the 第二区-城内1F canvas (2026-11-08)', () => {
   const SECOND_2F = new URL('../testdata/screens/2026-11-08-second-2f/map-1920.jpg', import.meta.url);

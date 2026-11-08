@@ -36,6 +36,7 @@ import type {
   Point,
   RgbaImage,
 } from '../contracts.ts';
+import { anchor, scoreMetric, settle, type AnchorResult, type Evidence, type MetricResult, type MetricShape } from './evidence.ts';
 import { readNumbersViaOcr, type OcrReadout } from './readout-ocr.ts';
 
 // ---------------------------------------------------------------------------------------------
@@ -96,23 +97,25 @@ const TITLE_BAR_DARK_LUMA = 60;
 const TITLE_BAR_DARK_FRACTION = 0.95;
 
 /**
- * G3 — white map ink in the panel.
+ * G3 — white map ink in the panel: a **metric**, not a gate.
  *
- * The floor was 15 000 from the research's 第三区/第四区 captures, and it refused the operator's
- * **第二区-城内1F** map on 2026-11-08: that canvas draws **13 047** white pixels (shorter walls), so the
- * live map read refused at this gate and the loop could not name the floor. Measured across the corpus
- * the same day: maps 13 047–39 466, and non-maps 72–7 158 (a battle's command phase, the 3-D view after
- * a chest, the opener panel, a QTE still) — so 10 500 keeps a 1.5× margin over the brightest non-map
- * and accepts the smallest map.
+ * The band is the research's 第三区/第四区 capture range. The 第二区-城内1F map (2026-11-08) draws
+ * **13 047** px — shorter walls — and a hard floor refused it although its readout, title and lattice
+ * all parsed. A canvas that far below the band now costs confidence instead of vetoing: with `soft`
+ * 6 000 it reads at 1 − 1 953/6 000 = 0.67 of the parse's own confidence (0.85 → 0.57), which is still
+ * above the composite's floor. Measured corpus the same day: maps 13 047–39 466, non-maps 72–7 158 —
+ * and a non-map is vetoed by the anchors long before this metric is weighed.
  */
 const MAP_INK_X = 480;
 const MAP_INK_Y = 150;
 const MAP_INK_W = 1220;
 const MAP_INK_H = 750;
-const MAP_INK_MIN = 10_500;
+const MAP_INK_MIN = 15_000;
 const MAP_INK_MAX = 200_000;
 const MAP_INK_LUMA = 185;
 const MAP_INK_SAT = 60;
+/** The ink metric's band and its soft margin, px (see the G3 note above). */
+const MAP_INK_SHAPE: MetricShape = { kind: 'range', good: [MAP_INK_MIN, MAP_INK_MAX], soft: 6_000 };
 
 /**
  * G4 — a centred title string is present (research §2). `map.png` 768, `popup.png` 770 pixels of it.
@@ -529,6 +532,8 @@ const TITLE_TEMPLATES: Readonly<Record<string, Template>> = Object.fromEntries(
 interface ParsedMap {
   readonly map: MapState;
   readonly confidence: number;
+  /** The anchors it passed and the metrics it weighed: what the ledger files when a read is doubted. */
+  readonly evidence: Evidence;
 }
 
 /**
@@ -644,20 +649,36 @@ async function parse(frame: Frame): Promise<MapParse> {
 function parseImage(image: RgbaImage, options?: { readonly readout?: Point }): MapParse {
   const { data, width, height } = image;
 
+  // The frame's facts, in the order they are asked. |Anchors veto; metrics weigh (evidence.ts).|
+  const anchors: AnchorResult[] = [];
+  const metrics: MetricResult[] = [];
+  const pass = (name: string, measured?: number): void => {
+    anchors.push(anchor(name, true, measured));
+  };
+  const veto = (gate: MapRefusalGate, measured?: number): MapParse => {
+    anchors.push(anchor(gate, false, measured));
+    return { ok: false, gate };
+  };
+
   // 0. Size and uniformity -------------------------------------------------------------------
-  if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) return { ok: false, gate: 'unsupported-size' };
-  if (isUniform(data, width, height)) return { ok: false, gate: 'uniform-frame' };
+  if (width !== REFERENCE_WIDTH || height !== REFERENCE_HEIGHT) return veto('unsupported-size');
+  pass('size');
+  if (isUniform(data, width, height)) return veto('uniform-frame');
+  pass('not-uniform');
 
   // 1. G1: the coordinate readout ------------------------------------------------------------
   //    A readout the digit reader could not name may still be readable by the OCR escalation; the
   //    caller hands the numbers back in and the rest of the parse runs unchanged (2026-11-07).
+  //    This is the **decisive structural anchor**: the line is where a map draws it, in every floor
+  //    measured so far, and no other screen draws it.
   const parsedReadout = readReadout(data, width);
   const readout = parsedReadout.ok
     ? parsedReadout
     : options?.readout === undefined
       ? parsedReadout
       : { ok: true as const, x: options.readout.x, y: options.readout.y, margins: [] };
-  if (!readout.ok) return readout;
+  if (!readout.ok) return veto(readout.gate);
+  pass('readout');
 
   // 2. G2: the title bar's dark strip --------------------------------------------------------
   //    The panel is drawn translucent over the 3-D scene, so this strip is only dark when the
@@ -666,28 +687,39 @@ function parseImage(image: RgbaImage, options?: { readonly readout?: Point }): M
   //    The title's own ink is the backdrop-independent evidence, so the strip is accepted when
   //    either proof is there; a 3-D frame has neither.
   if (darkFraction(data, width) < TITLE_BAR_DARK_FRACTION && titleBarInk(image) < TITLE_BAR_INK_MIN) {
-    return { ok: false, gate: 'title-bar-light' };
+    return veto('title-bar-light');
   }
+  pass('title-bar');
 
   // 3. One scan of the map panel feeds G3, G6's profiles, and both colour blobs. ---------------
+  //    The ink is a **metric**: the band is the canvas's measured range, and a sparser canvas (the
+  //    第二区 floor, 2026-11-08) costs confidence instead of vetoing a parse whose readout, title and
+  //    lattice are all there.
   const panel = scanPanel(data, width);
-  if (panel.mapInk < MAP_INK_MIN || panel.mapInk > MAP_INK_MAX) return { ok: false, gate: 'map-ink' };
+  metrics.push(scoreMetric('panelInk', panel.mapInk, MAP_INK_SHAPE));
 
   // 4. G4 + R27: a centred Latin floor token that lands in the measured slots. ----------------
   const title = readTitle(image);
-  if (!title) return { ok: false, gate: 'no-title' };
+  if (!title) return veto('no-title');
+  pass('title', Math.round(title.minNcc * 1000));
 
   // 5. G6: the wall lattice ----------------------------------------------------------------
   // Both axes must be *present* (a fit over ≥8 detected lines); the quality test is the X axis's
   // support — the FFXI glow that defeats a residual crosses the Y profile, not the X one.
   const latticeX = fitLattice(panel.columns, LATTICE_X);
   const latticeY = fitLattice(panel.rows, LATTICE_Y);
-  if (!latticeX || !latticeY) return { ok: false, gate: 'no-lattice' };
-  if (latticeX.support < LATTICE_SUPPORT_MIN) return { ok: false, gate: 'lattice-support' };
+  if (!latticeX || !latticeY) return veto('no-lattice');
+  pass('lattice', Math.round(Math.max(latticeX.rms, latticeY.rms) * 100));
+  if (latticeX.support < LATTICE_SUPPORT_MIN) return veto('lattice-support', latticeX.support);
+  pass('lattice-support', latticeX.support);
 
   // 6. G5: the chevron (the click origin) ----------------------------------------------------
+  //    An anchor, not a metric (2026-11-08): without the party's marker the click transform has no
+  //    origin, so a map whose marker is replaced (the destination cursor, live 12:12) cannot be
+  //    clicked safely — it is another screen state, not a less certain one.
   const chevron = findChevron(panel.yellow, width, latticeX.phase, latticeY.phase);
-  if (!chevron) return { ok: false, gate: 'no-chevron' };
+  if (!chevron) return veto('no-chevron');
+  pass('chevron', Math.round(Math.max(chevron.residualX, chevron.residualY) * 100));
 
   // 7. Icons, enumerated on the **map's own cell grid**. -------------------------------------
   // The chevron is the anchor the *click* transform is defined from (contracts §3 `origin`), but it
@@ -709,6 +741,8 @@ function parseImage(image: RgbaImage, options?: { readonly readout?: Point }): M
     icons,
   };
 
+  // The parse's own reductions. They are the metrics this migration has not folded into
+  // `MetricResult`s yet — the next commit turns each into one, so a single number carries them all.
   let confidence = 1;
   if (Math.min(...readout.margins) < DIGIT_CONFIDENT_MARGIN) confidence = 0.85;
   if (Math.max(latticeX.rms, latticeY.rms) > LATTICE_CLEAN_RMS) confidence = Math.min(confidence, 0.8);
@@ -717,7 +751,10 @@ function parseImage(image: RgbaImage, options?: { readonly readout?: Point }): M
   // An unnamed (non-Latin) title is a weaker gate than three matched glyphs, never a stronger one.
   if (title.text === '') confidence = Math.min(confidence, 0.85);
 
-  return { ok: true, map, confidence };
+  // Every anchor passed; the metrics weigh what the parse is worth. A canvas outside its band reads
+  // lower — never refused, unless the composite's floor says the number is too small to act on.
+  const evidence = settle(anchors, metrics);
+  return { ok: true, map, confidence: Math.min(confidence, evidence.confidence), evidence };
 }
 
 // ---------------------------------------------------------------------------------------------
