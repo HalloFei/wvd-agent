@@ -12,7 +12,7 @@ import { SkillPanelPerceiver, findPair, ruleWidth } from '../src/perception/skil
  * the panel cancelled by the escalation's own Esc.
  */
 const PANEL = new URL('../testdata/screens/2026-11-08-battle/skill-panel.png', import.meta.url);
-const BATTLE = new URL('../testdata/screens/2026-11-08-battle/command-phase.png', import.meta.url);
+const FADING = new URL('../testdata/screens/2026-11-08-battle/skill-panel-fading.png', import.meta.url);
 const DIM = new URL('../testdata/screens/2026-11-08-blank-after-battle/dim-menu.png', import.meta.url);
 const BLANK = new URL('../testdata/screens/2026-11-08-blank-after-battle/blank-after-battle.png', import.meta.url);
 const TOWN = new URL('../testdata/frames/town-0.jpg', import.meta.url);
@@ -49,7 +49,7 @@ describe('the skill detail panel', () => {
     // The battle's command phase, a dim menu over a dark room, a black frame, the town, the opener
     // panel and the character page: none of them draws a two-button dialog in that band.
     for (const frame of [
-      (await png(BATTLE)).frame,
+      (await png(FADING)).frame,
       (await png(DIM)).frame,
       (await png(BLANK)).frame,
       await jpg(TOWN),
