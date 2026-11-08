@@ -78,6 +78,14 @@ const DEFAULT_HOLD_MS = 60;
 /** How often `expect` / `expectFloor` looks again. Three samples per contract tick (§0.5). */
 const OBSERVE_INTERVAL_MS = 100;
 
+/**
+ * How long an `expect` waits on unnamed frames before it presses its one Esc, ms.
+ *
+ * A transition fade is under 2 s (the map's own open is ~1 s), so 3 s cannot be a fade — it is the
+ * client's HUD-less cutscene, which waits for input and never resolves on its own.
+ */
+const UNNAMED_ESCAPE_MS = 3_000;
+
 /** When a step does not say how long to wait for its screen. One loading screen measured ~12 s. */
 const DEFAULT_EXPECT_TIMEOUT_MS = 8_000;
 
@@ -276,6 +284,18 @@ export interface StepCursor {
   untilMs: number | null;
   /** The stage's start, for `script.timeoutMs`. */
   startedAtMs: number;
+  /**
+   * How long the frames have carried no name while an `expect` waits, and the step's one Esc.
+   *
+   * A stage's expect can be looking at a screen the game has not drawn yet — or at a **cutscene**,
+   * which this client draws with no HUD at all (live 2026-11-08 13:47: after 移動至出口 the leave
+   * cutscene holds a HUD-less 3-D view, its X the only control, until it is dismissed; the classifier
+   * cannot name it by design, and the exit script's `expect dungeon` timed out on it). The loop's own
+   * recovery for an unnamed frame is one Esc, so the step does the same after the frame has been
+   * unnamed for `UNNAMED_ESCAPE_MS` — a fade is under 2 s, a cutscene is not.
+   */
+  unnamedSinceMs?: number | null;
+  escapedAtMs?: number | null;
 }
 
 /** One tick of a stage: done, waiting for the game, interrupted by a loop-owned screen, or failed. */
@@ -351,8 +371,26 @@ export async function advanceSteps(
         if (screen === null) return { kind: 'waiting' };
         if (screen === step.screen) {
           cursor.untilMs = null;
+          cursor.unnamedSinceMs = null;
+          cursor.escapedAtMs = null;
           cursor.index += 1;
           continue;
+        }
+        // A frame with no name is the loop's one-Esc recovery everywhere else; a stage's expect owes it
+        // too, or a cutscene the classifier cannot name holds the step to its timeout.
+        if (screen === 'unknown' || screen === 'loading') {
+          cursor.unnamedSinceMs ??= Date.now();
+          if (cursor.escapedAtMs == null && Date.now() - cursor.unnamedSinceMs >= UNNAMED_ESCAPE_MS) {
+            const pressed = await env.actuator.holdKey(TASK_KEYS.esc, DEFAULT_HOLD_MS);
+            if (!pressed.ok) return { kind: 'failed', stop: stopped(cursor.index, pressed.reason, pressed.detail) };
+            cursor.escapedAtMs = Date.now();
+            cursor.unnamedSinceMs = null;
+            env.log('expect: the frame has no name; pressed Esc once');
+            return { kind: 'waiting' };
+          }
+        } else {
+          cursor.unnamedSinceMs = null;
+          cursor.escapedAtMs = null;
         }
         cursor.untilMs ??= Date.now() + (step.timeoutMs ?? DEFAULT_EXPECT_TIMEOUT_MS);
         if (Date.now() >= cursor.untilMs) {

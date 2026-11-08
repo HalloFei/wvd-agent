@@ -122,10 +122,18 @@ const trail = (line: string): void => {
     // the console is the primary channel; a failed log file must not stop the run
   }
 };
+/**
+ * Every line this harness prints, filed beside the report: the STATE ticks, the events, the script's own
+ * log. Patching `console.log` once is what makes the file complete — the keyed `log()` below only sees
+ * the World's messages.
+ */
+const print = console.log.bind(console);
+console.log = (line: unknown, ...rest: unknown[]): void => {
+  print(line, ...rest);
+  trail([line, ...rest].map((value) => (typeof value === 'string' ? value : String(value))).join(' '));
+};
 const log = (level: string) => (line: string, data?: unknown): void => {
-  const text = stamp() + ' ' + level + ' ' + line + (data === undefined ? '' : ' ' + JSON.stringify(data));
-  console.log(text);
-  trail(text);
+  console.log(stamp() + ' ' + level + ' ' + line + (data === undefined ? '' : ' ' + JSON.stringify(data)));
   if (STOP_ON_OPENER_MISS && line.includes('the opener was given up')) {
     pausedOnStall = true;
     console.log(stamp() + ' PAUSE-ON-OPENER-MISS; the loop is stopping at this battle');

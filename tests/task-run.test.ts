@@ -84,6 +84,67 @@ const script = (steps: TaskScript['steps'], timeoutMs = 5_000): TaskScript => ({
  * walk order that closes it again. The exit script's blind second press stopped the third cycle at
  * step 1 that way.
  */
+/**
+ * An `expect` step on frames with no name presses its one Esc after three seconds.
+ *
+ * Live 2026-11-08 13:47: after 移動至出口 the client holds a **HUD-less cutscene** (its X the only
+ * control) until it is dismissed, and the classifier cannot name it by design — the exit script's
+ * `expect dungeon` timed out on it and the run stopped. A transition fade is under 2 s; three seconds
+ * is not a fade.
+ */
+describe('an expect step on unnamed frames', () => {
+  const cursorFor = (step: StepCursor['script']['steps'][number], extra: Partial<StepCursor> = {}): StepCursor => ({
+    script: script([step], 60_000),
+    index: 0,
+    untilMs: null,
+    startedAtMs: Date.now(),
+    ...extra,
+  });
+
+  it('presses Esc once after three seconds with no name, and keeps waiting', async () => {
+    const { env, recorder } = makeEnv();
+    const cursor = cursorFor({ op: 'expect', screen: 'dungeon', timeoutMs: 60_000 }, {
+      unnamedSinceMs: Date.now() - 3_100,
+    });
+
+    const outcome = await advanceSteps(cursor, env, 'k'.repeat(32), screen('unknown'));
+
+    expect(outcome.kind).toBe('waiting');
+    expect(recorder.calls).toEqual([`key ${TASK_KEYS.esc} 60`]);
+    expect(cursor.escapedAtMs).not.toBeNull();
+    expect(cursor.index).toBe(0);                       // still waiting for the screen
+  });
+
+  it('does not press anything before the three seconds are up', async () => {
+    const { env, recorder } = makeEnv();
+    const cursor = cursorFor({ op: 'expect', screen: 'dungeon', timeoutMs: 60_000 }, {
+      unnamedSinceMs: Date.now() - 500,
+    });
+
+    const outcome = await advanceSteps(cursor, env, 'k'.repeat(32), screen('loading'));
+
+    expect(outcome.kind).toBe('waiting');
+    expect(recorder.calls).toEqual([]);
+  });
+
+  it('resets the clock and the Esc when a named screen comes back', async () => {
+    const { env, recorder } = makeEnv();
+    const cursor = cursorFor({ op: 'expect', screen: 'dungeon', timeoutMs: 60_000 }, {
+      unnamedSinceMs: Date.now() - 3_100,
+      escapedAtMs: Date.now() - 1_000,
+    });
+
+    // A named screen that is not the expected one (and not the loop's): nothing is pressed, and the
+    // unnamed clock restarts.
+    const outcome = await advanceSteps(cursor, env, 'k'.repeat(32), screen('town'));
+
+    expect(outcome.kind).toBe('waiting');
+    expect(recorder.calls).toEqual([]);
+    expect(cursor.unnamedSinceMs).toBeNull();
+    expect(cursor.escapedAtMs).toBeNull();
+  });
+});
+
 describe('the open-map step', () => {
   it('presses G once from the walking view', async () => {
     const { env, recorder } = makeEnv();
