@@ -19,6 +19,7 @@ import { DUNGEON_SELECT_AREA, DUNGEON_SELECT_FLOOR, DUNGEON_SELECT_SCALES } from
 import { TOWN_PANEL_CHEVRON_BAND } from '../perception/location.ts';
 import { LOCATIONS, type LocationEntry } from '../perception/locations.ts';
 import { findTemplate, type Match, type MatchTemplate } from '../perception/match.ts';
+import { capturedArt } from '../perception/site-art.ts';
 import { findSite, findSites } from '../perception/site-finder.ts';
 import { isClickable } from '../perception/map-ring.ts';
 import { pointerAt } from '../perception/pointer.ts';
@@ -1126,8 +1127,15 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
     site: async (level, wantTitle) => {
       const current = await image();
       if (current === null) return null;
-      const found = findSite(current, target, {
-        strip: MAP_STRIP, iconScales: [...ICON_SCALES_ANY], titleScales: [1], wantTitle,
+      // A captured art (perception/site-art.ts) is matched at scale 1 — the legacy navigator's rule, and
+      // the end of the scale sweep for any site that has been recorded. Unrecorded sites keep the wide
+      // bank, so a new site works before it is captured.
+      const art = capturedArt(entry.id, level);
+      const found = findSite(current, art === null ? target : { ...target, template: art.template }, {
+        strip: MAP_STRIP,
+        iconScales: art === null ? [...ICON_SCALES_ANY] : [0.98, 1, 1.02],
+        titleScales: [1],
+        wantTitle,
         minIconScore: 0.78,
       });
       return found === null ? null : { at: found.point, confidence: found.confidence };
