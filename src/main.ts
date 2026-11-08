@@ -343,8 +343,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
           : step === 'sparkle' ? openAutoHeal(actuator)
             : step === 'restore' ? confirmAutoHeal(actuator)
               : closeCharacterPage(actuator),
-      // The character page's own close: one tap on its measured X 关闭 tile, verified by the next frame.
-      closeCharacterPage: () => closeCharacterPage(actuator),
+      // The character page's own close: the X 关闭 tile the reader matched (2026-11-09), else its
+      // measured point. The heal episode closes with Esc first and falls back to this.
+      closeCharacterPage: (at) => (at === undefined ? closeCharacterPage(actuator) : actuator.tap(at)),
       // A control perception named: the harken menu's row (contracts §2 harken-menu).
       tapPoint: (at) => actuator.tap(at),
       // The inn's row: the rest module's one act (operator, 2026-11-06: a rest plug-in).

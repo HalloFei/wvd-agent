@@ -968,6 +968,7 @@ function emptyScreens(): Record<ScreenId, number> {
     loading: 0,
     'dungeon-select': 0,
     'character-page': 0,
+    'quick-heal': 0,
     'main-character-dead': 0,
     'revive-qte': 0,
     inn: 0,

@@ -49,6 +49,11 @@ export type ScreenId =
   | 'skill-panel'
   | 'chest-open' | 'chest-qte' | 'chest-opening' | 'drop-item-claim' | 'loading' | 'chest-prompt'
   | 'dungeon-select' | 'character-page' | 'main-character-dead' | 'revive-qte' | 'harken-menu'
+  /**
+   * The 一键恢复 dialog (2026-11-09): the heal's own page over the character page — its 关闭 / 恢复
+   * buttons are the evidence, and the 恢复 button's matched point is the press target.
+   */
+  | 'quick-heal'
   | 'inn' | 'inn-rest' | 'message' | 'ui-menu' | 'unknown';
 
 // §3 Perception
@@ -217,7 +222,27 @@ export type Observation =
        */
       readonly dungeonLike?: boolean;
     }
-  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'inn-rest' | 'message' | 'ui-menu' | 'drop-item-claim' | 'unknown'>;
+  | {
+      readonly screen: 'character-page';
+      readonly atMs: number;
+      readonly confidence: number;
+      /**
+       * The page's X 关闭 tile on this frame: the close is a tap at the tile the reader **matched**,
+       * not at a fixed coordinate (live 2026-11-09: the fixed point missed a page whose tile had moved
+       * a few pixels, and the page stayed while the loop tapped it three times).
+       */
+      readonly at: Point;
+    }
+  | {
+      readonly screen: 'quick-heal';
+      readonly atMs: number;
+      readonly confidence: number;
+      /** The 恢复 button the reader matched: the press target. */
+      readonly at: Point;
+      /** The 关闭 button's matched point, so a scope test can reach it without a second reader. */
+      readonly cancel: Point;
+    }
+  | { readonly screen: Exclude<ScreenId, 'dungeonmap' | 'chest-qte' | 'chest-open' | 'combat' | 'harken-menu' | 'inn' | 'inn-rest' | 'message' | 'ui-menu' | 'drop-item-claim' | 'character-page' | 'quick-heal' | 'unknown'>;
       readonly atMs: number; readonly confidence: number };
 
 export interface Perceiver { observe(frame: Frame): Promise<Observation>; }

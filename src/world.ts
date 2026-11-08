@@ -74,7 +74,7 @@ import { DISARM_SCAN } from './actions/chest.ts';
 import { advanceMode, INITIAL_MODE, type ModeMemory } from './policy/mode.ts';
 import { nextPageCloseTries } from './policy/page-episode.ts';
 import { createTrust } from './policy/trust.ts';
-import { HealSequence } from './policy/heal-sequence.ts';
+import { HealSession, type HealFacts } from './policy/heal-session.ts';
 import { HealSchedule } from './policy/heal-schedule.ts';
 import { CHEST_PROBE_MS, nextChestProbe } from './policy/chest-probe.ts';
 import { isExpectedFloor } from './tasks/steps.ts';
@@ -156,8 +156,8 @@ export interface RouteCommands {
    * call, and the caller sends it only from a frame that names what it acts on (`policy/heal-sequence.ts`).
    */
   healStep(step: 'card' | 'sparkle' | 'restore' | 'close'): Promise<ActionResult>;
-  /** Leave the character page: its measured X 关闭 tile (2026-11-03; the page is a named screen). */
-  closeCharacterPage(): Promise<ActionResult>;
+  /** Leave the character page: the X 关闭 tile the reader matched (2026-11-09), or its measured point. */
+  closeCharacterPage(at?: Point): Promise<ActionResult>;
   /**
    * One tap at a point **perception named** — the harken menu's row, today. Not a blind tile: the
    * caller passes a control the frame itself reported (contracts §2 `harken-menu`).
@@ -396,17 +396,14 @@ const PAGE_CLOSE_TRIES = 3;
  * are ~4.5 s, so 12 s is the heal with two chances at every step).
  */
 const HEAL_STEP_MS = 900;
-const HEAL_PAGE_GRACE_MS = 2_500;
-const HEAL_ESCAPE_GRACE_MS = 2_500;
-const HEAL_DEADLINE_MS = 12_000;
 /**
- * The heal episode's hard wall-clock bound, ms (live 2026-11-09 04:45-04:46 measured the whole cycle:
- * card 5 s after the start, the page 10 s after the card, sparkle and 恢复 4 s, the toast's unnamed
- * stretch 5 s, the page again 5 s — 39 s to the close). The old 3 x deadline (36 s) cut the episode
- * just before its last step, so every heal gave up with the close owed. This is the last resort for a
- * screen that never comes back, not the budget of the heal's own steps.
+ * The heal episode's wall-clock bound, ms: the last resort for a screen that never comes back, not the
+ * budget of the episode's steps (those are fact-gated). Measured live 2026-11-09: a whole heal — card
+ * 5 s after the start, the page 10 s after the card, sparkle and 恢复 4 s, the toast's unnamed stretch
+ * 5 s, the page again 5 s — is ~39 s; 90 s leaves room for a slow battle suspension without letting a
+ * truly stuck page hold the farm.
  */
-const HEAL_HARD_DEADLINE_MS = 60_000;
+const HEAL_SESSION_DEADLINE_MS = 90_000;
 /**
  * How long the party may be walking after the E check before the leave may act again, ms. The walk is
  * the game's own (it knows the route); 20 s covers the floor's longest measured chest walk, and the
@@ -742,12 +739,13 @@ export class WvdWorld implements World {
    * The heal in flight: a sequence of steps, each sent only from a frame that names what it acts on
    * (`policy/heal-sequence.ts`). Non-null means the heal owns the tick until it is done or gives up.
    */
-  #heal: HealSequence | null = null;
+  #heal: HealSession | null = null;
   /**
    * The screen the heal is waiting on, so one wait costs one log line (see the heal branch). Reset
    * whenever the heal starts or is dropped: it belongs to the episode, not to the World.
    */
-  #healWaitOn: ScreenId | null = null;
+  /** The step the heal last waited on (step + reason): one wait costs one log line. */
+  #healWaitOn: string | null = null;
   /** The screen the last frames named, and how many in a row: the stable-frame gate. */
   #stableScreen: ScreenId | null = null;
   #stableCount = 0;
@@ -1527,136 +1525,107 @@ export class WvdWorld implements World {
     // the inn and message plug-ins — the gate is what counts the cycle once the party is back in town.
     if (await this.#advanceRestGate(observation, now)) return;
 
-    // The heal is the game's own quick heal, sent as a **sequence**: the party card, the sparkle, 恢复 and
-    // the close, one tap per tick, each sent only from a frame that names what it acts on (operator rule
-    // 2026-11-07: *only next order based on the current stable frame. no competing orders*). The old
-    // composite sent all four taps blind, so a battle that interrupted the heal took the remaining taps
-    // on the battle screen (live 2026-11-08 13:07) and the verify afterwards held the tick 11 s.
+    // The heal is an **owned episode** (policy/heal-session.ts, operator's design 2026-11-09): card,
+    // sparkle, 恢复 and close are four steps, each gated by its own fact — the page, the 一键恢复
+    // dialog, the dialog gone, the page gone — never by a timer. **When** is the schedule's
+    // (policy/heal-schedule.ts): a completed battle/chest (or the entry/rest) owes a heal, and only a
+    // completed episode pays the debt.
     //
-    // **When** is the schedule's (policy/heal-schedule.ts, operator's matrix 2026-11-09): a completed
-    // battle or chest (or the entry/rest, when configured) owes a heal, and only a completed heal pays
-    // the debt. The old hardcoded flag was cleared *before* the sequence ran, so a give-up lost the heal
-    // for good and the page-close branch then closed the page the heal had just opened (live 2026-11-09
-    // 03:34 — the page was named 14 s after the card tap and the heal had already given up).
-    // The **game's mode** is the gate, not the frame: a chest's post-loot animation interleaves
-    // `chest-opening` frames with the walking view, and a modal mode is held until two named frames of
-    // the next one. A heal started on one of those walking frames opens the page into the chest's
-    // animation, is abandoned by it, and the page-close branch then fights the animation — the repeated
-    // open/close the operator saw live 2026-11-09 04:53-04:56. Only a settled `dungeon` mode means the
-    // chest or the battle is over (the old gate only excluded `battle`).
-    if (this.#heal === null && !waiting && this.#mode.mode === 'dungeon'
-      && observation.screen === 'dungeon') {
+    // While the episode runs it **owns the interface**: the page-close branch below waits for it, an
+    // unnamed or transitional frame is a wait, and only the game's modal screens (battle, chest QTE,
+    // death) suspend it — with its step kept. The previous sequence was abandoned by any named screen,
+    // which is the open/close loop the operator saw live 2026-11-09 05:22-05:29.
+    // Priority over the route: the episode is created as soon as the page is up or the walk view has
+    // held for the loop's own stability gate, so the route cannot spend the tick opening the map first
+    // (its card step waits for the stricter "settled" fact inside the episode).
+    if (this.#heal === null && !waiting && this.#healSchedule.owed
+      && (observation.screen === 'character-page'
+        || (this.#mode.mode === 'dungeon' && observation.screen === 'dungeon' && this.#stableCount >= 2))) {
       const due = this.#healSchedule.due(now);
-      // The debt is not windowed. It used to expire 30 s after the event, which cancelled exactly the
-      // heals that matter: one abandoned by a two-minute battle, and one re-armed after its own
-      // give-up (2026-11-09 04:07 — the retry landed past the window and the debt was dropped). The
-      // trip that must cancel it is cancelled where it is known: the orientation's own command.
       if (due.due) {
-        this.#heal = new HealSequence({
-          stableFrames: STABLE_FRAMES,
-          stepMs: HEAL_STEP_MS,
-          graceMs: HEAL_PAGE_GRACE_MS,
-          escapeGraceMs: HEAL_ESCAPE_GRACE_MS,
-          deadlineMs: HEAL_DEADLINE_MS,
-          hardDeadlineMs: HEAL_HARD_DEADLINE_MS,
-        });
-        this.#heal.enter(now);
+        this.#heal = new HealSession({ stepMs: HEAL_STEP_MS, deadlineMs: HEAL_SESSION_DEADLINE_MS });
+        this.#heal.enter(now, observation.screen === 'character-page');
         this.#healWaitOn = null;
         this.#host?.log.info(
-          `wvd: the heal starts (${due.cause}); one step per frame that names what it acts on`,
+          `wvd: the heal starts (${due.cause})${observation.screen === 'character-page' ? ' on a page already up' : ''}`,
         );
       }
     }
     if (this.#heal !== null) {
-      // The heal's own screens are the walking view and its character page. Any other **named** screen
-      // is the game taking the frame away — a battle, a chest, an event page — and the loop owns that:
-      // the heal is abandoned there instead of holding the tick to its deadline (live 2026-11-08 13:07:
-      // a battle interrupted the composite heal and the loop lost 11 s to it).
-      const taken = observation.screen !== 'dungeon'
-        && observation.screen !== 'character-page'
-        && observation.screen !== 'unknown'
-        && observation.screen !== 'loading';
-      if (taken) {
-        // Abandoned, and the tick carries on into this screen's own dispatch: the battle that took the
-        // frame is the order now. The debt stays — an interrupted attempt is not a failed heal.
-        this.#healSchedule.abandoned();
-        this.#heal = null;
-        this.#healWaitOn = null;
-        this.#host?.log.info(`wvd: the heal was interrupted by ${observation.screen}; the farm continues`);
-      } else {
-        const phase = {
-          screen: observation.screen,
-          stable: this.#stableCount,
-          page: observation.screen === 'character-page',
-          // A frame the heal cannot act on is not the heal's time: the game's blank frame, and any
-          // screen no reader names (the battle's XP/level-up page over the character page, live
-          // 2026-11-09 03:34). The sequence's hard wall-clock bound is what still stops a real hang.
-          blank: observation.screen === 'loading' || observation.screen === 'unknown',
-        };
-        const step = this.#heal.next(phase, now);
-        if (step.kind === 'wait') {
-          // A wait is the only thing a give-up cannot explain afterwards, and 2026-11-08 proved it
-          // twice: two live heals gave up with the sparkle owed, and the log could not say what the
-          // frames were between the card tap and the deadline. One line per screen the heal waits on.
-          if (this.#healWaitOn !== observation.screen) {
-            this.#healWaitOn = observation.screen;
+      const decision = this.#heal.next(this.#healFacts(observation), now);
+      switch (decision.kind) {
+        case 'wait': {
+          const key = this.#heal.step + ':' + decision.why;
+          if (this.#healWaitOn !== key) {
+            this.#healWaitOn = key;
             this.#host?.log.info(
-              `wvd: heal waiting on ${observation.screen} ${observation.confidence.toFixed(2)}`
-              + ` (stable ${this.#stableCount}, page ${phase.page}): ${step.why}`,
+              `wvd: heal waiting (${this.#heal.step}): ${decision.why} on ${observation.screen}`
+              + ` (stable ${this.#stableCount})`,
             );
           }
+          // A suspension means the **game** owns the frame (a battle, a QTE, a death): the episode
+          // keeps its step and this tick carries on into that screen's own dispatch. Every other wait
+          // is the heal's to sit out.
+          if (decision.why !== 'suspended') return;
+          break;
+        }
+        case 'message': {
+          const tapped = await this.#commands.tapPoint(decision.at);
+          if (tapped.ok) this.#host?.log.info('wvd: the heal: advanced the result box');
           return;
         }
-        if (step.kind === 'done') {
-          const gaveUp = step.why === 'gave-up';
-          // Read before the sequence is dropped: the owed step is what a give-up has to name.
-          const owed = this.#heal.owed;
+        case 'done': {
+          const unverified = decision.unverified;
           this.#heal = null;
           this.#healWaitOn = null;
-          if (gaveUp) {
-            // The debt re-arms once after a backoff (the page-close branch has that window), and only
-            // the last give-up of an episode spends it. A failed attempt must never lose the heal.
-            const rearmed = this.#healSchedule.gaveUp(now);
-            this.#host?.log.warn(
-              `wvd: the heal gave up at its bound; the ${owed.step} step was owed (${owed.sent} of 4 sent); `
-              + (rearmed ? 'the debt re-arms after the backoff' : 'the episode is spent'),
-            );
-          } else {
-            this.#healSchedule.completed();
-            this.#host?.log.info('wvd: healed the party');
+          this.#healSchedule.completed();
+          this.#host?.log.info(unverified
+            ? 'wvd: the heal is over (unverified: no dialog was seen); the farm continues'
+            : 'wvd: healed the party');
+          return;
+        }
+        case 'failed': {
+          this.#heal = null;
+          this.#healWaitOn = null;
+          const rearmed = this.#healSchedule.gaveUp(now);
+          this.#host?.log.warn(
+            `wvd: the heal failed (${decision.why}); `
+            + (rearmed ? 'the debt re-arms after the backoff' : 'the episode is spent'),
+          );
+          return;
+        }
+        case 'send': {
+          this.#host?.log.info(
+            `wvd: heal step ${decision.step} from ${observation.screen} (stable ${this.#stableCount}`
+            + `${decision.at === undefined ? '' : `, at ${decision.at.x},${decision.at.y}`})`,
+          );
+          const sent = decision.step === 'card' || decision.step === 'sparkle'
+            ? await this.#commands.healStep(decision.step)
+            : decision.at !== undefined
+              ? await this.#commands.tapPoint(decision.at)
+              : await this.#commands.escape();
+          if (sent.ok) this.#heal.sent(this.#now());
+          else {
+            this.#heal.refused(this.#now());
+            this.#host?.log.warn(`wvd: the heal's ${decision.step} command was refused (${sent.reason}); the step stays owed`);
           }
           return;
         }
-        if (step.kind === 'escape') {
-          this.#heal.escaped(this.#now());
-          this.#host?.log.warn('wvd: the page the heal opened did not close; pressing Esc once');
-          await this.#commands.escape();
+        default:
           return;
-        }
-        // One line per step, from the frame it is being sent from: a heal that gives up must say
-        // what it was waiting on at each step, not only that its bound ran out (2026-11-08).
-        this.#host?.log.info(
-          `wvd: heal step ${step.kind}${step.redo === true ? ' again' : ''} from ${observation.screen}`
-          + ` (stable ${this.#stableCount})`,
-        );
-        const sent = await this.#commands.healStep(step.kind);
-        if (sent.ok) {
-          // A step sent **again** restarts the pace and advances nothing.
-          if (step.redo === true) this.#heal.retried(this.#now());
-          else this.#heal.completed(this.#now());
-        } else {
-          this.#heal.refused(this.#now());
-          this.#host?.log.warn(`wvd: the heal's ${step.kind} tap was refused (${sent.reason}); the step stays owed`);
-        }
-        return;
       }
     }
 
     // The character page: a menu the heal (or an operator) opens, and a screen the loop *finishes* —
     // operator rule 2026-11-03: *after open and heal there shall be a close of the character panel, so
-    // go back to the dungeon*. Its X 关闭 tile is the evidence that names it, so the close is verified
-    // by the next frame rather than hoped for; a page that stays costs one tap per tick, capped.
-    if (this.#heal === null && !waiting && observation.screen === 'character-page') {
+    // go back to the dungeon*. Its X 关闭 tile is the evidence that names it, and the tap goes to the
+    // tile the reader **matched**; a page that stays costs one tap per tick, capped.
+    //
+    // While a heal is owed the branch waits: the episode owns the page until it finishes (its own
+    // close is Esc first, the matched tile second), and a second actor here is the open/close loop the
+    // operator saw live 2026-11-09.
+    if (this.#heal === null && !this.#healSchedule.owed && !waiting
+      && observation.screen === 'character-page') {
       // Paced (operator rule 2026-11-03): the page animates while it closes, and a tap sent into that
       // animation lands on the 3-D view and opens another member's page. One tap per pace, on a frame
       // that has stopped moving.
@@ -1677,7 +1646,7 @@ export class WvdWorld implements World {
         return;
       }
       this.#pageCloseTries += 1;
-      const closed = await this.#commands.closeCharacterPage();
+      const closed = await this.#commands.closeCharacterPage(observation.at);
       if (closed.ok) this.#host?.log.info('wvd: closed the character page');
       else this.#host?.log.warn(`wvd: the character page close was refused (${closed.reason})`);
       return;
@@ -3342,6 +3311,30 @@ export class WvdWorld implements World {
       default:
         return assertNever(intent);
     }
+  }
+
+  /**
+   * The facts one frame offers the heal episode (policy/heal-session.ts). Every fact is local to the
+   * material the episode acts on: the page and its matched X point, the dialog and its matched 恢复
+   * point, a result box, the settled farm view, and the game's modal screens (the only suspension).
+   */
+  #healFacts(observation: Observation): HealFacts {
+    const page = observation.screen === 'character-page';
+    const dialog = observation.screen === 'quick-heal';
+    const message = observation.screen === 'message';
+    return {
+      settled: this.#mode.mode === 'dungeon' && observation.screen === 'dungeon' && this.#stableCount >= 3,
+      page: page && this.#stableCount >= 2,
+      pageAt: page ? observation.at : null,
+      dialog: dialog && this.#stableCount >= 2,
+      dialogAt: dialog ? observation.at : null,
+      dialogCancelAt: dialog ? observation.cancel : null,
+      message,
+      messageAt: message ? observation.at : null,
+      pageGone: (observation.screen === 'dungeon' || observation.screen === 'dungeonmap') && this.#stableCount >= 2,
+      suspended: observation.screen === 'combat' || observation.screen === 'chest-qte'
+        || observation.screen === 'revive-qte' || observation.screen === 'main-character-dead',
+    };
   }
 
   /**

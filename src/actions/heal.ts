@@ -27,8 +27,15 @@ export const CHARACTER_PAGE_AT: Point = { x: 1_009, y: 900 };
 /** The auto-heal sparkle, right of the 协同技能 arrows on the character page's stat panel. */
 export const AUTO_HEAL_AT: Point = { x: 1_220, y: 574 };
 
-/** 恢复 in the 一键恢复 dialog: the right-hand button (关闭 is at 854, 813). */
-export const AUTO_HEAL_CONFIRM_AT: Point = { x: 1_070, y: 813 };
+/**
+ * 恢复 in the 一键恢复 dialog: the right-hand button, measured live 2026-11-09 at **(1087, 802)**
+ * (the dialog's button row sits 36 px above the 2026-11-01 coordinate, which is why the old press
+ * could be "sent" and do nothing). The heal uses the point the dialog reader **matched**; this is the
+ * fallback for a caller with no frame.
+ */
+export const AUTO_HEAL_CONFIRM_AT: Point = { x: 1_087, y: 802 };
+/** 关闭 in the same dialog: the left-hand button, measured 2026-11-09. */
+export const AUTO_HEAL_CANCEL_AT: Point = { x: 850, y: 802 };
 
 /** X 关闭 at the character page's bottom left, back to the 3-D view. */
 export const CHARACTER_PAGE_CLOSE_AT: Point = { x: 699, y: 1_012 };

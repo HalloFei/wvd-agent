@@ -65,6 +65,8 @@ export class CharacterPagePerceiver implements Perceiver {
     }
     const match = findCharacterPage(image);
     if (match === null) return unknown;
-    return { screen: 'character-page', atMs: frame.atMs, confidence: match.score };
+    // The tile's own centre is the close target: the World presses the point this reader **matched**,
+    // not a fixed coordinate (live 2026-11-09: a fixed point missed and the page stayed).
+    return { screen: 'character-page', atMs: frame.atMs, confidence: match.score, at: match.at };
   }
 }

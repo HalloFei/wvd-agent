@@ -40,7 +40,7 @@ describe('the one-key heal', () => {
     expect(actuator.taps).toEqual([
       { x: 1_009, y: 900 },
       { x: 1_220, y: 574 },
-      { x: 1_070, y: 813 },
+      { x: 1_087, y: 802 },
       { x: 699, y: 1_012 },
     ]);
     // One close tap, and it is the measured one: live 2026-11-03 a second tap at the same point would
@@ -51,7 +51,7 @@ describe('the one-key heal', () => {
   it('pins the measured points', () => {
     expect(CHARACTER_PAGE_AT).toEqual({ x: 1_009, y: 900 });
     expect(AUTO_HEAL_AT).toEqual({ x: 1_220, y: 574 });
-    expect(AUTO_HEAL_CONFIRM_AT).toEqual({ x: 1_070, y: 813 });
+    expect(AUTO_HEAL_CONFIRM_AT).toEqual({ x: 1_087, y: 802 });
     expect(CHARACTER_PAGE_CLOSE_AT).toEqual({ x: 699, y: 1_012 });
   });
 

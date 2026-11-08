@@ -278,7 +278,7 @@ const dungeonLikeUnknown: Observation = { screen: 'unknown', atMs: 100, confiden
 const nothingSeen: Observation = { screen: 'unknown', atMs: 100, confidence: 0 };
 const waiting: Observation = { screen: 'loading', atMs: 100, confidence: 0.9 };
 const dungeonView: Observation = { screen: 'dungeon', atMs: 100, confidence: 0.9 };
-const characterPageView: Observation = { screen: 'character-page', atMs: 100, confidence: 1 };
+const characterPageView: Observation = { screen: 'character-page', atMs: 100, confidence: 1, at: { x: 699, y: 1_012 } };
 
 /**
  * One heal, the way the loop runs it since 2026-11-08: the party card from the walking view, then the
@@ -307,15 +307,33 @@ async function tickUntilLogged(
   throw new Error('never logged: ' + text);
 }
 
+/**
+ * One heal, the way the owned episode runs it (2026-11-09): the page (card), the 一键恢复 dialog
+ * (sparkle then 恢复), the page again (the dialog gone: close), then the walking view (the page gone:
+ * done). Each screen is fed long enough for its stable-frame gate.
+ */
+const quickHealView: Observation = {
+  screen: 'quick-heal', atMs: 100, confidence: 0.95,
+  at: { x: 1_087, y: 802 }, cancel: { x: 850, y: 802 },
+};
+
 async function runHeal(
   world: TickableWorld,
   perceiver: { observation: Observation },
   clock: { advance(ms: number): void },
 ): Promise<void> {
+  // The page (two frames for its stable gate): the card's answer, then the sparkle.
   perceiver.observation = characterPageView;
-  for (let index = 0; index < 6; index += 1) { clock.advance(1_000); await world.tick(); }
+  for (let index = 0; index < 2; index += 1) { clock.advance(1_000); await world.tick(); }
+  // The dialog (two frames): the sparkle's answer, then 恢复.
+  perceiver.observation = quickHealView;
+  for (let index = 0; index < 2; index += 1) { clock.advance(1_000); await world.tick(); }
+  // The dialog gone (the page stable again): the restore's answer, then the close (Esc).
+  perceiver.observation = characterPageView;
+  for (let index = 0; index < 2; index += 1) { clock.advance(1_000); await world.tick(); }
+  // The page gone: the close's answer — the episode is done.
   perceiver.observation = dungeonView;
-  for (let index = 0; index < 4; index += 1) { clock.advance(1_000); await world.tick(); }
+  for (let index = 0; index < 3; index += 1) { clock.advance(1_000); await world.tick(); }
 }
 
 /** A member the opener policy can rank; the card index is its position in the panel. */
@@ -1594,14 +1612,17 @@ describe('a walk stays in flight through the screens it produces', () => {
     // starts on that tick — one step per frame, and no route command rides along with it.
     perceiver.observation = dungeonView;
     const healStarts = (): number => host.logRecords.filter((record) => record.message.includes('the heal starts')).length;
+    // The heal's own card goes through its command stub; the assertion is that no **route** command
+    // rides along on the tick the episode starts (the battle's own paced presses are not the route's).
     let callsAtHeal = -1;
-    for (let index = 0; index < 14 && callsAtHeal < 0; index += 1) {
+    for (let index = 0; index < 20 && callsAtHeal < 0; index += 1) {
+      const before = actuator.calls.length;
       clock.advance(500);
       await world.tick();
-      if (healStarts() === 1) callsAtHeal = actuator.calls.length;
+      if (healStarts() === 1) callsAtHeal = actuator.calls.length - before;
     }
     expect(healStarts()).toBe(1);
-    expect(callsAtHeal).toBe(fightCalls);
+    expect(callsAtHeal).toBe(0);
 
     // The heal's four steps, each from the frame that names what it acts on; the close is verified by
     // the page leaving (operator rule 2026-11-07: only the next order, from the current stable frame).
@@ -1614,38 +1635,43 @@ describe('a walk stays in flight through the screens it produces', () => {
     await world.tick();
     clock.advance(500);
     await world.tick();
-    expect(actuator.calls.slice(fightCalls)).toEqual([`key ${SCAN.G} 60`]);
+    // The episode's own taps came first (restore, close); the route's map press is the one after it.
+    const after = actuator.calls.slice(fightCalls);
+    expect(after.at(-1)).toBe(`key ${SCAN.G} 60`);
   });
 
-  it('abandons the heal when a battle takes the frame, and dispatches the battle that tick', async () => {
-    // The defect the operator named (2026-11-08): the loop was healing when a battle interrupted it. The
-    // composite tapped card -> sparkle -> 恢复 -> close blind, so the taps after the interruption landed
-    // on the battle screen, and the verify then held the tick 11 s. The sequence drops the heal instead,
-    // and the frame in hand is the order.
+  it('suspends the heal when a battle takes the frame, and resumes at the kept step', async () => {
+    // Operator's design (2026-11-09): a battle is a **suspension**, not an abandonment — the episode keeps
+    // the step it had reached and the loop dispatches the battle while it waits. The old sequence was
+    // dropped by any named screen, which left its page open and fed the open/close loop.
     const { world, host, actuator, perceiver, clock, healSteps } = makeWorld({ observation: dungeonView });
     await started(world, host);
+    const waits = (): number => host.logRecords.filter((record) => record.message.includes('suspended')).length;
 
     perceiver.observation = combatView;
     clock.advance(100);
     await world.tick();
     perceiver.observation = dungeonView;
     await tickUntilLogged(world, host, clock, 'the heal starts');
-    await world.tick();                                   // the card, from the walking view
+    await world.tick();                                   // the card, from the settled view
     expect(healSteps).toEqual(['card']);
 
-    // The battle takes the frame: the heal is dropped and no further heal step is attempted on it.
+    // The battle takes the frame: the episode waits, and the loop's own battle commands are sent.
     perceiver.observation = combatView;
     clock.advance(500);
     const calls = actuator.calls.length;
     await world.tick();
-
-    expect(host.logRecords.some((record) => record.message.includes('the heal was interrupted by combat'))).toBe(true);
+    expect(waits()).toBeGreaterThan(0);
     expect(healSteps).toEqual(['card']);
-
-    // …and the battle is the loop's from that tick: its own settle, then its press.
     clock.advance(1_000);
     await world.tick();
     expect(actuator.calls.length).toBeGreaterThan(calls);
+
+    // The battle over, the page is up again: the episode resumes at the sparkle, not at the card.
+    perceiver.observation = characterPageView;
+    for (let index = 0; index < 3; index += 1) { clock.advance(500); await world.tick(); }
+    expect(healSteps[0]).toBe('card');
+    expect(healSteps[1]).toBe('sparkle');
   });
 
   it('heals once after a battle, and again after a chest, and not twice on the same view', async () => {
@@ -1694,9 +1720,10 @@ describe('a walk stays in flight through the screens it produces', () => {
     clock.advance(100);
     await world.tick();
     expect(starts()).toBe(0);
-    // The second walking frame leaves the modal mode: the heal may start now.
-    clock.advance(100);
-    await world.tick();
+    // The second walking frame leaves the modal mode, but the view has still not held for the settled
+    // fact (three frames): the page is owed, the card is not pressed into the aftermath.
+    // The second walking frame leaves the modal mode: the episode may start now (its card step then
+    // waits for the stricter settled fact).
     for (let index = 0; index < 20 && starts() === 0; index += 1) { clock.advance(500); await world.tick(); }
     expect(starts()).toBe(1);
   });
@@ -1718,17 +1745,15 @@ describe('a walk stays in flight through the screens it produces', () => {
     await tickUntilLogged(world, host, clock, 'the heal starts');
     await world.tick();                                   // the card, from the walking view
 
-    // The page is open under an animation no reader can name, for longer than the heal's own bound.
+    // The page is open under an animation no reader can name: the episode waits (an unnamed frame is a
+    // wait, not an interruption) and only the episode's wall clock could end it.
     perceiver.observation = { screen: 'unknown', atMs: 100, confidence: 0.2 };
     for (let index = 0; index < 14; index += 1) { clock.advance(1_000); await world.tick(); }
     expect(starts()).toBe(1);
-    expect(host.logRecords.some((record) => record.message.includes('gave up'))).toBe(false);
+    expect(host.logRecords.some((record) => record.message.includes('failed'))).toBe(false);
 
-    // The page is named: the heal resumes from the step it owed and completes.
-    perceiver.observation = characterPageView;
-    for (let index = 0; index < 6; index += 1) { clock.advance(1_000); await world.tick(); }
-    perceiver.observation = dungeonView;
-    for (let index = 0; index < 4; index += 1) { clock.advance(1_000); await world.tick(); }
+    // The page and its dialog are named late: the episode resumes from the step it owed and completes.
+    await runHeal(world, perceiver, clock);
     expect(healed()).toBe(1);
   });
 
@@ -1761,7 +1786,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     // one give-up and re-arms after the backoff.
     // The stall clock is the test's to keep out of the way: the give-up takes 38 s of unnamed frames,
     // which is past a default 30 s "no progress" question the run does not ask here.
-    const { world, host, perceiver, clock } = makeWorld({ observation: dungeonView, cfg: { stallStopSeconds: 300 } });
+    const { world, host, perceiver, clock } = makeWorld({ observation: dungeonView, cfg: { stallStopSeconds: 600 } });
     await started(world, host);
     const starts = (): number => host.logRecords.filter((record) => record.message.includes('the heal starts')).length;
 
@@ -1772,12 +1797,12 @@ describe('a walk stays in flight through the screens it produces', () => {
     await tickUntilLogged(world, host, clock, 'the heal starts');
     await world.tick();                                   // the card
 
-    // The page never comes: unnamed frames until the sequence's hard wall-clock bound gives up. Ticks
-    // stop at the give-up itself: an unnamed frame with no heal on it is the classifier's question, and
-    // the test is about the debt, not the escalation.
+    // The page never comes: unnamed frames until the episode's 90 s wall clock ends it. Ticks stop at the
+    // give-up itself: an unnamed frame with no heal on it is the classifier's question, and the test is
+    // about the debt, not the escalation.
     perceiver.observation = { screen: 'unknown', atMs: 100, confidence: 0.2 };
     const gaveUp = (): boolean => host.logRecords.some((record) => record.message.includes('the debt re-arms'));
-    for (let index = 0; index < 70 && !gaveUp(); index += 1) { clock.advance(1_000); await world.tick(); }
+    for (let index = 0; index < 100 && !gaveUp(); index += 1) { clock.advance(1_000); await world.tick(); }
     expect(gaveUp()).toBe(true);
 
     // The view is back: the debt is still owed, so a fresh attempt starts.
@@ -2022,7 +2047,7 @@ describe('the character page', () => {
   it('never opens the map from a page frame, or from a frame that has not held', async () => {
     // Live 2026-11-07 23:39 / 2026-11-08 00:00: the route pressed open-map, the frame was the page, the
     // page block closed it, and the route asked again — twenty seconds a turn, for minutes.
-    const page: Observation = { screen: 'character-page', atMs: 100, confidence: 1 };
+    const page: Observation = { screen: 'character-page', atMs: 100, confidence: 1, at: { x: 699, y: 1_012 } };
     const { world, host, actuator } = makeWorld({ observation: page });
     await started(world, host);
     for (let index = 0; index < 6; index += 1) await world.tick();
@@ -2032,7 +2057,7 @@ describe('the character page', () => {
   it('closes a page, and the next frame proves it', async () => {
     // Operator rule 2026-11-03: after open and heal there shall be a close of the character panel, so
     // go back to the dungeon. The page is a named screen now, so the close is verified, not hoped for.
-    const page: Observation = { screen: 'character-page', atMs: 100, confidence: 1 };
+    const page: Observation = { screen: 'character-page', atMs: 100, confidence: 1, at: { x: 699, y: 1_012 } };
     const { world, host, actuator, perceiver, clock, escCalls } = makeWorld({ observation: page });
     await started(world, host);
 

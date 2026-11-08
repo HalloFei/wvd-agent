@@ -27,6 +27,7 @@
 import type { ScreenId } from '../contracts.ts';
 import { UiMenuPerceiver } from '../ui/menu.ts';
 import { CharacterPagePerceiver } from './character-page.ts';
+import { QuickHealPerceiver } from './quick-heal.ts';
 import { ChestPerceiver, type ChestPerceiverOptions } from './chest.ts';
 import { ChestOpeningPerceiver } from './chest-opening.ts';
 import { CombatPerceiver } from './combat.ts';
@@ -117,6 +118,11 @@ export function screenRecognisers(readers: {
     // The main character's death is the game's greyscale scene (2026-11-05): named before anything
     // that keys on the dungeon's own HUD, so a death is never an unnamed frame again.
     { perceiver: new MainCharacterDeathPerceiver(), floor },
+    // The 一键恢复 dialog is drawn **over** the character page, and the page's X 关闭 tile stays
+    // visible below the panel: the dialog must be asked first, or every dialog frame is named the page
+    // (measured 2026-11-09 — the dialog read `unknown 0.20` while the page reader matched the tile
+    // beneath it).
+    { perceiver: new QuickHealPerceiver(), floor },
     // The character page is a full-screen menu: its X 关闭 tile is the evidence, and it must be named
     // before the HUD can mistake the scene under it for the 3-D view (2026-11-03).
     { perceiver: new CharacterPagePerceiver(), floor },

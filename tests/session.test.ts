@@ -16,7 +16,7 @@ function state(observation: Observation, willpower: number[] = [80], chestsRemai
 function screen(
   kind:
     | 'town' | 'worldmap' | 'dungeon' | 'dungeon-select' | 'drop-item-claim' | 'loading' | 'unknown'
-    | 'character-page' | 'main-character-dead' | 'revive-qte',
+    | 'main-character-dead' | 'revive-qte',
   confidence = CONFIDENT,
 ): Observation {
   return { screen: kind, atMs: AT, confidence };
@@ -58,7 +58,12 @@ const identified: Record<Exclude<ScreenId, 'unknown'>, Observation> = {
   'drop-item-claim': screen('drop-item-claim'),
   loading: screen('loading'),
   'dungeon-select': screen('dungeon-select'),
-  'character-page': screen('character-page'),
+  // The page and its 一键恢复 dialog carry the point the loop presses (2026-11-09).
+  'character-page': { screen: 'character-page', atMs: AT, confidence: CONFIDENT, at: { x: 699, y: 1_012 } },
+  'quick-heal': {
+    screen: 'quick-heal', atMs: AT, confidence: CONFIDENT,
+    at: { x: 1_087, y: 802 }, cancel: { x: 850, y: 802 },
+  },
   'main-character-dead': screen('main-character-dead'),
   'revive-qte': screen('revive-qte'),
   inn: { screen: 'inn', atMs: AT, confidence: CONFIDENT, rows: [] },
