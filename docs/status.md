@@ -1318,6 +1318,39 @@ reading (`no-chevron`) for the whole 8 s the step waited, and the run stopped at
 is gone). Proved by `tests/automove.test.ts` (17), `tests/world.test.ts` + `tests/console.test.ts` +
 `tests/tasks.test.ts` + `tests/task-run.test.ts` (188) and the full suite.
 
+## The raw frame against a JPEG-era atlas — 由谁打开 (2026-11-08)
+
+The run of 12:29 farmed a chest, the exit, a re-entry and a battle, then sat on the **由谁打开?** opener
+panel with `unknown 0.30` for seven minutes. The log line that names it: `opener panel: 0 fields on the
+template tier, 0 escalated`.
+
+**Measured, same frame, three ways** (`parseOpenerDetailed` on a fresh 1920 capture):
+
+| input | template | escalated | answer |
+| --- | --- | --- | --- |
+| the raw frame | 0 | 0 | `unreadable` |
+| the same frame re-encoded q75 | 12 | 0 | **6 members**, the screen's own numbers |
+| the same frame re-encoded q90 / q100 | 0 | 0 | `unreadable` |
+| the raw frame, OCR tier configured | 11 | 1 | **6 members**, correct |
+
+All six cards were present at the measured rects (borders 160–164 columns, floor 120), so this is not
+geometry: the **陷阱 numeral atlas was recorded through the old JPEG decode** (2026-10-24, q75
+fixtures), and the vision module now hands the readers **raw** frames whose crisper glyphs miss it.
+`perception/opener.ts` already says so in prose — *"a raw capture does exactly that to an atlas
+recorded through the old JPEG decode"* — and names the escalation that answers it. What was missing
+was the escalation: no `WVD_OCR_PYTHON` / `WVD_OCR_SCRIPT` in the run's environment, so the tier had
+nothing to call and the panel refused every field.
+
+**Fix, immediate.** `scripts/world-run.ts` wires the OCR tier from the documented venv
+(`.tmp/ocr-venv/Scripts/python.exe` + `scripts/ocr-readout.py`) when the operator has not, and prints
+which tier the run has at start. Live proof at 12:40: the panel it had been stuck on read
+`11 fields on the template tier, 1 escalated`, the loop chose card #4 (陷阱解除 114) at 786,908, the
+chest opened, the QTE fired and the farm went on.
+
+**Fix, durable.** The template tier should answer on its own — an OCR round trip per panel is latency
+the fast loop should not carry. The atlas needs re-recording from a **lossless raw** capture (board
+t-mw7cj4ex-y6g0q4); the JPEG fixtures must keep parsing when it lands.
+
 ## Open work — the task board is the authority
 
 This file records what landed and what was measured. **Open work lives on the task board and only

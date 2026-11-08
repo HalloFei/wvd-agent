@@ -31,8 +31,8 @@
  * World stops on stallStopSeconds; a **lost process** - the engine's failure stops the session and a
  * harness that dies leaves a non-zero exit code. report.json says which one it was.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { createWvdWorld } from '../src/main.ts';
 import { WVD_DEFAULTS } from '../src/config.ts';
 
@@ -61,6 +61,28 @@ const fileStamp = (date: Date): string => date.toISOString().replaceAll(':', '-'
 const REPORT_DIR = process.env.WVD_REPORT_DIR ?? join('.tmp', 'runs', fileStamp(startedAt));
 const REPORT_PATH = join(REPORT_DIR, 'report.json');
 
+/**
+ * The numerals OCR tier, wired before the World is built (`main.ts` reads the environment when it
+ * constructs the readers).
+ *
+ * The opener's 陷阱 atlas was recorded through the old **JPEG** decode (2026-10-24), and the vision
+ * module now delivers **raw** frames whose crisper glyphs miss it — the design says so in
+ * `perception/opener.ts`: *"a raw capture does exactly that to an atlas recorded through the old JPEG
+ * decode"*. The escalation named there is this tier. Measured live 2026-11-08, the 由谁打开 panel:
+ * with no tier, `template 0, ocr 0` and the panel refused (the run then sat on it); with the tier,
+ * `template 11, ocr 1` and the panel parsed — 6 members, the numbers the screen shows.
+ *
+ * So a run launched without it stalls on every chest panel the atlas refuses. The harness sets it from
+ * the documented venv when the operator has not, and says which tier the run has either way.
+ */
+const OCR_PYTHON = process.env.WVD_OCR_PYTHON ?? resolve('.tmp', 'ocr-venv', 'Scripts', 'python.exe');
+const OCR_SCRIPT = process.env.WVD_OCR_SCRIPT ?? resolve('scripts', 'ocr-readout.py');
+const ocrWired = existsSync(OCR_PYTHON) && existsSync(OCR_SCRIPT);
+if (ocrWired) {
+  process.env.WVD_OCR_PYTHON = OCR_PYTHON;
+  process.env.WVD_OCR_SCRIPT = OCR_SCRIPT;
+}
+
 const cfg = {
   ...WVD_DEFAULTS,
   enabled: true,
@@ -77,6 +99,10 @@ const cfg = {
   escalationImageWidth: ESCALATION_IMAGE_WIDTH,
 };
 const world = createWvdWorld({ cfg, timezone: 'Asia/Shanghai' });
+// Said at start, not discovered at the first chest: the tier's absence is a stall, not a slow read.
+console.log(ocrWired
+  ? 'OCR tier: ' + OCR_PYTHON + ' + ' + OCR_SCRIPT
+  : 'OCR tier: ABSENT (' + OCR_PYTHON + ') — a chest panel the JPEG-era atlas refuses will stall');
 /** Local time of day: the morning reader's clock, not UTC. */
 const stamp = (): string => new Date().toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Shanghai' });
 const log = (level: string) => (line: string, data?: unknown): void => {
