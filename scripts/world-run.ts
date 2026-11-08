@@ -105,6 +105,13 @@ const world = createWvdWorld({ cfg, timezone: 'Asia/Shanghai' });
 console.log(ocrWired
   ? 'OCR tier: ' + OCR_PYTHON + ' + ' + OCR_SCRIPT
   : 'OCR tier: ABSENT (' + OCR_PYTHON + ') — a chest panel the JPEG-era atlas refuses will stall');
+// The escalation's own availability, said at start. A run with no model attached has **no net** for an
+// unnamed frame — only the fallback the question's timeout takes — and a silent net is a stall nobody
+// sees (2026-11-08: four minutes of escalations on a HUD-less cutscene).
+console.log(process.env.WVD_ESCALATION_ENDPOINT
+  ? 'escalation: model endpoint ' + process.env.WVD_ESCALATION_ENDPOINT
+  : 'escalation: console only (no model endpoint) — an unnamed frame takes the fallback after '
+    + Math.round(ESCALATE_TIMEOUT_MS / 1000) + ' s');
 /** Local time of day: the morning reader's clock, not UTC. */
 const stamp = (): string => new Date().toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Shanghai' });
 /**

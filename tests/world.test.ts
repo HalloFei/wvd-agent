@@ -3720,6 +3720,25 @@ describe('the recovery', () => {
     expect(host.logRecords.some((line) => line.message.includes('has no name'))).toBe(true);
   });
 
+  it('records what an unnamed frame was, once the probe s Esc is answered', async () => {
+    // Operator rule 2026-11-08: an unnamed frame is a probe, and its result is evidence. Live 14:02 a
+    // HUD-less cutscene held the run for four minutes and the log could only say "unknown 0.20"; one Esc
+    // returns the walking view, and that is what the frame was.
+    const { world, host, perceiver, actuator, clock } = makeWorld({ observation: unknownButSeen, cfg: { escalateTimeoutMs: 25 } });
+    await started(world, host);
+
+    await world.tick();
+    expect(actuator.calls).toEqual(['key ' + SCAN.ESC + ' 60']);
+    expect(host.logRecords.some((line) => line.message.includes('it was dungeon'))).toBe(false);
+
+    perceiver.observation = dungeonView;
+    clock.advance(500);
+    await world.tick();
+
+    const answer = host.logRecords.find((line) => line.message.includes('one Esc cleared the unnamed frame'));
+    expect(answer?.message).toContain('it was dungeon');
+  });
+
   it('does not recover the same screen more than three times', async () => {
     // Six stalled reads of one page: the first three leave it, the rest wait for the stall clock.
     const { world, host, actuator, clock } = makeWorld({ observation: records });

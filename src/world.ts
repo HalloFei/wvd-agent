@@ -763,6 +763,11 @@ export class WvdWorld implements World {
   #lastIntent: { readonly intent: Intent; readonly atMs: number } | null = null;
   #lastObservation: Observation | null = null;
   /** The recovery's bound: the screen (and page) the steps were spent on, and how many so far. */
+  /**
+   * When the recovery pressed its one `Esc` on an unnamed frame, and the frame's name since — the
+   * probe's outcome, which is the only way a stall's log can say *what* the unnamed frame was.
+   */
+  #backProbeAtMs: number | null = null;
   #recoverEpoch: string | null = null;
   #recoverSteps = 0;
   /** The one warning a capped screen gets, so a lost screen does not log every tick. */
@@ -1387,6 +1392,16 @@ export class WvdWorld implements World {
     // One command at a time: a sent command owns the loop until its own effect answers it. The
     // verdict is still taken — a stalled action has to be able to escalate — but nothing is sent.
     const waiting = await this.#advanceInFlight(observation, frame, now);
+
+    // A probe's outcome is evidence, not a side effect: the Esc that was owed for an unnamed frame has
+    // been answered by a named screen, so the log says what the frame was. This is the line that was
+    // missing at 14:02 on 2026-11-08, when a HUD-less cutscene held the run for four minutes.
+    if (this.#backProbeAtMs !== null && observation.screen !== 'unknown' && observation.screen !== 'loading') {
+      this.#host?.log.info(
+        `wvd: one Esc cleared the unnamed frame; it was ${observation.screen}`,
+      );
+      this.#backProbeAtMs = null;
+    }
     // The floor is judged **after a move**, not on every frame (operator rule 2026-11-08: measure again
     // after each action, never continuously — it is the arrival that can leave the party elsewhere). A
     // map off the task floor re-arms the orientation, whose stairs/climb/fallback is the only actor that
@@ -2814,6 +2829,8 @@ export class WvdWorld implements World {
           return;
         }
         this.#host?.log.info('wvd: recovery: the screen has no name; pressing Esc once');
+        // The probe owes an answer: the screen that appears next is what the unnamed frame was.
+        this.#backProbeAtMs = this.#now();
         const pressed = await session.actuator.holdKey(ESC_SCAN, this.#cfg.pressHoldMs);
         if (!pressed.ok) this.#host?.log.warn(`wvd: the Esc press was refused (${pressed.reason})`);
         return;
