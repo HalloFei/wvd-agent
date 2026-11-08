@@ -1034,11 +1034,22 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
   if (!opened.ok) return { ok: false, reason: 'refused', detail: opened.reason };
   const levels = (level: 0 | 1 | 2): number[] => iconScalesAt(level);
   const image = async (): Promise<RgbaImage | null> => decode(await env.capture());
+  // The catalogue's art is the **whole node** (icon over its banner); at every zoom the game draws the
+  // banner separately (screen-space art), so an uncropped template cannot match the icon. The atlas
+  // solved this long ago by cropping to the banner's top (`iconTemplateFor`), and the finder must match
+  // the same art — that mismatch is why the first live run found neither the target nor a landmark
+  // (2026-11-09 01:19: the atlas confirmed the same node at 0.69 on the same frame).
+  const iconOnly = (candidate: LocationEntry): LocationEntry => {
+    const cropped = iconTemplateFor(candidate.id);
+    return cropped === null ? candidate : { ...candidate, template: cropped };
+  };
+  const target = iconOnly(entry);
+  const catalogue = [...LOCATIONS.values()].map(iconOnly);
   const senses: MapSenses = {
     site: async (level, wantTitle) => {
       const current = await image();
       if (current === null) return null;
-      const found = findSite(current, entry, {
+      const found = findSite(current, target, {
         strip: MAP_STRIP, iconScales: levels(level), titleScales: [1], wantTitle,
       });
       return found === null ? null : { at: found.point, confidence: found.confidence };
@@ -1054,8 +1065,8 @@ async function travelBySenses(entry: LocationEntry, env: WorldMapEnv): Promise<M
     landmark: async () => {
       const current = await image();
       if (current === null) return null;
-      const found = findSites(current, [...LOCATIONS.values()], {
-        strip: MAP_STRIP, iconScales: levels(0), wantTitle: false,
+      const found = findSites(current, catalogue, {
+        strip: MAP_STRIP, iconScales: levels(0), wantTitle: false, minIconScore: ATLAS_ICON_FLOOR,
       });
       const best = found[0];
       return best === undefined ? null : { id: best.id, at: best.point };

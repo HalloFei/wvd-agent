@@ -389,7 +389,12 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
           abort,
           log: (line) => world?.note(line),
           atlas: true,
-          pointer: true,
+          // The senses path is **withheld until it can see the icons** (2026-11-09 01:26: two live runs,
+          // cropped or uncropped art, found no target and no landmark at level 0, while the atlas
+          // confirmed the same node on the same frames — and seven unmeasured pushes left the map where
+          // even the atlas could not place the site). The modules and the machine stay; the default does
+          // not depend on them.
+          pointer: false,
         });
       },
     },
