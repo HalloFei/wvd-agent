@@ -36,8 +36,11 @@ export interface HealPhase {
   readonly stable: number;
   readonly page: boolean;
   /**
-   * The frame is the game's own blank one (a load or a fade, named \`loading\`). Time spent blind is not
-   * time spent failing: see the deadline in \`next\`.
+   * The frame is one the heal cannot act on: the game's blank frame (a load or a fade, named
+   * \`loading\`) or a screen no reader names (\`unknown\` — the battle's XP/level-up page drawn over the
+   * character page, live 2026-11-09 03:34, which sat unnamed for 9-14 s after the card tap). Time the
+   * heal cannot act in is not time it spent failing: see the deadline in \`next\`, and the hard bound
+   * that still stops a screen that never comes back.
    */
   readonly blank?: boolean;
 }
@@ -62,7 +65,7 @@ export interface HealOptions {
   readonly deadlineMs: number;
   /**
    * The wall-clock bound that even blank frames count against. `deadlineMs` is the whole heal plus two
-   * chances at every step **on a screen the loop can see**; a fade is the game's, so it is not the
+   * chances at every step **on a screen the loop can act on**; a fade and an unnamed page are the
    * heal's — but something has to stop a page that never comes at all. Three deadlines by default.
    */
   readonly hardDeadlineMs?: number;

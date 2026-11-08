@@ -637,6 +637,29 @@ it, unset means the tier is unavailable (`null`, never a throw), and `WVD_OCR_TI
 `8000`; unset, non-numeric or ≤ 0 means `8000`) bounds one call. A runtime path is per machine, so
 it lives in the environment beside the venv, not in this section.
 
+### 8.7 The heal's frequency
+
+The operator's matrix (2026-11-09): the heal is owed by **events**, not by a hardcoded moment. A
+completed battle and a completed chest are counted from the run stats' own intervals (the battle
+mode's span, the chest screens' span), and the debt is paid only by a **completed** heal — an
+abandoned attempt (the frame was taken by a battle or a chest) keeps it, a give-up re-arms it once
+after a 1.5 s backoff, and only the last give-up of an episode spends it. A trip through the dungeon
+(the orientation's own command) and a cycle boundary cancel it.
+
+| Key | Type | Default | Owner | Meaning |
+|---|---|---|---|---|
+| `healAfterBattles` | integer 0–50 | `1` | World | heal after every Nth **completed** battle; `0` never, `1` every, `N` every Nth |
+| `healAfterChests` | integer 0–50 | `1` | World | the same for chests |
+| `healOnEntry` | boolean | `false` | World | heal on the first settled view on the farm floor of a cycle (legacy `RECOVER_WHEN_BEGINNING`) |
+| `healAfterRest` | boolean | `false` | World | heal on the first settled view after a night at the inn (legacy `RECOVER_AFTER_REST`) |
+
+`1, 1, false, false` is the behaviour the pre-matrix code hardcoded, so the default run is unchanged.
+The policy is `src/policy/heal-schedule.ts`; the taps remain `src/actions/heal.ts` and the sequence
+`src/policy/heal-sequence.ts`. The sequence's bound counts only frames the heal can **act on**: a
+`loading` frame and an `unknown` one (the battle's XP page drawn over the character page) are the
+game's time, not the heal's — the hard wall-clock bound (three deadlines) is what still stops a screen
+that never comes back.
+
 ## 9. Ownership
 
 | Contract | Defined here | Implemented by |

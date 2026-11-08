@@ -1677,6 +1677,91 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(healed()).toBe(2);
   });
 
+  it('waits out an unnamed page after the card instead of giving up on it', async () => {
+    // Live 2026-11-09 03:33: the card opened the page **under the battle's XP/level-up animation**, the
+    // frames in between read unknown 0.20, and the heal's 12 s bound spent itself on them — the heal gave
+    // up and the World's page-close branch then closed the page it had just opened (0 heals in the run).
+    // An unnamed frame is not the heal's time: it must still be waiting when the page is finally named.
+    const { world, host, perceiver, clock } = makeWorld({ observation: dungeonView });
+    await started(world, host);
+    const healed = (): number => host.logRecords.filter((record) => record.message.includes('healed the party')).length;
+    const starts = (): number => host.logRecords.filter((record) => record.message.includes('the heal starts')).length;
+
+    perceiver.observation = combatView;
+    clock.advance(100);
+    await world.tick();
+    perceiver.observation = dungeonView;
+    await tickUntilLogged(world, host, clock, 'the heal starts');
+    await world.tick();                                   // the card, from the walking view
+
+    // The page is open under an animation no reader can name, for longer than the heal's own bound.
+    perceiver.observation = { screen: 'unknown', atMs: 100, confidence: 0.2 };
+    for (let index = 0; index < 14; index += 1) { clock.advance(1_000); await world.tick(); }
+    expect(starts()).toBe(1);
+    expect(host.logRecords.some((record) => record.message.includes('gave up'))).toBe(false);
+
+    // The page is named: the heal resumes from the step it owed and completes.
+    perceiver.observation = characterPageView;
+    for (let index = 0; index < 6; index += 1) { clock.advance(1_000); await world.tick(); }
+    perceiver.observation = dungeonView;
+    for (let index = 0; index < 4; index += 1) { clock.advance(1_000); await world.tick(); }
+    expect(healed()).toBe(1);
+  });
+
+  it('heals after every Nth completed battle, and not before', async () => {
+    // The operator's matrix (2026-11-09): healAfterBattles = 2 is "every second battle", chests off.
+    const { world, host, perceiver, clock } = makeWorld({
+      observation: combatView,
+      cfg: { healAfterBattles: 2, healAfterChests: 0, battleSettleMs: 0 },
+    });
+    await started(world, host);
+    const healed = (): number => host.logRecords.filter((record) => record.message.includes('healed the party')).length;
+
+    await world.tick();                                   // the first battle
+    perceiver.observation = dungeonView;
+    for (let index = 0; index < 6; index += 1) { clock.advance(500); await world.tick(); }
+    expect(healed()).toBe(0);
+
+    perceiver.observation = combatView;                   // the second battle completes the count
+    clock.advance(100);
+    await world.tick();
+    perceiver.observation = dungeonView;
+    await tickUntilLogged(world, host, clock, 'the heal starts');
+    await runHeal(world, perceiver, clock);
+    expect(healed()).toBe(1);
+  });
+
+  it('re-arms the heal after a give-up instead of losing the debt', async () => {
+    // The regression that made every heal fix a new one: the flag was cleared before the sequence ran, so
+    // a give-up left the party unhealed for good and the recovery closed the page. The debt now survives
+    // one give-up and re-arms after the backoff.
+    // The stall clock is the test's to keep out of the way: the give-up takes 38 s of unnamed frames,
+    // which is past a default 30 s "no progress" question the run does not ask here.
+    const { world, host, perceiver, clock } = makeWorld({ observation: dungeonView, cfg: { stallStopSeconds: 300 } });
+    await started(world, host);
+    const starts = (): number => host.logRecords.filter((record) => record.message.includes('the heal starts')).length;
+
+    perceiver.observation = combatView;
+    clock.advance(100);
+    await world.tick();
+    perceiver.observation = dungeonView;
+    await tickUntilLogged(world, host, clock, 'the heal starts');
+    await world.tick();                                   // the card
+
+    // The page never comes: unnamed frames until the sequence's hard wall-clock bound gives up. Ticks
+    // stop at the give-up itself: an unnamed frame with no heal on it is the classifier's question, and
+    // the test is about the debt, not the escalation.
+    perceiver.observation = { screen: 'unknown', atMs: 100, confidence: 0.2 };
+    const gaveUp = (): boolean => host.logRecords.some((record) => record.message.includes('the debt re-arms'));
+    for (let index = 0; index < 45 && !gaveUp(); index += 1) { clock.advance(1_000); await world.tick(); }
+    expect(gaveUp()).toBe(true);
+
+    // The view is back: the debt is still owed, so a fresh attempt starts.
+    perceiver.observation = dungeonView;
+    await tickUntilLogged(world, host, clock, 'the heal starts');
+    expect(starts()).toBe(2);
+  });
+
   it('answers a walk with the chest prompt, whose animation defeats the stillness rule', async () => {
     // The live failure of 2026-11-01: the prompt appeared 4 s into the walk, its highlight animates
     // (two captures 0.5 s apart differed on 394k pixels), the scene never stood still, the walk

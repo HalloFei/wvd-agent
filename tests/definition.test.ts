@@ -98,7 +98,7 @@ describe('WVD World definition', () => {
     expect(host.events).toEqual([]);
   });
 
-  it('declares all thirty-nine contracts §8 keys with defaults the console can render', () => {
+  it('declares all forty-three contracts §8 keys with defaults the console can render', () => {
     const properties = WVD_CONFIG_GROUP.schema.properties;
     const prefix = 'worlds.wvd.';
     // The section is flat again (review F2/R12: the numerals-reader strategy is a constructor
@@ -110,8 +110,8 @@ describe('WVD World definition', () => {
           : [`${at}${key}`]
       ));
     const defaults = defaultPaths(WVD_DEFAULTS as unknown as Record<string, unknown>);
-    expect(Object.keys(properties)).toHaveLength(39);
-    expect(defaults).toHaveLength(39);
+    expect(Object.keys(properties)).toHaveLength(43);
+    expect(defaults).toHaveLength(43);
     for (const path of Object.keys(properties)) {
       expect(path.startsWith(prefix)).toBe(true);
       expect(defaults).toContain(path.slice(prefix.length));

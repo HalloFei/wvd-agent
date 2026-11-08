@@ -117,6 +117,17 @@ export class RunStats {
     return cycle;
   }
 
+  /**
+   * Completed intervals only: a battle or chest still open is not counted yet. The heal's schedule
+   * watches these deltas (2026-11-09) — one event per completed battle or chest, never per tick.
+   */
+  get completed(): { readonly battles: number; readonly chests: number } {
+    return {
+      battles: this.#totalBattles.count + this.#battles.count,
+      chests: this.#totalChests.count + this.#chests.count,
+    };
+  }
+
   /** The run so far. A cycle still in progress is not in `cycles`; its counts are in the totals. */
   summary(): RunStatsSummary {
     const chests = combine(this.#totalChests, this.#chests);

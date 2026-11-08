@@ -19,6 +19,17 @@ export interface WvdConfigSection extends WorldSection {
   stopOnDeath: boolean;
   /** The room the party takes at an inn; a room the dialog does not offer falls back to 标准房. */
   innRoom: string;
+  /**
+   * The cycle heal's frequency: heal after every Nth completed battle. `0` never heals on battle,
+   * `1` is every battle, `N` is every Nth (the operator's matrix, 2026-11-09).
+   */
+  healAfterBattles: number;
+  /** The same for chests: `0` never, `1` every chest, `N` every Nth. */
+  healAfterChests: number;
+  /** Heal on the first settled view on the farm floor of a cycle (legacy `RECOVER_WHEN_BEGINNING`). */
+  healOnEntry: boolean;
+  /** Heal on the first settled view after a rest (legacy `RECOVER_AFTER_REST`). */
+  healAfterRest: boolean;
   /** Task file for the location to farm; empty keeps the built-in route (contracts §10). */
   taskFile: string;
   stallStopSeconds: number;
@@ -76,6 +87,12 @@ export const WVD_DEFAULTS: WvdConfigSection = {
   cycles: 1,
   stopOnDeath: false,
   innRoom: '标准房',
+  // The operator's matrix (2026-11-09): every battle and every chest, no entry/rest heal — today's
+  // behaviour as a config value, so a run can be turned down to `0,0` or up to every Nth without code.
+  healAfterBattles: 1,
+  healAfterChests: 1,
+  healOnEntry: false,
+  healAfterRest: false,
   taskFile: '',
   stallStopSeconds: 120,
   gameWindowTitle: 'WizardryVariantsDaphne',
@@ -143,6 +160,24 @@ export const WVD_CONFIG_GROUP: ConfigGroup = {
       'worlds.wvd.innRoom': {
         type: 'string', title: '旅店房间',
         description: '在旅店休息时选择的房间；旅店没有这个房间时用默认的标准房。',
+      },
+      'worlds.wvd.healAfterBattles': {
+        type: 'integer', title: '战后恢复频率',
+        description: '每完成几场战斗恢复一次：0 表示不恢复，1 表示每场，N 表示每 N 场。',
+        minimum: 0, maximum: 50,
+      },
+      'worlds.wvd.healAfterChests': {
+        type: 'integer', title: '开箱后恢复频率',
+        description: '每完成几个宝箱恢复一次：0 表示不恢复，1 表示每个，N 表示每 N 个。',
+        minimum: 0, maximum: 50,
+      },
+      'worlds.wvd.healOnEntry': {
+        type: 'boolean', title: '进入副本时恢复',
+        description: '每轮刚进入农场楼层、画面稳定后先恢复一次。',
+      },
+      'worlds.wvd.healAfterRest': {
+        type: 'boolean', title: '休息后恢复',
+        description: '在旅店休息后的首次进入副本时恢复一次。',
       },
       'worlds.wvd.taskFile': {
         type: 'string', title: '任务文件',

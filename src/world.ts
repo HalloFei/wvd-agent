@@ -74,6 +74,7 @@ import { advanceMode, INITIAL_MODE, type ModeMemory } from './policy/mode.ts';
 import { nextPageCloseTries } from './policy/page-episode.ts';
 import { createTrust } from './policy/trust.ts';
 import { HealSequence } from './policy/heal-sequence.ts';
+import { HealSchedule } from './policy/heal-schedule.ts';
 import { isExpectedFloor } from './tasks/steps.ts';
 import { OPERATION_PACE_MS, Pacer, STABLE_FRAMES } from './policy/pacing.ts';
 import { BattleSequence } from './policy/battle-sequence.ts';
@@ -412,13 +413,6 @@ const ESC_SCAN = 0x01;
  * frame where it was found) — a frame is not a dead end, and twenty ticks are two seconds of looking.
  */
 const ORIENT_MAP_ICON_PATIENCE = 20;
-
-/**
- * How long after a battle's or a chest's last screen a heal is still owed. The flag is set by the
- * battle/chest and spent on the 3-D view; a trip through the dungeon (a climb, a travel) cancels it,
- * and this bound is the backstop so a stale flag cannot fire on a later arrival.
- */
-const HEAL_WINDOW_MS = 30_000;
 
 /**
  * How long a command that changed nothing stays refused before the route may ask again, ms.
@@ -805,12 +799,13 @@ export class WvdWorld implements World {
   /** The spin guard's warning has been written for this bar. */
   #qteSpinWarned = false;
   /**
-   * A battle or a chest happened: heal when the loop is back on the 3-D view — and only then. The flag
-   * is bounded (`#healDueAtMs`) and cancelled by an orientation command, so entering the dungeon on a
-   * climb or a travel never heals (operator rule 2026-11-03: *only heal after battle and chest open*).
+   * When the party is owed a heal (operator's matrix, 2026-11-09): the events (a completed battle, a
+   * completed chest, the entry, a rest) are counted here, and the debt survives a failed attempt —
+   * only a completed heal pays it. The schedule is pure; the World owns the taps and the page.
    */
-  #healDue = false;
-  #healDueAtMs = 0;
+  #healSchedule: HealSchedule;
+  /** The run stats' completed counts as of the previous tick, so each battle/chest is one event. */
+  #healSeen: { readonly battles: number; readonly chests: number } = { battles: 0, chests: 0 };
 
   /**
    * The orientation phase (contracts §10, the goal form). True from the session start until the map
@@ -888,6 +883,12 @@ export class WvdWorld implements World {
     this.#autoTick = options.autoTick !== false;
     this.#battle = options.battle;
     this.#now = options.now ?? (() => performance.now());
+    this.#healSchedule = new HealSchedule({
+      afterBattles: this.#cfg.healAfterBattles,
+      afterChests: this.#cfg.healAfterChests,
+      onEntry: this.#cfg.healOnEntry,
+      afterRest: this.#cfg.healAfterRest,
+    });
     this.#supervisor = new Supervisor(() => this.#host, this.#now);
   }
 
@@ -1203,6 +1204,12 @@ export class WvdWorld implements World {
       this.#orientClimbs = 0;
       this.#settleUntilMs = 0;
       this.#blankSinceMs = null;
+      // The heal's debt is a session's, and so is its baseline: the run stats' counts start at what
+      // they were before this session, so the first completed battle/chest is one event, not many.
+      this.#healSchedule.resetCycle();
+      this.#healSeen = this.#stats.completed;
+      this.#heal = null;
+      this.#healWaitOn = null;
       this.#rearmBattle();
       this.#record('started', 'the session started');
       this.#unsubscribe = session.onEngineEvent?.((event) => {
@@ -1321,6 +1328,13 @@ export class WvdWorld implements World {
     // The run's own log (operator, 2026-11-07): one interval per chest and per battle, from the game's
     // mode — which holds a modal mode through the frames that do not name it.
     this.#stats.observe(observation.screen, this.#mode.mode, now);
+    // The heal's events (operator's matrix, 2026-11-09): a **completed** battle (the battle mode's span
+    // ended) and a **completed** chest (the chest screens' span ended) are the two signals the run
+    // summary already counts, so the schedule watches their deltas instead of inventing a second rule.
+    const completed = this.#stats.completed;
+    if (completed.battles > this.#healSeen.battles) this.#healSchedule.battleCompleted();
+    if (completed.chests > this.#healSeen.chests) this.#healSchedule.chestCompleted();
+    this.#healSeen = completed;
 
     // A travel or a climb just landed: the game is in its load. A named frame means the load is over
     // and the loop carries on in this same tick; while the frame is nameless the loop only watches.
@@ -1447,22 +1461,34 @@ export class WvdWorld implements World {
     // the close, one tap per tick, each sent only from a frame that names what it acts on (operator rule
     // 2026-11-07: *only next order based on the current stable frame. no competing orders*). The old
     // composite sent all four taps blind, so a battle that interrupted the heal took the remaining taps
-    // on the battle screen (live 2026-11-08 13:07) and the verify afterwards held the tick 11 s. The
-    // sequence owns the heal until it is done, gives up at its deadline, or leaves the page to the
-    // recovery stepper after its one Esc.
-    if (this.#healDue && now - this.#healDueAtMs > HEAL_WINDOW_MS) this.#healDue = false;
-    if (this.#heal === null && this.#healDue && !waiting && observation.screen === 'dungeon') {
-      this.#healDue = false;
-      this.#heal = new HealSequence({
-        stableFrames: STABLE_FRAMES,
-        stepMs: HEAL_STEP_MS,
-        graceMs: HEAL_PAGE_GRACE_MS,
-        escapeGraceMs: HEAL_ESCAPE_GRACE_MS,
-        deadlineMs: HEAL_DEADLINE_MS,
-      });
-      this.#heal.enter(now);
-      this.#healWaitOn = null;
-      this.#host?.log.info('wvd: the heal starts; one step per frame that names what it acts on');
+    // on the battle screen (live 2026-11-08 13:07) and the verify afterwards held the tick 11 s.
+    //
+    // **When** is the schedule's (policy/heal-schedule.ts, operator's matrix 2026-11-09): a completed
+    // battle or chest (or the entry/rest, when configured) owes a heal, and only a completed heal pays
+    // the debt. The old hardcoded flag was cleared *before* the sequence ran, so a give-up lost the heal
+    // for good and the page-close branch then closed the page the heal had just opened (live 2026-11-09
+    // 03:34 — the page was named 14 s after the card tap and the heal had already given up).
+    if (this.#heal === null && !waiting && this.#mode.mode !== 'battle'
+      && observation.screen === 'dungeon') {
+      const due = this.#healSchedule.due(now);
+      // The debt is not windowed. It used to expire 30 s after the event, which cancelled exactly the
+      // heals that matter: one abandoned by a two-minute battle, and one re-armed after its own
+      // give-up (2026-11-09 04:07 — the retry landed past the window and the debt was dropped). The
+      // trip that must cancel it is cancelled where it is known: the orientation's own command.
+      if (due.due) {
+        this.#heal = new HealSequence({
+          stableFrames: STABLE_FRAMES,
+          stepMs: HEAL_STEP_MS,
+          graceMs: HEAL_PAGE_GRACE_MS,
+          escapeGraceMs: HEAL_ESCAPE_GRACE_MS,
+          deadlineMs: HEAL_DEADLINE_MS,
+        });
+        this.#heal.enter(now);
+        this.#healWaitOn = null;
+        this.#host?.log.info(
+          `wvd: the heal starts (${due.cause}); one step per frame that names what it acts on`,
+        );
+      }
     }
     if (this.#heal !== null) {
       // The heal's own screens are the walking view and its character page. Any other **named** screen
@@ -1475,7 +1501,8 @@ export class WvdWorld implements World {
         && observation.screen !== 'loading';
       if (taken) {
         // Abandoned, and the tick carries on into this screen's own dispatch: the battle that took the
-        // frame is the order now.
+        // frame is the order now. The debt stays — an interrupted attempt is not a failed heal.
+        this.#healSchedule.abandoned();
         this.#heal = null;
         this.#healWaitOn = null;
         this.#host?.log.info(`wvd: the heal was interrupted by ${observation.screen}; the farm continues`);
@@ -1484,8 +1511,10 @@ export class WvdWorld implements World {
           screen: observation.screen,
           stable: this.#stableCount,
           page: observation.screen === 'character-page',
-          // The game's blank frame (perception/loading.ts): the heal's bound must not count the fade.
-          blank: observation.screen === 'loading',
+          // A frame the heal cannot act on is not the heal's time: the game's blank frame, and any
+          // screen no reader names (the battle's XP/level-up page over the character page, live
+          // 2026-11-09 03:34). The sequence's hard wall-clock bound is what still stops a real hang.
+          blank: observation.screen === 'loading' || observation.screen === 'unknown',
         };
         const step = this.#heal.next(phase, now);
         if (step.kind === 'wait') {
@@ -1508,10 +1537,15 @@ export class WvdWorld implements World {
           this.#heal = null;
           this.#healWaitOn = null;
           if (gaveUp) {
+            // The debt re-arms once after a backoff (the page-close branch has that window), and only
+            // the last give-up of an episode spends it. A failed attempt must never lose the heal.
+            const rearmed = this.#healSchedule.gaveUp(now);
             this.#host?.log.warn(
-              `wvd: the heal gave up at its deadline; the ${owed.step} step was owed (${owed.sent} of 4 sent)`,
+              `wvd: the heal gave up at its bound; the ${owed.step} step was owed (${owed.sent} of 4 sent); `
+              + (rearmed ? 'the debt re-arms after the backoff' : 'the episode is spent'),
             );
           } else {
+            this.#healSchedule.completed();
             this.#host?.log.info('wvd: healed the party');
           }
           return;
@@ -1787,6 +1821,8 @@ export class WvdWorld implements World {
         const decision = nextOrientStep(observation, orient);
         if (decision.kind === 'arrived') {
           this.#orienting = false;
+          // The cycle's entry is an event the operator's matrix may heal on (healOnEntry).
+          this.#healSchedule.enteredFloor();
           this.#host?.log.info(`wvd: on the farm floor (${orient.floor}); the farm takes over`);
         } else if (decision.kind === 'wait') {
           if (decision.reason !== 'map-icon') return;
@@ -2025,9 +2061,8 @@ export class WvdWorld implements World {
     // to the chest, not to the approach.
     if (observation.screen === 'drop-item-claim' || observation.screen === 'combat') {
       this.#qteRerolls = 0;
-      // Both are the moments after which the party is hurt: heal once the loop is back on the view.
-      this.#healDue = true;
-      this.#healDueAtMs = now;
+      // The heal is not armed here: the schedule counts **completed** battles and chests from the run
+      // stats (2026-11-09), so an event is one event and the frequency is a config value.
     }
     // A screen that changed is not the screen the command failed on: the lockout is per screen, not
     // per episode. (The map-open press can fail by toggling an already-open map shut; without this the
@@ -2518,13 +2553,17 @@ export class WvdWorld implements World {
     this.#orientClimbs = 0;
     this.#settleUntilMs = 0;
     this.#restGate = null;
+    // The heal's counts are per cycle: a battle counted last cycle must not pay this cycle's debt.
+    this.#healSchedule.resetCycle();
+    this.#heal = null;
+    this.#healWaitOn = null;
   }
 
   /**
    * The cycle is over: count it, then either start the next one or complete the task. Called by the
    * exit stage's end (a task with no rest) and by the rest gate (the party slept and is back in town).
    */
-  async #finishCycle(): Promise<void> {
+  async #finishCycle(rested = false): Promise<void> {
     this.#cyclesDone += 1;
     const cycleStats = this.#stats.endCycle(this.#now());
     this.#host?.log.info(
@@ -2532,6 +2571,9 @@ export class WvdWorld implements World {
     );
     if (this.#cyclesDone < Math.max(1, this.#cfg.cycles) && this.#task !== null) {
       this.#resetCycle();
+      // The rest's own heal (healAfterRest) is for the **next** entry, so it is armed after the cycle
+      // reset that cleared the counts: the visit the party just had is what earns it.
+      if (rested) this.#healSchedule.rested();
       if (this.#task.orient !== undefined) {
         // A goal task orients back in; there is no entry script to run.
         this.#orienting = true;
@@ -2573,7 +2615,7 @@ export class WvdWorld implements World {
     if (gate.seenInn && observation.screen === 'town') {
       this.#restGate = null;
       this.#host?.log.info('wvd: the rest is over; the cycle ends here');
-      await this.#finishCycle();
+      await this.#finishCycle(true);
       return true;
     }
     if (now - gate.sinceMs >= gate.timeoutMs) {
@@ -2581,7 +2623,7 @@ export class WvdWorld implements World {
       this.#host?.log.warn(
         `wvd: the inn did not take the party within ${Math.round(gate.timeoutMs / 1000)} s; the cycle ends unrested`,
       );
-      await this.#finishCycle();
+      await this.#finishCycle(false);
       return true;
     }
     // Between the tap and the visit the gate owns the tick: the route must not aim at the town.
@@ -3220,7 +3262,7 @@ export class WvdWorld implements World {
     // battle or a chest, never on the way through the dungeon.
     if (!this.#pacer.ready(this.#now())) return;
     this.#pacer.act(this.#now());
-    this.#healDue = false;
+    this.#healSchedule.cancel();
     switch (command.kind) {
       case 'open-map':
       case 'exit': {
