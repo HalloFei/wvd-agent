@@ -60,10 +60,12 @@ describe('the skill detail panel', () => {
     }
   });
 
-  it('is the chain s answer on the panel s frame', async () => {
-    // Before this reader the frame answered `unknown 0.20` and the loop asked the operator for 20 s.
+  it('is held out of the chain: its pair also matches a world map s label plates', async () => {
+    // 2026-11-08 22:08: a world-map frame was named `skill-panel` and the loop stalled on it while
+    // travelling. The page is real and its fixture is filed; the reader goes back into the chain when
+    // the pair is anchored to a *dialog* (inset, ruled) rather than to the shape alone.
     const { composite } = createScreenReaders({});
     const answer = await composite.classify((await png(PANEL)).frame);
-    expect(answer.answer.screen).toBe('skill-panel');
+    expect(answer.answer.screen).not.toBe('skill-panel');
   });
 });

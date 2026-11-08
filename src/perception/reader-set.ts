@@ -39,7 +39,6 @@ import { InnPerceiver } from './inn.ts';
 import { InnRestPerceiver } from './inn-rest.ts';
 import { TownPerceiver, WorldMapPerceiver } from './location.ts';
 import { LoadingPerceiver } from './loading.ts';
-import { SkillPanelPerceiver } from './skill-panel.ts';
 import { LootPerceiver } from './loot.ts';
 import { MapPerceiver } from './map.ts';
 import { MessagePerceiver } from './message.ts';
@@ -89,9 +88,12 @@ export function screenRecognisers(readers: {
     // answered `unknown` at 0.20 and the loop escalated it, pressing Esc into a page that was open).
     // It is also the cheapest gate — a drawn frame leaves it after a few dozen samples.
     { perceiver: new LoadingPerceiver(), floor },
-    // The battle's skill detail panel before any chest: its 取消/確定 pair is the page's own evidence,
-    // and a panel left unnamed escalated for 20 s and then had its panel cancelled by the Esc.
-    { perceiver: new SkillPanelPerceiver(), floor },
+    // The battle's skill detail panel is **held out of the chain** too (2026-11-08 22:08): its 取消/確定
+    // pair matched a **world-map** frame — the map draws bright label plates in a row, which is the same
+    // shape — and the loop then stalled on "skill-panel" while travelling. Its own page is real and its
+    // fixture is filed, so the reader stays (perception/skill-panel.ts) until its anchors are measured
+    // against the map's plates: the pair must be *inset in a dialog*, not merely present. The 4 s
+    // confirm bound (policy/battle-sequence.ts) is what protects the battle in the meantime.
     // The item filter is **not** in the chain yet, and this is deliberate (2026-11-08 22:01): its blur
     // anchor named the *world map* at 0.87 and the loop pressed three points on it. Measured — the
     // filter page is 2.3 luma / 0.25 detail, the map's frame is 10.6 / 1.42 — so the margin exists but
