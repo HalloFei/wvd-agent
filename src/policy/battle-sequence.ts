@@ -44,6 +44,12 @@ export interface BattlePhase {
   readonly autoOn: boolean | null;
   /** The ACTIVE member's name from the turn card, or null when it cannot be read (contracts §11). */
   readonly activeMember: string | null;
+  /**
+   * The frame is the game's blank one (a load or a fade, named `loading`). Every clock in the
+   * sequence runs on **seen** time: the battle's settle, the turn card's read and the panel's 確定 are
+   * all measured from frames that actually showed a battle, never from the load before them.
+   */
+  readonly blank?: boolean;
 }
 
 /** Why a turn ended without an operation: each is the caller's cue for a log line, or silence. */
@@ -109,6 +115,9 @@ export class BattleSequence {
   #autoOffTries = 0;
   /** The operation the last `next` returned, so `completed` can count it. */
   #sent: Operation | null = null;
+  /** Blank time, accumulated: the operation clocks are `now - blank` (`#visible`). */
+  #blankTotalMs = 0;
+  #blankAtMs: number | null = null;
 
   constructor(options: BattleSequenceOptions) {
     this.#options = options;
@@ -117,7 +126,26 @@ export class BattleSequence {
   /** The battle's first named frame. The first call wins: a re-entry is the same battle. */
   enter(nowMs: number): void {
     if (this.#enteredAtMs !== null) return;
-    this.#enteredAtMs = nowMs;
+    this.#enteredAtMs = this.#visible(nowMs, false);
+  }
+
+  /**
+   * The operation clock: the wall clock minus every frame the game spent blank.
+   *
+   * A battle's load is not the battle's time. Counting it made the settle window and the turn card's
+   * read expire while the screen was still black — the opener was skipped, then retried into a
+   * consumed turn (operator, 2026-11-08: *only start counting when you see an actual battle frame*).
+   * Pacing stays on the wall clock: the interval between two taps is a safety bound, not a deadline.
+   */
+  #visible(nowMs: number, blank: boolean): number {
+    if (blank) {
+      this.#blankAtMs ??= nowMs;
+    } else if (this.#blankAtMs !== null) {
+      this.#blankTotalMs += nowMs - this.#blankAtMs;
+      this.#blankAtMs = null;
+    }
+    const inBlank = this.#blankAtMs === null ? 0 : nowMs - this.#blankAtMs;
+    return nowMs - this.#blankTotalMs - inBlank;
   }
 
   /**
@@ -130,7 +158,7 @@ export class BattleSequence {
    */
   needsMemberRead(phase: BattlePhase, nowMs: number): boolean {
     if (this.#enteredAtMs === null) return false;
-    if (nowMs - this.#enteredAtMs < this.#options.settleMs) return false;
+    if (this.#visible(nowMs, phase.blank === true) - this.#enteredAtMs < this.#options.settleMs) return false;
     if (this.#options.openers.length === 0 || this.#opener !== undefined) return false;
     return phase.speedOn === true && phase.autoOn !== true;
   }
@@ -154,8 +182,9 @@ export class BattleSequence {
   /** One decision for this tick. The caller sends at most one tap and reports its return. */
   next(phase: BattlePhase, nowMs: number): BattleStep {
     this.#sent = null;
+    const now = this.#visible(nowMs, phase.blank === true);
     if (this.#enteredAtMs === null) return { kind: 'wait', why: 'settle' };
-    if (nowMs - this.#enteredAtMs < this.#options.settleMs) return { kind: 'wait', why: 'settle' };
+    if (now - this.#enteredAtMs < this.#options.settleMs) return { kind: 'wait', why: 'settle' };
     // An empty opener list has nothing to cast: the cast is decided without a read and 自動 is never
     // touched for it.
     if (this.#opener === undefined && this.#options.openers.length === 0) this.#opener = null;
@@ -170,10 +199,10 @@ export class BattleSequence {
     // confirm was never sent — 453 ticks, the run stopped.
     const owed = this.pendingConfirm();
     if (owed !== null) {
-      this.#confirmSinceMs ??= nowMs;
+      this.#confirmSinceMs ??= now;
       // A panel that never comes is bounded: the confirm is owed whatever the frame says, but not
       // forever — the cast is given up and 自動 comes back (see `confirmTimeoutMs`).
-      if (nowMs - this.#confirmSinceMs < this.#options.confirmTimeoutMs) {
+      if (now - this.#confirmSinceMs < this.#options.confirmTimeoutMs) {
         this.#sent = 'confirm';
         return { kind: 'confirm', opener: owed };
       }
@@ -213,8 +242,9 @@ export class BattleSequence {
       } else {
         // No confirmed state yet. Keep checking — the panel is drawn a beat after the battle, and a
         // frame of anything else in between is not a decision — until the opener's own timeout.
-        this.#readSinceMs ??= nowMs;
-        if (nowMs - this.#readSinceMs < this.#options.openerTimeoutMs) return { kind: 'wait', why: 'unreadable' };
+        // The read's bound is **seen** time too: a load between two battle frames is not a failed read.
+        this.#readSinceMs ??= now;
+        if (now - this.#readSinceMs < this.#options.openerTimeoutMs) return { kind: 'wait', why: 'unreadable' };
         this.#opener = null;
       }
     }

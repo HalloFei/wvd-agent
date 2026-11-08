@@ -200,6 +200,45 @@ describe('the battle operation sequence', () => {
     expect(s.confirmGaveUp()).toBe(true);
   });
 
+  it('does not start counting until a battle frame is actually seen', () => {
+    // Operator, 2026-11-08: *only start counting when you see an actual battle frame*. The battle's
+    // load used to be counted against the settle window and the turn card's read, so by the first real
+    // frame the opener's window had already been spent.
+    const s = make();                                     // settle 1 000 ms
+    s.enter(0);
+    const blankPhase: BattlePhase = { speedOn: null, autoOn: null, activeMember: null, blank: true };
+    for (let at = 100; at <= 30_000; at += 100) {
+      expect(s.next(blankPhase, at)).toEqual({ kind: 'wait', why: 'settle' });
+    }
+    // The first real battle frame is where the clock starts: half a second later, still settling.
+    expect(s.next(aliceTurn, 30_500)).toEqual({ kind: 'wait', why: 'settle' });
+    expect(s.next(aliceTurn, 31_500)).toEqual({ kind: 'speed' });
+  });
+
+  it('does not spend the panel s bound on a load either', () => {
+    const s = make();
+    s.enter(0);
+    expect(s.next(aliceTurn, 1_000)).toEqual({ kind: 'speed' });
+    s.completed(1_000);
+    expect(s.next(speedUp, 2_000)).toEqual({ kind: 'slot', opener: alice });
+    s.completed(2_000);
+
+    const unreadable: BattlePhase = { speedOn: true, autoOn: false, activeMember: null };
+    expect(s.next(unreadable, 3_000)).toEqual({ kind: 'confirm', opener: alice });
+
+    // Thirty seconds of black while the 確定 is owed: the bound does not move.
+    const blankPhase: BattlePhase = { ...unreadable, blank: true };
+    for (let at = 3_100; at <= 33_000; at += 100) {
+      expect(s.next(blankPhase, at).kind === 'confirm').toBe(true);
+      expect(s.confirmGaveUp()).toBe(false);
+    }
+    // Back on a battle frame the bound resumes from where it stopped, not from before the load.
+    expect(s.next(unreadable, 33_500)).toEqual({ kind: 'confirm', opener: alice });
+    expect(s.confirmGaveUp()).toBe(false);
+    expect(s.next(unreadable, 37_500)).toEqual({ kind: 'auto' });
+    expect(s.confirmGaveUp()).toBe(true);
+  });
+
   it('does not read the panel when no opener is configured', () => {
     const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, openerTimeoutMs: 10_000, confirmTimeoutMs: 4_000, toggleAttempts: 3, openers: [] });
     s.enter(0);

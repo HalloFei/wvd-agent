@@ -3008,9 +3008,12 @@ export class WvdWorld implements World {
         const now = context?.now ?? this.#now();
         // The turn card is read only while the opener is undecided: it says whether there is a cast at
         // all, and the skill panel dims it, so the read belongs to the command phase.
+        // A blank frame (the game's own load) is not a battle frame: the sequence's clocks do not run
+        // on it (operator, 2026-11-08: *only start counting when you see an actual battle frame*).
+        const blank = seen.screen === 'loading';
         const phase = seen.screen === 'combat'
-          ? { speedOn: seen.speedOn ?? null, autoOn: seen.autoOn ?? null, activeMember: null as string | null }
-          : { speedOn: null, autoOn: null, activeMember: null as string | null };
+          ? { speedOn: seen.speedOn ?? null, autoOn: seen.autoOn ?? null, activeMember: null as string | null, blank }
+          : { speedOn: null, autoOn: null, activeMember: null as string | null, blank };
         // "Until we get a stable frame, then confirm the current state" (operator rule 2026-11-04): the
         // panel redraws as the battle opens, so one readable frame is not a decision. The read runs
         // every frame while the cast is owed, and only the same answer on `BATTLE_STABLE_READS`
