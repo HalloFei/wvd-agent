@@ -68,6 +68,17 @@ export interface BattleSequenceOptions {
    * a stable frame, then confirm the current state*).
    */
   readonly openerTimeoutMs: number;
+  /**
+   * How long the **確定** may stay owed after the slot tap before the cast is given up, ms.
+   *
+   * The panel is drawn a beat after the slot (the locator finds it on the next frame in every measured
+   * battle). A panel that never comes is a cast that cannot resolve — and holding the confirm forever
+   * is not neutral: 自動 was turned off to reach the command phase and is only pressed back on after the
+   * cast is decided, so the battle waits with **no input at all** (live 2026-11-08 21:14: 751 ticks on
+   * `combat 1.00`, the party at full HP, the enemy alive). Past this bound the cast is given up and the
+   * next step is 自動.
+   */
+  readonly confirmTimeoutMs: number;
   /** The configured attempts per toggle (`autoBattleEnableAttempts`, contracts §8.5). */
   readonly toggleAttempts: number;
   /** The operator's opener list (contracts §11); empty means no cast is ever owed. */
@@ -87,6 +98,10 @@ export class BattleSequence {
   #readSinceMs: number | null = null;
   #slotSent = false;
   #confirmSent = false;
+  /** When the 確定 first became owed; the confirm timeout's clock. */
+  #confirmSinceMs: number | null = null;
+  /** The cast was given up because its panel never came: one line for the log, not one per tick. */
+  #confirmGaveUp = false;
   #speedTries = 0;
   /** 自動 presses spent turning it ON; the fallback cap's count. */
   #autoTries = 0;
@@ -155,8 +170,15 @@ export class BattleSequence {
     // confirm was never sent — 453 ticks, the run stopped.
     const owed = this.pendingConfirm();
     if (owed !== null) {
-      this.#sent = 'confirm';
-      return { kind: 'confirm', opener: owed };
+      this.#confirmSinceMs ??= nowMs;
+      // A panel that never comes is bounded: the confirm is owed whatever the frame says, but not
+      // forever — the cast is given up and 自動 comes back (see `confirmTimeoutMs`).
+      if (nowMs - this.#confirmSinceMs < this.#options.confirmTimeoutMs) {
+        this.#sent = 'confirm';
+        return { kind: 'confirm', opener: owed };
+      }
+      this.#opener = null;
+      this.#confirmGaveUp = true;
     }
 
     // 1. 倍速: the battle's clock, and everything after it rides on it.
@@ -221,6 +243,11 @@ export class BattleSequence {
     return { kind: 'done' };
   }
 
+  /** Whether the cast was given up for a panel that never came: the World says so once. */
+  confirmGaveUp(): boolean {
+    return this.#confirmGaveUp;
+  }
+
   /** The tap `next` named returned: the pace starts here, and the operation counts. */
   completed(nowMs: number): void {
     this.#lastTapAtMs = nowMs;
@@ -229,7 +256,7 @@ export class BattleSequence {
       case 'auto-off': this.#autoOffTries += 1; break;
       case 'auto': this.#autoTries += 1; break;
       case 'slot': this.#slotSent = true; break;
-      case 'confirm': this.#confirmSent = true; break;
+      case 'confirm': this.#confirmSent = true; this.#confirmSinceMs = null; break;
       default: break;
     }
     this.#sent = null;

@@ -14,7 +14,9 @@ const aliceTurn: BattlePhase = { speedOn: false, autoOn: false, activeMember: '�
 const speedUp: BattlePhase = { speedOn: true, autoOn: false, activeMember: '爱丽丝' };
 
 function make(openers: readonly BattleOpener[] = [alice]): BattleSequence {
-  return new BattleSequence({ settleMs: 1_000, stepMs: 1_000, openerTimeoutMs: 10_000, toggleAttempts: 3, openers });
+  return new BattleSequence({
+    settleMs: 1_000, stepMs: 1_000, openerTimeoutMs: 10_000, confirmTimeoutMs: 4_000, toggleAttempts: 3, openers,
+  });
 }
 
 describe('the battle operation sequence', () => {
@@ -131,7 +133,7 @@ describe('the battle operation sequence', () => {
 
   it('leaves an auto battle alone when no opener is configured', () => {
     // There is nothing to cast, so there is nothing to disengage: 自動 is never touched.
-    const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, openerTimeoutMs: 10_000, toggleAttempts: 3, openers: [] });
+    const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, openerTimeoutMs: 10_000, confirmTimeoutMs: 4_000, toggleAttempts: 3, openers: [] });
     s.enter(0);
     expect(s.next({ speedOn: true, autoOn: true, activeMember: null }, 0)).toEqual({ kind: 'done' });
   });
@@ -175,8 +177,31 @@ describe('the battle operation sequence', () => {
     expect(s.next(off, 5_000)).toEqual({ kind: 'wait', why: 'speed-capped' });
   });
 
+  it('gives the cast up when its panel never comes, and presses 自動', () => {
+    // Live 2026-11-08 21:12-21:14: the slot was sent, the frame stopped being named, the panel was
+    // never confirmed — and the sequence held that confirm for 751 ticks. 自動 had been turned off to
+    // reach the command phase and is only pressed back on after the cast is decided, so the battle
+    // waited with **no input at all**: the party at full HP, the enemy alive, nothing sent.
+    const s = make();
+    s.enter(0);
+    expect(s.next(aliceTurn, 1_000)).toEqual({ kind: 'speed' });
+    s.completed(1_000);
+    expect(s.next(speedUp, 2_000)).toEqual({ kind: 'slot', opener: alice });
+    s.completed(2_000);
+
+    const unreadable: BattlePhase = { speedOn: true, autoOn: false, activeMember: null };
+    expect(s.next(unreadable, 3_000)).toEqual({ kind: 'confirm', opener: alice });
+    expect(s.next(unreadable, 3_900)).toEqual({ kind: 'confirm', opener: alice });   // still owed
+    expect(s.confirmGaveUp()).toBe(false);
+
+    // Four seconds after it was first owed the panel is not coming: the cast is given up and the
+    // battle is handed back to 自動.
+    expect(s.next(unreadable, 7_000)).toEqual({ kind: 'auto' });
+    expect(s.confirmGaveUp()).toBe(true);
+  });
+
   it('does not read the panel when no opener is configured', () => {
-    const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, openerTimeoutMs: 10_000, toggleAttempts: 3, openers: [] });
+    const s = new BattleSequence({ settleMs: 0, stepMs: 1_000, openerTimeoutMs: 10_000, confirmTimeoutMs: 4_000, toggleAttempts: 3, openers: [] });
     s.enter(0);
     expect(s.needsMemberRead({ speedOn: null, autoOn: null, activeMember: null }, 0)).toBe(false);
     expect(s.next({ speedOn: true, autoOn: false, activeMember: null }, 0)).toEqual({ kind: 'auto' });

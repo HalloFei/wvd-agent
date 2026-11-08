@@ -389,6 +389,11 @@ const HEAL_STEP_MS = 900;
 const HEAL_PAGE_GRACE_MS = 2_500;
 const HEAL_ESCAPE_GRACE_MS = 2_500;
 const HEAL_DEADLINE_MS = 12_000;
+/**
+ * How long the skill panel's 確定 may stay owed before the cast is given up, ms. Measured: the panel
+ * is drawn within one frame of the slot tap; four seconds is four chances at it.
+ */
+const BATTLE_CONFIRM_MS = 4_000;
 
 /**
  * How many recovery steps one screen gets before the loop leaves it to the stall clock (operator,
@@ -1924,6 +1929,9 @@ export class WvdWorld implements World {
           settleMs: Math.max(0, this.#cfg.battleSettleMs),
           stepMs: Math.max(OPERATION_PACE_MS, this.#cfg.battleStepMs),
           openerTimeoutMs: Math.max(1, this.#cfg.battleOpenerTimeoutMs),
+          // A panel that never comes is a cast the battle cannot resolve: give it up and press 自動
+          // rather than holding the confirm forever with the battle waiting for input (2026-11-08).
+          confirmTimeoutMs: BATTLE_CONFIRM_MS,
           toggleAttempts: Math.max(1, this.#cfg.autoBattleEnableAttempts),
           openers: firstBattle && !this.#cfg.dryRun ? (this.#battle?.openers ?? []) : [],
         });
