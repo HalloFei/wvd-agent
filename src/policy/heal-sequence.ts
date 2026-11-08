@@ -81,6 +81,8 @@ const STEPS: readonly HealStepKind[] = ['card', 'sparkle', 'restore', 'close'];
 export class HealSequence {
   readonly #options: HealOptions;
   #enteredAtMs: number | null = null;
+  /** The first step's send — the card tap — where the soft deadline and the blank accounting start. */
+  #firstStepAtMs: number | null = null;
   #next = 0;
   #lastTapAtMs: number | null = null;
   #closeAtMs: number | null = null;
@@ -111,14 +113,24 @@ export class HealSequence {
     // that counted it made the heal give up on a page that was open underneath the whole time (live
     // 2026-11-08 20:44 and 20:46 — the sparkle was owed, and the recovery then closed the page without
     // healing). The wall clock still bounds the episode, so a screen that never comes back stops.
-    if (phase.blank === true) this.#blankAtMs ??= nowMs;
+    // A frame the heal cannot act on is the game's time, not the heal's: the blank screen, a screen
+    // no reader names (the battle's XP page drawn over the character page, live 2026-11-09 04:39), and
+    // **the page itself** — once the page is named the game has answered, its steps are paced by the
+    // sequence, and the hard wall clock is what bounds a page that never stabilizes.
+    const notActionable = phase.blank === true || phase.page === true;
+    if (notActionable) this.#blankAtMs ??= nowMs;
     else if (this.#blankAtMs !== null) {
       this.#blankMs += nowMs - this.#blankAtMs;
       this.#blankAtMs = null;
     }
     const wallMs = nowMs - this.#enteredAtMs;
     const blankMs = this.#blankAtMs === null ? 0 : nowMs - this.#blankAtMs;
-    const seenMs = wallMs - this.#blankMs - blankMs;
+    // The soft bound is on the wait for the page, and it starts at the first act (the card tap): the
+    // loop's wait for a stable view before it may tap is not the heal's budget (live 2026-11-09: the
+    // card went 5 s after `enter` and the page arrived 11 s after the card — the old clock from
+    // `enter` spent the 12 s before the page had a chance).
+    const softStartMs = this.#firstStepAtMs ?? this.#enteredAtMs;
+    const seenMs = (nowMs - softStartMs) - this.#blankMs - blankMs;
     if (seenMs >= this.#options.deadlineMs || wallMs >= this.#hardMs) {
       return { kind: 'done', why: 'gave-up' };
     }
@@ -164,6 +176,13 @@ export class HealSequence {
   /** The tap the last \`next\` named returned: the pace starts here and the step advances. */
   completed(nowMs: number): void {
     this.#lastTapAtMs = nowMs;
+    if (this.#next === 0) {
+      // The first act starts the soft clock and the blank accounting: the wait before the tap belongs
+      // to the loop, and the page's own arrival is the game's.
+      this.#firstStepAtMs = nowMs;
+      this.#blankMs = 0;
+      this.#blankAtMs = null;
+    }
     if (this.#next < STEPS.length) {
       if (STEPS[this.#next] === 'close') this.#closeAtMs = nowMs;
       this.#next += 1;

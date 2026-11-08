@@ -62,6 +62,43 @@ describe('the heal sequence', () => {
     expect(s.next(page(2), 33_000)).toEqual({ kind: 'sparkle', at: 'page' });
   });
 
+  it('starts its bound at the card, and the page s own arrival does not spend it', () => {
+    // Live 2026-11-09 04:39-04:40: the heal started, the card went 5 s later (the loop waited for a
+    // stable view), the page was named 11 s after the card under the chest's HUD-less camera, and the
+    // old bound — counted from `enter` — expired 4 s later with the sparkle owed. The rate is the
+    // game's; the heal's budget is the wait for the page, and it starts at the tap.
+    const s = make(12_000);
+    s.enter(0);
+    expect(s.next(dungeon(1), 2_000)).toEqual({ kind: 'wait', why: 'unstable' });
+    expect(s.next(dungeon(2), 5_000)).toEqual({ kind: 'card', at: 'dungeon' });
+    s.completed(5_000);
+    // The page is opening: unnamed frames are the game's time.
+    for (let at = 6_000; at <= 11_000; at += 1_000) {
+      expect(s.next({ screen: 'unknown', stable: 1, page: false, blank: true }, at)).toEqual({ kind: 'wait', why: 'settle' });
+    }
+    // The page is named 11 s after the card but still settling: the game has answered, and the page's
+    // own frames are not the deadline's either.
+    for (let at = 12_000; at <= 17_000; at += 1_000) {
+      expect(s.next(page(1), at)).toEqual({ kind: 'wait', why: 'unstable' });
+    }
+    expect(s.next(page(2), 18_000)).toEqual({ kind: 'sparkle', at: 'page' });
+  });
+
+  it('still gives up on a card that opened no page, past its retry', () => {
+    const s = make(12_000);
+    s.enter(0);
+    expect(s.next(dungeon(2), 1_000)).toEqual({ kind: 'card', at: 'dungeon' });
+    s.completed(1_000);
+    // The card did not open the page: the one retry is spent, and the dungeon staying on screen then
+    // counts — that is the wait the soft bound is for.
+    expect(s.next(dungeon(2), 2_000)).toEqual({ kind: 'card', at: 'dungeon', redo: true });
+    s.retried(2_000);
+    for (let at = 3_000; at < 13_000; at += 1_000) {
+      expect(s.next(dungeon(2), at)).toEqual({ kind: 'wait', why: 'settle' });
+    }
+    expect(s.next(dungeon(2), 13_000)).toEqual({ kind: 'done', why: 'gave-up' });
+  });
+
   it('still stops on the wall clock when the screen never comes back', () => {
     const s = make(12_000);                        // the hard bound is three deadlines
     s.enter(0);
