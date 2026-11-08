@@ -3199,6 +3199,42 @@ describe('the orientation', () => {
     expect(actuator.calls).toEqual(GG);
   });
 
+  it('marks progress only when it commands: a declined G stalls instead of reaching its own deadline', async () => {
+    // The pump rule (arbiter, 2026-11-09): an owner marks progress only when it commands. G is
+    // refused on a static off-floor view, so the guard above the send declines to press it again —
+    // and a mark on that branch refreshed the stall clock every tick, carrying the run past the
+    // shipped 120 s stop to the orientation's own 180 s backstop. The two are separated by the
+    // observable: where the session ends, and whether the owner was ever released.
+    const { task } = goalTask();
+    const { world, host, actuator, clock } = makeWorld({
+      observation: dungeonView,
+      task,
+      // Insurance only: the pump spends the stalled ticks, so no question is expected; if one were
+      // asked, it must not wait out a real 90 s answer.
+      cfg: { escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+
+    actuator.result = { ok: false, reason: 'timeout', detail: 'the map did not open' };
+    await world.tick();                              // G: refused, so `open-map` is marked failed
+    expect(actuator.calls).toEqual(GG);
+    // Every later frame is the same view: the orientation still owns the loop and has nothing it
+    // will send. The stall clock is the only thing left that can end this run.
+    for (let index = 0; index < 24 && world.isRunning(); index += 1) {
+      clock.advance(5_000);
+      await world.tick();
+    }
+    // 24 ticks of 5 s is the shipped stop, 60 s short of the orientation's own backstop: a run that
+    // survives this is the defect, not a slow climb.
+    expect(world.isRunning()).toBe(false);
+    const stopped = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stopped');
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]!.event.text).toContain(`nothing changed for ${WVD_DEFAULTS.stallStopSeconds} s`);
+    // The deadline never released the owner, and the declined command was never re-sent.
+    expect(host.logRecords.some((line) => line.message.includes('held the loop'))).toBe(false);
+    expect(actuator.calls).toEqual(GG);
+  });
+
   it('travels: to the site from town or the map, to the zone from Dungeon Select', async () => {
     const cases: ReadonlyArray<readonly [Observation, string]> = [
       [townView, 'ffxi-gcn'],
@@ -3658,6 +3694,8 @@ describe('the exit goal', () => {
   it('releases the exit at its own deadline with one warning, before the shipped stall clock', async () => {
     // At the shipped configuration, not a live run sheet's 150 s: the bound must fire before the
     // stop the package actually ships, and the exit is released to the route rather than stopped.
+    // The guard of the constant's *value* is the property test above, not this case: the claim is
+    // stamped a tick before the last progress mark, so even a 120 s constant releases here.
     const loop = makeExitWorld({ cfg: { escalateTimeoutMs: 25 } });
     await started(loop.world, loop.host);
     await loop.world.tick();                        // the E check: the exit owns the loop from here

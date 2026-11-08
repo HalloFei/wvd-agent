@@ -422,6 +422,10 @@ const CHEST_PROBE_WALK_MS = 20_000;
  * An operator who lowers `stallStopSeconds` below this deadline gets the stop instead of the
  * release — that is the documented trade, not a second number to keep in sync.
  *
+ * Its scope is the ticks that **reach the pump point**: a tick the loop's own branches own (the
+ * settle window, a stop, death, the QTE, a page, the inn, the heal, the blank hold) returns above it,
+ * so a never-closing character page is still the stall clock's stop, not this release.
+ *
  * Exported only so `tests/world.test.ts` can pin that relationship against `WVD_DEFAULTS` rather
  * than repeating the value as a second magic number.
  */
@@ -1294,6 +1298,7 @@ export class WvdWorld implements World {
       this.#staging = null;
       this.#leaveRefused = false;
       this.#orientRefused = false;
+      this.#stageRefused = false;
       this.#leaveTravelFailures = 0;
       this.#orientAbort = null;
       this.#orientTravelFailures = 0;
@@ -3724,7 +3729,10 @@ export class WvdWorld implements World {
     // A command is the orientation's progress (arbiter rule 2026-11-09): the orientation's own
     // deadline is the backstop for turns that never arrive, so its commands must keep the stall
     // clock's account alive — otherwise a slow climb reads as a stall and the session stops.
-    this.#lastProgressAtMs = this.#now();
+    // The mark sits **below each guard, where the command actually leaves** (one per branch): a
+    // branch that declines to send — the `open-map`/`exit` already marked failed — marks nothing,
+    // so the stall clock is free to escalate it exactly as on the farm path, and the run stops at
+    // the shipped stall stop instead of drifting on to this stage's own bound.
     this.#healSchedule.cancel();
     switch (command.kind) {
       case 'open-map':
@@ -3735,6 +3743,7 @@ export class WvdWorld implements World {
           this.#host?.log.warn(`wvd: orienting: ${command.kind} already changed nothing here; not sending it again`);
           return;
         }
+        this.#lastProgressAtMs = this.#now();
         const send = command.kind === 'open-map'
           ? () => this.#commands.openMap()
           : () => this.#commands.automoveToExit();
@@ -3747,6 +3756,7 @@ export class WvdWorld implements World {
         // the walk (live 2026-11-03 21:45: a bare tap raised the prompt and the screen never changed, so
         // the press looked ignored). The climb therefore goes through the farm's own automove, which
         // locates the cell on a fresh frame and taps that prompt.
+        this.#lastProgressAtMs = this.#now();
         const climbed = await this.#press(
           'move',
           fromScreen,
@@ -3771,6 +3781,7 @@ export class WvdWorld implements World {
           return;
         }
         this.#host?.log.info(`wvd: climbing to the farm floor (attempt ${this.#orientClimbs})`);
+        this.#lastProgressAtMs = this.#now();
         const result = await task.runScript('climb');
         if (!this.#running) return;
         if (!result.ok) {
@@ -3796,6 +3807,7 @@ export class WvdWorld implements World {
         }
         this.#orientAbort ??= new AbortController();
         this.#host?.log.info(`wvd: orienting: travelling to ${command.to}`);
+        this.#lastProgressAtMs = this.#now();
         const result = await this.#commands.travel(command.to, this.#orientAbort.signal);
         if (!this.#running) return;
         if (result.ok) {

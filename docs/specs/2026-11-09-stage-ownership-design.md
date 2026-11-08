@@ -11,8 +11,9 @@ of them, and each missing one is a *class* of defect, not a single bug:
 1. **Liveness** — an owner is driven **every tick** it owns. A flag that says "I own this" is a
    promise that someone calls it; nothing in the code kept that promise.
 2. **Exclusivity** — **one** owner at a time. The orientation and the leave both drove the exit path.
-3. **Bounds** — an owner is released by **its own clock**, before the 150 s stall clock (which ends
-   the session and masks a design hole as a "stop condition").
+3. **Bounds** — an owner is released by **its own clock**, before the shipped `stallStopSeconds`
+   stall clock (120 s; run 7's harness ran 150 s, which is history, not the default). The stall
+   clock ends the session and would mask a design hole as a "stop condition".
 
 ## 2. The live reproduction
 
@@ -102,16 +103,29 @@ instead of the release: that is the documented trade. `tests/world.test.ts` pins
 (`LEAVE_DEADLINE_MS < WVD_DEFAULTS.stallStopSeconds * 1000`, a property rather than a second magic
 number) and the release itself at the shipped default.
 
+The bound is applied on the tick that **reaches the pump point**. `#releaseOverdueStage` sits below
+the loop's own early returns — the settle window, a stop, death, the revive QTE, a ui-menu, the rest
+gate, the heal, the character page, the inn/message and the blank hold — so a screen those branches
+hold never reaches it: a never-closing character page is still the stall clock's stop, not a release.
+The bound promises nothing about ticks that never get there.
+
 `LEAVE_DEADLINE_MS` is exported only so the test can pin that relationship by name; it is not part of
 the World's contract.
 
 ## 6. What stays outside the registry
 
-The **heal** episode, the **rest gate** and the **chest probe** already pump from their own branches
-on every tick, and those branches pre-empt the pump point (they return before it). Converting them
-would re-open the heal's freshly verified episode (`07efd3c`) for no defect: they have liveness by
-construction, and no second owner contends for them. The same is true of the message box, the
-character page, the inn and the QTE sub-loop. The registry governs the **intent-driven** stages only.
+The **heal** episode and the **rest gate** already pump from their own branches on every tick, and
+those branches pre-empt the pump point (they return before it). Converting them would re-open the
+heal's freshly verified episode (`07efd3c`) for no defect: they have liveness by construction, and
+no second owner contends for them. The same is true of the message box, the character page, the inn
+and the QTE sub-loop. The registry governs the **intent-driven** stages only.
+
+The **chest probe** is outside the registry for a different reason, and the earlier draft got it
+wrong: it does **not** return before the pump point. Its "no chest" resolution is a tick-level
+check (`#step`) that falls through, its start is inside `#leaveStep` — i.e. inside the exit's own
+pump — and an in-flight probe spends the tick inside that pump too. It is not registered because it
+has **no competing owner**: it is the exit's own work, sequenced by the exit's pump and answered by
+the tick's probe check, so a second claim would only be a second way to say who acts.
 
 ## 7. Acceptance
 
@@ -120,4 +134,6 @@ re-use after release). `tests/world.test.ts` (`the exit goal`) pins the four loo
 the harken deadlock taps the matched 归还 within five ticks and never stops; an off-floor map while
 the exit owns logs no orientation re-arm and sends no orientation command; the deadline releases the
 exit with one warning before the shipped stall clock; and the owner is pumped once per tick (one
-matched tap per tick on a page that stays).
+matched tap per tick on a page that stays). `the orientation` adds the mark's placement: a command
+the owner declines to send marks no progress, so the run ends on the stall clock at the shipped stop
+and not on the owner's own 180 s bound.
