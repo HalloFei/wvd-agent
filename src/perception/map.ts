@@ -38,6 +38,7 @@ import type {
 } from '../contracts.ts';
 import { anchor, scoreMetric, settle, type AnchorResult, type Evidence, type MetricResult, type MetricShape } from './evidence.ts';
 import { readNumbersViaOcr, type OcrReadout } from './readout-ocr.ts';
+import { metricFor, type SiteDescriptor } from './site.ts';
 
 // ---------------------------------------------------------------------------------------------
 // Measured constants
@@ -605,7 +606,11 @@ export class MapPerceiver implements Perceiver {
    * classified but the line is there, the band is handed to an OCR package and its numbers are fed
    * back into the same parse. Off is the default — it costs a process, and only a refused frame pays.
    */
-  constructor(private readonly ocr?: OcrReadout) {}
+  constructor(
+    private readonly ocr?: OcrReadout,
+    /** The site's evidence policy: the ink band is a per-site measurement (site.ts). */
+    private readonly site?: SiteDescriptor,
+  ) {}
 
   async observe(frame: Frame): Promise<Observation> {
     const parsed = await this.#parse(frame);
@@ -626,11 +631,12 @@ export class MapPerceiver implements Perceiver {
     } catch {
       return { ok: false, gate: 'decode-failed' };
     }
-    const first = parseImage(image);
+    const inkShape = metricFor(this.site, 'dungeonmap', 'panelInk', MAP_INK_SHAPE);
+    const first = parseImage(image, { inkShape });
     if (first.ok || this.ocr === undefined || !isReadoutGate(first.gate)) return first;
     const numbers = await readNumbersViaOcr(image, READOUT_BAND, this.ocr);
     if (numbers === null) return first;
-    return parseImage(image, { readout: numbers });
+    return parseImage(image, { readout: numbers, inkShape });
   }
 }
 
@@ -646,7 +652,7 @@ async function parse(frame: Frame): Promise<MapParse> {
   return parseImage(image);
 }
 
-function parseImage(image: RgbaImage, options?: { readonly readout?: Point }): MapParse {
+function parseImage(image: RgbaImage, options?: { readonly readout?: Point; readonly inkShape?: MetricShape }): MapParse {
   const { data, width, height } = image;
 
   // The frame's facts, in the order they are asked. |Anchors veto; metrics weigh (evidence.ts).|
@@ -696,7 +702,7 @@ function parseImage(image: RgbaImage, options?: { readonly readout?: Point }): M
   //    第二区 floor, 2026-11-08) costs confidence instead of vetoing a parse whose readout, title and
   //    lattice are all there.
   const panel = scanPanel(data, width);
-  metrics.push(scoreMetric('panelInk', panel.mapInk, MAP_INK_SHAPE));
+  metrics.push(scoreMetric('panelInk', panel.mapInk, options?.inkShape ?? MAP_INK_SHAPE));
 
   // 4. G4 + R27: a centred Latin floor token that lands in the measured slots. ----------------
   const title = readTitle(image);

@@ -61,6 +61,7 @@ import { TownPerceiver, WorldMapPerceiver } from './perception/location.ts';
 import { DungeonSelectPerceiver } from './perception/dungeon-select.ts';
 import { TRAVEL_IDS } from './perception/locations.ts';
 import { MapPerceiver, tileOnScreen } from './perception/map.ts';
+import { FFXI_GCN } from './perception/sites/ffxi-gcn.ts';
 import { routePolicy } from './policy/route.ts';
 import { createTaskPolicy } from './tasks/policy.ts';
 import { createTaskRunner } from './tasks/runner.ts';
@@ -189,10 +190,13 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
   // digit reader refuses them. Off unless the harness names an interpreter that has it.
   const ocrPython = process.env.WVD_OCR_PYTHON;
   const ocrScript = process.env.WVD_OCR_SCRIPT;
+  // The site's evidence policy travels with the reader: a per-site ink band, not a constant in the
+  // parser (site.ts, 2026-11-08). A new location is a descriptor, not a code change.
   const mapReader = new MapPerceiver(
     ocrPython !== undefined && ocrScript !== undefined
       ? { python: ocrPython, script: ocrScript, timeoutMs: 20_000 }
       : undefined,
+    FFXI_GCN,
   );
   // The opener's escalation is the OCR tier directly (ruling R9): a 陷阱 field its own 'template'
   // strategy (R4) refuses goes to OCR, never to a chain whose 'auto' default starts with the rule
