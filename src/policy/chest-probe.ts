@@ -76,6 +76,9 @@ export function nextChestProbe(
   if (!isExpectedFloor(state.farmFloor, observation.map.titleKey)) return { kind: 'skip' };
   if (observation.map.icons.some((icon) => icon.kind === 'chest')) return { kind: 'skip' };
   if (state.chestsShown > 0) return { kind: 'skip' };
-  if (state.done === observation.map.titleKey) return { kind: 'skip' };
+  // "Asked already" is the floor, not the string it was read as: the reader's title key drifts by up
+  // to 9 bits of 128 on the same floor (src/tasks/steps.ts:44-54), so string equality re-asks a floor
+  // every time its map is reopened — a walk the leave did not ask for, 5 s each time.
+  if (state.done !== null && isExpectedFloor(state.done, observation.map.titleKey)) return { kind: 'skip' };
   return { kind: 'start' };
 }
