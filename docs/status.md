@@ -1543,3 +1543,49 @@ agreeing map frames) and the site descriptor's swapped floor labels are pinned o
   — working state, rulings, deferred minors, and the pre-flight scan. Git-ignored: it is scratch, and
   the rulings that matter are written into the specs instead.
 - The task board — the user-visible list of what is open.
+## The loop's stages have an arbiter, and three live cycles completed (2026-11-09)
+
+The operator's question after the heal landed was *what didn't we consider* — and the honest answer was
+**liveness**. The exit was a pure goal whose only pump sat inside the policy's `run-script` intent, so on
+any screen where the route said `wait` it owned the loop while nothing drove it: run 7 deadlocked on a
+harken page for 150 s, and the stall clock ended the session, which made a missing caller look like a stop
+condition. The orientation also re-armed on the same exit path — two owners, one tick.
+
+- `policy/stage-registry.ts` (new): one owner at a time (`claim` refused with the holder, `release`/`pump`
+  by a non-owner no-ops, `overdue` measured from the claim). Pure of the clock, total, no screen or
+  command knowledge.
+- `world.ts`: one pump point (where the scripted stage's pump already was), after the verdict and before
+  the route: release overdue → pump the owner (`exit` → the leave, `stage` → the script, `orient` → the
+  orientation). `#leaving`/`#orienting` are now derived getters over the registry. The harken branch falls
+  through to the owner instead of returning.
+- Deadlines: exit 110 s (below the shipped 120 s stall stop), orient 180 s, script 300 s; a release is one
+  warn, never a session stop. `docs/specs/2026-11-09-stage-ownership-design.md` is the record.
+- The heal, the rest gate and the chest probe stay outside the registry: they already pump from their own
+  branches every tick and pre-empt the pump.
+
+Three live runs then paid for the rest of the truth:
+
+- **Run 8 (0 cycles):** the party reached the farm floor and the map reader refused the frame at
+  `lattice-support`. `fitLattice` selected the grid by **lowest rms**, then counted support; a lit,
+  structured wall behind the translucent map dragged the least-squares fit (5 of 16 lines explained) while
+  a support-best grid explained 11. Fixed to select by support (X; Y stays least squares for a measured
+  chevron reason) and refine on inliers; the confidence penalty reads the canvas's best-case residual, the
+  number its 2 px constant was calibrated on. Corpus: 19 maps read, 120 refusals, no read moved; the
+  frame is the fixture `testdata/screens/2026-11-09-map-lit-wall/`.
+- **Run 9 (0 cycles):** the heal episode's `suspended` fact knew only battle/QTE/death, so a `chest-prompt`
+  that appeared beside the party was never accepted for 90 s, and the escalation's fallback blind-pressed
+  G on the chest. Fixed: the chest flow suspends the episode, and the fallback waits on every screen the
+  route owns (only the walk view and a loading fade still get G).
+- **Run 10 — the acceptance:** 2026-11-09 08:53-09:27, `WVD_CYCLES=3`, exit 0,
+  `task-complete: 3 of 3 cycles`, **chests 14 (avg 37.5 s), battles 3 (avg 35.0 s)**, four escalations,
+  no deaths. All three cycle boundaries ran live: the goal-task orientation from town (world-map pans,
+  travel, Dungeon Select, the climb), the farm, the heal, the E check and the matched 归还 row, the inn
+  rest. The arbiter's exclusivity appears in the log as `the orientation asked for the loop while exit
+  owns it`, twice.
+
+**Owed and pinned (not hidden):** both stage deadlines fire on *working* stages, because the world-map
+panning makes an exit ~112 s and a re-entry ~179 s — card `t-mw8k2hjp-3bh4ld`; the fallback's route-owned
+set is a hand-maintained literal — card `t-mw8kpw5q-ianmlc`; a town-side frame read as `chest-opening`
+during the inn — card `t-mw8k2hk7-v3ypnh`; the site descriptor's labels now follow the visible titles
+(`fba4ff4`), and the step-by-step record is the SDD ledger under `.superpowers/sdd/2026-11-09-loop-ownership/`,
+which is git-ignored scratch.
