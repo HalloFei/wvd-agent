@@ -1687,3 +1687,35 @@ atlas px. One full strip view at that zoom is 490x551 atlas px, so the crop is s
 view: a tile for a cropped probe, not a standalone atlas. Calibration: `scripts/calibrate-atlas-center.ts` (ffmpeg decode, banner matching via
 `findTemplate`); pin: `tests/atlas-center-calibration.test.ts` (the asset's sha256, the transform
 against all four banners, and the coverage that says it is not a replacement).
+
+## Run 9 cycles stopped at 0, on the opener, the chest QTE and the heal (2026-11-10)
+
+`WVD_CYCLES=9`, 01:20:19-01:34:41, exit 2, **0 cycles: chests 5 (avg 33.6 s), battles 2 (avg 108.3 s)**, six
+escalations (console only, every one timed out at 20 s). Report
+`.tmp/runs/2026-11-10-9-cycles/report.json`.
+
+The registration travel did its job, first try: located 160,0 (level 0, 0.561), panned, re-read level 1 /
+factor 1.49 (0.457), tapped ffxi-gcn (icon 0.989 @ 0.67), the Dungeon Select row opened, 第三区 was
+selected, and the farm floor was reached at 01:22:54. The entry leg is now reliable.
+
+What stopped the farm is downstream of navigation:
+
+- **01:23:53, the battle opener.** `cast 爱丽丝's 左下 opener`, then "the skill panel is not on this frame
+  yet; the confirm stays owed"; the screen went **unnamed (confidence 0.20) for 418 ticks** and the first
+  escalation fired. One Esc cleared it and the screen was combat (01:24:18) - the confirm never resolved.
+- **01:25:23-01:27:52, the chest QTE.** "the chest QTE was not pressed: resolved" fourteen times, then
+  "**the chest QTE has had 6 passes on one bar; leaving it to the stall clock**" - card `t-mw8lgbg4-qma2qd`.
+- **01:26:10, the heal.** character-page -> quick-heal -> character-page; at 01:26:45 the loop stuck on
+  `dungeon` (0.91) for 455 ticks. The heal left the party on a page the loop could not close.
+- **01:27:08, an unreachable chest.** "the chest at 20,4 cannot be walked to (the selection raised no
+  自動移動 element); trying once more" - card `t-mw8lgbgo-xdblbn`.
+- **01:32-01:34, the cascade.** The exit ran while the farm was still owed chests; "the exit held the loop
+  for 110 s; releasing it"; "the harken does not offer the farm floor; backing out with 归还"; Dungeon
+  Select; six stuck events in total; the last escalation timed out; `nothing changed for 150 s`. The party
+  was left on Dungeon Select.
+
+So the navigation half held and the farm half did not: three separate loops (opener confirm, chest QTE,
+heal page) each spend 20 s on an unanswerable question and hand the loop a screen it cannot name, and the
+exit then acts on that state. Nothing here is a new defect - the QTE, the unreachable chest and the
+harken/归还 walk-out were all pinned - but this is the first run where they compound into a zero-cycle
+night, and it puts the order of work in view: the chest QTE and the heal page before any more nav work.
