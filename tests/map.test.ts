@@ -288,10 +288,11 @@ describe('the lit-wall map of 2026-11-09 (live run 8)', () => {
 
     const detailed = await readMapDetailed(frame);
     expect(detailed).toMatchObject({ ok: true });
-    // **The residual penalty's input is the population residual, not the inlier one.** The refined grid
-    // is 1.12 px over its 10 inliers (a number ≤ the 2 px tolerance by construction, so it can never
-    // trip `LATTICE_CLEAN_RMS`) and **6.52 px** over all 16 detected X lines, so the lit wall behind the
-    // panel does cost confidence: 0.80, not the 0.85 an inlier residual would leave.
+    // **The residual penalty reads the canvas's best-case grid, not the fit's.** The selected grid is
+    // 1.12 px over its 10 inliers (a number ≤ the 2 px tolerance by construction, so it can never trip
+    // `LATTICE_CLEAN_RMS`), while the least-squares grid the search evaluates before selecting is
+    // **5.60 px** over all 16 detected X lines (7.40 px on the Y axis). The lit wall is lit runs no grid
+    // explains, so the frame costs confidence — 0.80 — even though the map itself is clean.
     if (detailed.ok) expect(detailed.confidence).toBe(0.8);
     const map = await readMap(frame);
     expect(map).not.toBeNull();
