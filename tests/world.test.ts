@@ -1674,6 +1674,40 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(healSteps[1]).toBe('sparkle');
   });
 
+  it('yields the heal to the chest flow: the prompt is accepted, then the card resumes', async () => {
+    // Live 2026-11-09 08:36:50-08:38:21: the party walked onto a chest while the heal's CARD step waited
+    // for the settled view. The suspension named the battle and the QTEs but not the chest's approach
+    // and opening screens, so the episode held the tick: the 打开 prompt was never accepted, the heal
+    // spent its 90 s deadline on a screen the route owns, and the farm then sat at chest-prompt.
+    const { world, host, actuator, perceiver, clock, healSteps } = makeWorld({ observation: dungeonView });
+    await started(world, host);
+
+    // The battle owes the heal.
+    perceiver.observation = combatView;
+    clock.advance(100);
+    await world.tick();
+
+    // It starts on the settled farm view; the card step is still owed (the episode's gate is stricter
+    // than the start's, so the first frames after the start send nothing).
+    perceiver.observation = dungeonView;
+    await tickUntilLogged(world, host, clock, 'the heal starts');
+    expect(healSteps).toEqual([]);
+
+    // The party walks onto a chest: the tick is the route's, and the 打开 prompt is accepted.
+    perceiver.observation = chestPrompt;
+    const before = actuator.calls.length;
+    clock.advance(500);
+    await world.tick();
+    expect(actuator.calls.slice(before)).toEqual(['tap 955,858']);
+    // The episode kept its step: the heal sent nothing of its own.
+    expect(healSteps).toEqual([]);
+
+    // The chest flow over and the farm view settled again: the card is the step it resumes at.
+    perceiver.observation = dungeonView;
+    for (let index = 0; index < 6; index += 1) { clock.advance(500); await world.tick(); }
+    expect(healSteps).toEqual(['card']);
+  });
+
   it('heals once after a battle, and again after a chest, and not twice on the same view', async () => {
     const { world, host, perceiver, clock } = makeWorld({ observation: dungeonView });
     await started(world, host);
@@ -4208,5 +4242,49 @@ describe('the recovery', () => {
     expect(host.logRecords.some((line) => line.message.includes('no step to press'))).toBe(false);
     const status = outcome(await tool(world, 'wvd_status').handler({}, CTX));
     expect(status.text).toContain('last intent open-map');
+  });
+
+  it('waits, rather than pressing the map, when a chest prompt is the stalled screen', async () => {
+    // Live 2026-11-09 08:38:53: the escalation's fallback pressed G on a chest prompt, where G does
+    // nothing — "open-map changed nothing" repeated until the stall clock stopped the session. The
+    // chest flow is the route's own screen, so the honest fallback is a wait: the route owns the
+    // screen and the stall clock is the bound; a blind press is not a recovery.
+    const { world, host, actuator, clock } = makeWorld({
+      observation: chestPrompt,
+      cfg: { stallStopSeconds: 2, escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+
+    await world.tick();                    // the prompt's 打开, in flight
+    const calls = actuator.calls.length;
+    clock.advance(600);
+    await world.tick();                    // the stall: the question, then its timeout
+
+    const stuck = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck');
+    expect(stuck).toHaveLength(1);
+    // The recorded question's fallback is a wait, and nothing is pressed for it.
+    const meta = stuck[0]!.event.meta as { escalation: { fallback: string } };
+    expect(meta.escalation.fallback).toBe('wait');
+    expect(stuck[0]!.event.text).toContain('waits and looks again');
+    expect(actuator.calls.slice(calls)).toEqual([]);
+  });
+
+  it('still opens the map when the stalled screen is the 3-D view', async () => {
+    // The pairing of the test above: the 3-D view is where G *is* a recovery, so the fallback stays
+    // the map there (a route-owned screen is the one that waits).
+    const { world, host, actuator, clock } = makeWorld({
+      observation: dungeonView,
+      cfg: { stallStopSeconds: 2, escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+
+    clock.advance(600);
+    await world.tick();
+
+    expect(actuator.calls).toEqual(['key ' + SCAN.G + ' 60']);
+    const stuck = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck');
+    expect(stuck).toHaveLength(1);
+    const meta = stuck[0]!.event.meta as { escalation: { fallback: string } };
+    expect(meta.escalation.fallback).toBe('open-map');
   });
 });

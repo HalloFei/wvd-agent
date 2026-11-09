@@ -299,14 +299,24 @@ const ARRIVAL_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
 ]);
 
 /**
+ * The screens the route acts on by itself, and whose next move the map is not: the chest's four
+ * screens, a battle, the battle's skill panel, the inn and its rest. Their fallback is a wait — the
+ * route owns the screen and the stall clock is the bound; a blind press is not a recovery.
+ */
+const ROUTE_OWNED_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
+  'chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'drop-item-claim',
+  'combat', 'skill-panel', 'inn', 'inn-rest',
+]);
+
+/**
  * The recovery the loop takes when a screen is lost: what nobody's answer leaves it doing.
  *
  * The recovery policy (policy/recover.ts, operator 2026-11-07) is asked first. Its actionable steps
  * are the loop's answer — a page by its own exit, one Esc on an unnamed screen, the town page's
  * party panel collapsed so the world map behind it is revealed. A `done` step is a screen the route
- * can act on, so the loop's own fallback stands: on the map the exit itself (contracts §6), anywhere
- * else the map — `F` is 移動至出口 only on the map, and 調査 in the 3D view (navigation §3d), so a
- * blind `F` is not a recovery.
+ * can act on, so the loop's own fallback stands: on the map the exit itself (contracts §6), on a
+ * screen the route is already working a **wait**, and everywhere else the map — `F` is 移動至出口
+ * only on the map, and 調査 in the 3D view (navigation §3d), so a blind `F` is not a recovery.
  */
 function fallbackFor(observation: Observation): Intent {
   // On the main character's death there is nothing to press: the question is Coo's (operator rule
@@ -315,7 +325,13 @@ function fallbackFor(observation: Observation): Intent {
   if (observation.screen === 'main-character-dead') return { kind: 'wait', ms: 1_000 };
   const step = recoverStep(observation);
   if (step.kind !== 'done') return { kind: 'recover', step };
-  return observation.screen === 'dungeonmap' ? { kind: 'exit' } : { kind: 'open-map' };
+  if (observation.screen === 'dungeonmap') return { kind: 'exit' };
+  // A screen that is the route's own is the route's to finish: the chest's flow, a battle, the skill
+  // panel, the inn. `G` is the map key only from the 3-D walk view, so pressing it here is not a
+  // recovery — it is a command into a screen that has its own work (live 2026-11-09 08:38:53: the
+  // fallback pressed G on a chest prompt, which changed nothing, until the stall clock ended the run).
+  if (ROUTE_OWNED_SCREENS.has(observation.screen)) return { kind: 'wait', ms: 1_000 };
+  return { kind: 'open-map' };
 }
 
 /**
@@ -1602,8 +1618,8 @@ export class WvdWorld implements World {
     // completed episode pays the debt.
     //
     // While the episode runs it **owns the interface**: the page-close branch below waits for it, an
-    // unnamed or transitional frame is a wait, and only the game's modal screens (battle, chest QTE,
-    // death) suspend it — with its step kept. The previous sequence was abandoned by any named screen,
+    // unnamed or transitional frame is a wait, and only the game's own screens suspend it — a battle,
+    // a chest QTE, a death, and the chest flow the route owns — with its step kept. The previous sequence was abandoned by any named screen,
     // which is the open/close loop the operator saw live 2026-11-09 05:22-05:29.
     // Priority over the route: the episode is created as soon as the page is up or the walk view has
     // held for the loop's own stability gate, so the route cannot spend the tick opening the map first
@@ -2467,7 +2483,8 @@ export class WvdWorld implements World {
     const timeoutMs = this.#cfg.escalateTimeoutMs;
     // The recovery the model is told about, and the one the loop takes, are the same decision:
     // the recovery stepper's next step when it is one to press, else the loop's own fallback (the
-    // exit on the map, the map anywhere else — never `F` blind, §3d).
+    // exit on the map, a wait on a screen the route is working, the map anywhere else — never `F`
+    // blind, §3d).
     const fallback = fallbackFor(observation);
 
     const envelope = stuckEvent({
@@ -2977,7 +2994,8 @@ export class WvdWorld implements World {
         const step = intent.step;
         if (step.kind === 'done') {
           // `fallbackFor` never hands one over — a screen the route can act on keeps the loop's own
-          // fallback — so this is the guard that keeps a future caller honest, not a press.
+          // fallback (a wait when the route is working it) — so this is the guard that keeps a future
+          // caller honest, not a press.
           this.#host?.log.info(`wvd: recovery: no step to press (${step.why})`);
           return;
         }
@@ -3526,7 +3544,8 @@ export class WvdWorld implements World {
   /**
    * The facts one frame offers the heal episode (policy/heal-session.ts). Every fact is local to the
    * material the episode acts on: the page and its matched X point, the dialog and its matched 恢复
-   * point, a result box, the settled farm view, and the game's modal screens (the only suspension).
+   * point, a result box, the settled farm view, and the game's own screens (the only suspension:
+   * battle, QTE, death, and the chest flow the route then finishes).
    */
   #healFacts(observation: Observation): HealFacts {
     const page = observation.screen === 'character-page';
@@ -3542,8 +3561,14 @@ export class WvdWorld implements World {
       message,
       messageAt: message ? observation.at : null,
       pageGone: (observation.screen === 'dungeon' || observation.screen === 'dungeonmap') && this.#stableCount >= 2,
+      // The game's modal screens, and the chest flow — the farm's own work, exactly like a battle.
+      // Not suspended on the chest's approach and opening, the episode held the tick while the party
+      // stood at a chest: the 打开 prompt was never accepted and the heal spent its 90 s deadline on a
+      // screen the route owns (live 2026-11-09 08:36:50-08:38:21, then the farm stalled at chest-prompt).
       suspended: observation.screen === 'combat' || observation.screen === 'chest-qte'
-        || observation.screen === 'revive-qte' || observation.screen === 'main-character-dead',
+        || observation.screen === 'revive-qte' || observation.screen === 'main-character-dead'
+        || observation.screen === 'chest-prompt' || observation.screen === 'chest-open'
+        || observation.screen === 'chest-opening' || observation.screen === 'drop-item-claim',
     };
   }
 

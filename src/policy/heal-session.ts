@@ -14,9 +14,10 @@
  *   3 RESTORE  the dialog must have gone            (dialog stable -> one 恢复 tap at its matched point)
  *   4 CLOSE    the page must be gone                (page/dialog -> Esc, or the matched cancel)
  *
- * Every step is **verified by its own material**, never by a timer, and the only interruption that
- * matters is the game's own modal screen (battle, chest QTE, death): the episode is *suspended* and
- * keeps its step. An unnamed or transitional frame is not an interruption — it is a wait. A step that
+ * Every step is **verified by its own material**, never by a timer, and the interruptions that matter
+ * are the game's own screens — a battle, a chest QTE, a death — **and the chest flow** (the prompt,
+ * the opener panel, the lid, the loot card), which is the farm's own work: the episode is *suspended*
+ * and keeps its step, and the tick goes on to the route that owns that screen. An unnamed or transitional frame is not an interruption — it is a wait. A step that
  * never lands is retried a bounded number of times; only then does the episode move on (the CARD and
  * SPARKLE steps may finish *unverified*, because the only hard end is the page being gone).
  *
@@ -44,7 +45,10 @@ export interface HealFacts {
   readonly messageAt: Point | null;
   /** The page and its dialog are gone and a farm view has held: the heal is over. */
   readonly pageGone: boolean;
-  /** The game owns the frame: battle, chest QTE, revive, death. The step is kept. */
+  /**
+   * The game owns the frame: battle, chest QTE, revive, death — and the chest flow (prompt, panel,
+   * opening, loot), the farm's own work. The step is kept.
+   */
   readonly suspended: boolean;
 }
 
