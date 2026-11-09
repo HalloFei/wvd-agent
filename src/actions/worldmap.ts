@@ -33,6 +33,7 @@ import {
   MAP_ZOOM_KEYS,
   WORLD_MAP_SIZE,
   WORLD_MAP_SITES,
+  ZOOM_LADDER,
   offsetFromMatch,
   panDragFor,
   siteById,
@@ -1124,15 +1125,21 @@ export async function travelViaAtlas(
     const view = await lookAtMap(env, policy, timing);
     if (!view.ok) return finish(view.failure);
     const again = register(view.image, { offset, level: 1 }, 640);
-    if (again === null) {
-      return finish({ ok: false, reason: 'location-not-found', detail: 'the atlas did not register after zooming in to tap' });
+    if (again !== null) {
+      offset = again.offset;
+      level = again.level;
+      env.log?.('wvd: registration re-read the view at ' + again.pose.origin.x + ',' + again.pose.origin.y
+        + ' (level ' + again.pose.level + ', factor ' + again.pose.factor.toFixed(2)
+        + ', score ' + again.pose.score.toFixed(3) + ') before the tap');
+    } else {
+      // The stitch is weakest at this zoom (0.49 measured on the recorded frames), so a failed
+      // re-read must not sink the leg: the atlas frame offset is invariant under a zoom about the
+      // view centre, so the pose carries forward at the level just pressed, and the confirmation's
+      // icon + scale check (the drawn icon is 0.45 x 1.52 at this level) is the verification.
+      level = Math.log(ZOOM_LADDER[1]!) / Math.log(MAP_ZOOM.stepScale);
+      env.log?.('wvd: registration kept the max-out pose for the tap (the zoomed frame did not register); the confirmation is the check');
     }
-    offset = again.offset;
-    level = again.level;
     predicted = placementAt(resolved.point, offset, level);
-    env.log?.('wvd: registration re-read the view at ' + again.pose.origin.x + ',' + again.pose.origin.y
-      + ' (level ' + again.pose.level + ', factor ' + again.pose.factor.toFixed(2)
-      + ', score ' + again.pose.score.toFixed(3) + ') before the tap');
   }
 
   // 4. Zoom to the planned level and confirm the node at the projected point. Each press is checked:
