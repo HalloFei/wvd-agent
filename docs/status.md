@@ -1590,3 +1590,26 @@ set is a hand-maintained literal — card `t-mw8kpw5q-ianmlc`; a town-side frame
 during the inn — card `t-mw8k2hk7-v3ypnh`; the site descriptor's labels now follow the visible titles
 (`fba4ff4`), and the step-by-step record is the SDD ledger under `.superpowers/sdd/2026-11-09-loop-ownership/`,
 which is git-ignored scratch.
+
+## The five-cycle attempt stopped at two, on the world-map travel (2026-11-09)
+
+`WVD_CYCLES=5`, 09:59:03-10:30:38, exit 2, **2 of 5 cycles: chests 14 (avg 39.0 s), battles 3 (avg 41.0 s)**, four
+escalations, no deaths. Report `.tmp/runs/2026-11-09-5-cycles-11/report.json`.
+
+Cycles 1 and 2 ran the whole cycle again (farm, heal, exit, matched 归还, inn, and the first re-entry's
+travel and climb). Cycle 3 never started: the re-entry's world-map travel to `ffxi-gcn` could not place
+its node — `the atlas could not place 北穿幽冥城 (location-not-found); falling back to the template
+search`, three zoom-outs, an 80 s pan search — and the retry then lost the race with the stall clock:
+`the world-map travel to ffxi-gcn failed (location-not-found (the map closed (dungeon-select))); trying
+once more` at 10:30:30, `nothing changed for 150 s` at 10:30:38, the final state `dungeon-select`,
+`intent run-script`, intent age 264 s.
+
+**The defect this exposes is structural, not a flaky map.** The travel is one blocking call: while it pans
+and zooms, no tick runs, so nothing marks progress — and its failure path (169 s this time) is longer than
+the 150 s stall stop, so the retry cannot get a tick before the session ends. This is the same shape as
+the walk card `t-mw56hzi2-2z8qca` (a blocking composite instead of ordered operations). It is pinned; a
+five-cycle night run needs it fixed, because five cycles need five travels and the re-entry travel is the
+leg that fails when the atlas misses.
+
+The travel's blocking shape and the atlas miss are card `t-mw8na6h4-425t94`; the first travel and the
+first re-entry both worked, so the atlas miss is state-dependent, not a constant.
