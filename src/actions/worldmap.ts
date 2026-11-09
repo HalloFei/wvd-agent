@@ -943,10 +943,10 @@ export async function travelViaAtlas(
    * loop and placementAt/offsetThatAims speak, and `level` re-expresses the measured factor on the
    * atlas's own scale (0.45 * 1.34^level = 0.45 * factor) so the icon scale bank stays right.
    */
-  const register = (image: RgbaImage, prior?: { offset: Point; level: number }) => {
+  const register = (image: RgbaImage, prior?: { offset: Point; level: number }, windowPx = 320) => {
     if (registrationAtlas === null) return null;
     const pose = localiseView(image, registrationAtlas, {
-      ...(prior === undefined ? {} : { prior, windowPx: 320 }),
+      ...(prior === undefined ? {} : { prior, windowPx }),
       minScore: REGISTRATION_FLOOR,
     });
     if (pose === null) return null;
@@ -974,15 +974,26 @@ export async function travelViaAtlas(
     if (registered === null) {
       return finish({ ok: false, reason: 'location-not-found', detail: 'the atlas did not register (floor ' + REGISTRATION_FLOOR + ')' });
     }
-    // A tap at max zoom-out is ignored for a node whose label is culled; one verified zoom in puts
-    // the node at a level where it takes the click, and the pose is re-measured rather than assumed.
-    if (registered.pose.level === 0) {
-      const zoomed = await zoomInOneStep(env, timing, env.log);
-      if (!zoomed.ok) return finish(zoomed);
-      const raised = await lookAtMap(env, policy, timing);
-      if (!raised.ok) return finish(raised.failure);
-      const again = register(raised.image, { offset: registered.offset, level: 1 });
-      if (again !== null) registered = again;
+    // Registration reads a pose at any zoom, but the **pan** only works at max zoom-out: at max
+    // zoom-in a drag is ignored and a drag that starts on a node is read as a click (live
+    // 2026-11-09 21:52: the travel started at max-in and the first pan opened the inn). So clamp the
+    // zoom out first, and verify every press by re-reading the level — the luma signature cannot
+    // tell a swallowed press from the clamp, the localiser can.
+    for (let press = 0; press < MAP_ZOOM.steps && registered.pose.level > 0; press += 1) {
+      const before = registered.pose.level;
+      const sent = await env.actuator.holdKey(MAP_ZOOM_KEYS.out, PRESS_MS);
+      if (!sent.ok) return finish(failure(sent.reason, sent.detail));
+      await pause(env, ATLAS_ZOOM_SETTLE_MS);
+      const view = await lookAtMap(env, policy, timing);
+      if (!view.ok) return finish(view.failure);
+      const next = register(view.image, { offset: registered.offset, level: Math.max(0, before - 1) }, 640);
+      if (next === null) {
+        return finish({ ok: false, reason: 'location-not-found', detail: 'the atlas did not register after a zoom-out press' });
+      }
+      if (next.pose.level >= before) {
+        return finish({ ok: false, reason: 'location-not-found', detail: 'the zoom-out press did not change the level (still ' + before + ')' });
+      }
+      registered = next;
     }
     offset = registered.offset;
     level = registered.level;
@@ -1014,7 +1025,7 @@ export async function travelViaAtlas(
     level = chooseLevel(resolved.point, zoomLimitFor(options.zoom));
   }
   const desired = byRegistration ? offsetThatAimsLevel(resolved.point, level) : offsetThatAims(resolved.point, level);
-  const predicted = placementAt(resolved.point, desired, level);
+  let predicted = placementAt(resolved.point, desired, level);
   trace.placed = { offset: desired, level, predicted };
 
   // 3. Pan at max zoom-out: drag, measure the view again, and learn the gain from what actually
@@ -1064,7 +1075,9 @@ export async function travelViaAtlas(
     if (!again.ok) return finish(again.failure);
     const relocated = byRegistration
       ? (() => {
-        const next = register(again.image, { offset, level: Math.round(level) });
+        // A drag's reach is dragStepPx * the pan gain (~320 x 2.2 = 700 atlas px): the prior's
+        // window must cover it, or the constrained search loses the pose it was meant to track.
+        const next = register(again.image, { offset, level: Math.round(level) }, 900);
         return next === null ? null : { offset: next.offset };
       })()
       : locateView(again.image, options.anchor);
@@ -1100,6 +1113,26 @@ export async function travelViaAtlas(
       env.log?.('wvd: pan moved ' + movedX + ',' + movedY + ' for a ' + drag.x + ',' + drag.y + ' px drag (gain '
         + gainX.toFixed(2) + ',' + gainY.toFixed(2) + ')');
     }
+  }
+
+  // The pan is done at max zoom-out and the tap one step in, where a culled-label node takes the
+  // click. Registration measured the level it started at, so it can re-measure the one it just
+  // zoomed to and reproject the node for it, instead of confirming against a plan made at 0.
+  if (byRegistration) {
+    const zoomed = await zoomInOneStep(env, timing, env.log);
+    if (!zoomed.ok) return finish(zoomed);
+    const view = await lookAtMap(env, policy, timing);
+    if (!view.ok) return finish(view.failure);
+    const again = register(view.image, { offset, level: 1 }, 640);
+    if (again === null) {
+      return finish({ ok: false, reason: 'location-not-found', detail: 'the atlas did not register after zooming in to tap' });
+    }
+    offset = again.offset;
+    level = again.level;
+    predicted = placementAt(resolved.point, offset, level);
+    env.log?.('wvd: registration re-read the view at ' + again.pose.origin.x + ',' + again.pose.origin.y
+      + ' (level ' + again.pose.level + ', factor ' + again.pose.factor.toFixed(2)
+      + ', score ' + again.pose.score.toFixed(3) + ') before the tap');
   }
 
   // 4. Zoom to the planned level and confirm the node at the projected point. Each press is checked:

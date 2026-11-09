@@ -262,6 +262,15 @@ try {
       // Read-only probe: where does the registration localiser think the view is, and where does that
       // put a site on screen? Prints both, so a live frame can be judged without sending any input.
       const frame = await source.capture();
+      // The score alone does not gate: a character page registered at 0.507 live, inside the map's
+      // own range (0.45-0.81). The screen is the gate; only a map frame is a pose.
+      const classification = await see.classify(frame);
+      const screen = describe(classification.answer).screen;
+      if (screen !== 'worldmap') {
+        out({ ok: false, command: 'localize', screen, detail: 'the world map is not the current screen' });
+        process.exitCode = 1;
+        break;
+      }
       const image = await frame.toRgba();
       const pose = localiseView(image, worldMapAtlas(), {});
       const site = args[0] === undefined ? null : siteById(args[0]);
