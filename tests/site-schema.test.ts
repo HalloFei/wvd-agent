@@ -15,10 +15,17 @@ describe('the committed FFXI site', () => {
     expect(siteProblem(FFXI_GCN)).toBeNull();
   });
 
-  it('knows the farm floor by its title key, and a second floor the harken reached', () => {
+  it('knows the farm floor by its title key, and the entry floor the zone row lands on', () => {
     expect(floorOf(FFXI_GCN, 'ffxi-4f')).toEqual({
       id: 'ffxi-4f',
       titleKey: '000000007f3ffe007ffeff00220bb600',
+      label: '第四区-城内2F深处-',
+    });
+    // The entry floor: the Dungeon Select row for ffxi-zone3 lands here, and the map's 楼梯-门 cell is
+    // how the party climbs to the farm. Its key and its visible title are measured (tests/map.test.ts).
+    expect(floorOf(FFXI_GCN, 'ffxi-third-2f')).toEqual({
+      id: 'ffxi-third-2f',
+      titleKey: '0c0280000deff0000d7ffc0008c37000',
       label: '第三区-城内2F-',
     });
     expect(FFXI_GCN.floors.every((floor) => isTitleKey(floor.titleKey))).toBe(true);

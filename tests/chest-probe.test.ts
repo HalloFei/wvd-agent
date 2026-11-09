@@ -49,7 +49,7 @@ describe('the last reachable-chest check', () => {
   });
 
   it('starts on the farm floor after answering for a different floor', () => {
-    // The site's other colliery floor (ffxi-fourth-2f): **32 bits** of 128 from the farm — the pair
+    // The site's other colliery floor (ffxi-third-2f, the entry): **32 bits** of 128 from the farm — the pair
     // src/perception/sites/ffxi-gcn.ts:18-19 records — beyond the loop's 16-bit tolerance, so a "done"
     // there says nothing about this floor.
     expect(floorKeyDistance(FARM, OTHER)).toBe(32);
