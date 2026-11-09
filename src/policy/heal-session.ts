@@ -17,9 +17,13 @@
  * Every step is **verified by its own material**, never by a timer, and the interruptions that matter
  * are the game's own screens — a battle, a chest QTE, a death — **and the chest flow** (the prompt,
  * the opener panel, the lid, the loot card), which is the farm's own work: the episode is *suspended*
- * and keeps its step, and the tick goes on to the route that owns that screen. An unnamed or transitional frame is not an interruption — it is a wait. A step that
- * never lands is retried a bounded number of times; only then does the episode move on (the CARD and
- * SPARKLE steps may finish *unverified*, because the only hard end is the page being gone).
+ * and keeps its step, and the tick carries on into that screen's own dispatch. Whose dispatch it is
+ * depends on the screen: a battle and the chest flow are the route's own intents (`fight`,
+ * `open-chest`, `loot`), while the revive QTE, a death, the message box, the harken menu and the
+ * heal's dialog are the World's own branches and return before the route policy. An unnamed or
+ * transitional frame is not an interruption — it is a wait. A step that never lands is retried a
+ * bounded number of times; only then does the episode move on (the CARD and SPARKLE steps may finish
+ * *unverified*, because the only hard end is the page being gone).
  *
  * Full health is not an error: if the sparkle opens no dialog, the episode treats the heal as done
  * (nothing to heal) and closes the page. The result box after 恢复 — 「已恢复。」 or 「不需要恢复」 —

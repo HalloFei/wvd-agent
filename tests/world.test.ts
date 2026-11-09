@@ -1674,7 +1674,7 @@ describe('a walk stays in flight through the screens it produces', () => {
     expect(healSteps[1]).toBe('sparkle');
   });
 
-  it('yields the heal to the chest flow: the prompt is accepted, then the card resumes', async () => {
+  it('yields the heal to the chest flow: the prompt is accepted, then the sparkle resumes', async () => {
     // Live 2026-11-09 08:36:50-08:38:21: the party walked onto a chest while the heal's CARD step waited
     // for the settled view. The suspension named the battle and the QTEs but not the chest's approach
     // and opening screens, so the episode held the tick: the 打开 prompt was never accepted, the heal
@@ -1687,11 +1687,14 @@ describe('a walk stays in flight through the screens it produces', () => {
     clock.advance(100);
     await world.tick();
 
-    // It starts on the settled farm view; the card step is still owed (the episode's gate is stricter
-    // than the start's, so the first frames after the start send nothing).
+    // It starts on the settled farm view, and the card is sent from it first: the step the suspension
+    // must keep is a **sent** one. (Suspending before the card is sent would pass even for an episode
+    // that dropped the step — a step is only re-sent after its answer window, and no budget is spent
+    // until it is given up.)
     perceiver.observation = dungeonView;
     await tickUntilLogged(world, host, clock, 'the heal starts');
-    expect(healSteps).toEqual([]);
+    await world.tick();
+    expect(healSteps).toEqual(['card']);
 
     // The party walks onto a chest: the tick is the route's, and the 打开 prompt is accepted.
     perceiver.observation = chestPrompt;
@@ -1699,13 +1702,17 @@ describe('a walk stays in flight through the screens it produces', () => {
     clock.advance(500);
     await world.tick();
     expect(actuator.calls.slice(before)).toEqual(['tap 955,858']);
-    // The episode kept its step: the heal sent nothing of its own.
-    expect(healSteps).toEqual([]);
-
-    // The chest flow over and the farm view settled again: the card is the step it resumes at.
-    perceiver.observation = dungeonView;
-    for (let index = 0; index < 6; index += 1) { clock.advance(500); await world.tick(); }
+    // The episode kept its step: the heal sent nothing of its own while suspended.
     expect(healSteps).toEqual(['card']);
+
+    // The chest flow over and the character page up: the resume is the sparkle — the step after the
+    // card that was already sent, not the card again. The episode is the same one: a dropped sequence
+    // is re-entered, and "the heal starts" would be logged a second time.
+    const starts = (): number => host.logRecords.filter((record) => record.message.includes('the heal starts')).length;
+    perceiver.observation = characterPageView;
+    for (let index = 0; index < 3; index += 1) { clock.advance(500); await world.tick(); }
+    expect(healSteps).toEqual(['card', 'sparkle']);
+    expect(starts()).toBe(1);
   });
 
   it('heals once after a battle, and again after a chest, and not twice on the same view', async () => {
@@ -4269,22 +4276,48 @@ describe('the recovery', () => {
     expect(actuator.calls.slice(calls)).toEqual([]);
   });
 
-  it('still opens the map when the stalled screen is the 3-D view', async () => {
-    // The pairing of the test above: the 3-D view is where G *is* a recovery, so the fallback stays
-    // the map there (a route-owned screen is the one that waits).
+  it('waits, rather than pressing the map, when a revive QTE is the stalled screen', async () => {
+    // The World's own branch never presses into a party member's revive: the frame is named, and the
+    // question is Coo's. The escalation's timeout is the same rule — a wait. Before the set named it,
+    // the timeout pressed G into the revive QTE, the class the chest prompt opened.
+    const revive: Observation = { screen: 'revive-qte', atMs: 100, confidence: 0.85 };
     const { world, host, actuator, clock } = makeWorld({
-      observation: dungeonView,
-      cfg: { stallStopSeconds: 2, escalateTimeoutMs: 25 },
+      observation: revive,
+      cfg: { stopOnDeath: false, stallStopSeconds: 2, escalateTimeoutMs: 25 },
     });
     await started(world, host);
+    const calls = actuator.calls.length;
 
     clock.advance(600);
-    await world.tick();
+    await world.tick();                    // one revive frame is a modal still drawing
+    clock.advance(600);
+    await world.tick();                    // the second: the question, then its timeout
 
-    expect(actuator.calls).toEqual(['key ' + SCAN.G + ' 60']);
     const stuck = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck');
     expect(stuck).toHaveLength(1);
     const meta = stuck[0]!.event.meta as { escalation: { fallback: string } };
-    expect(meta.escalation.fallback).toBe('open-map');
+    expect(meta.escalation.fallback).toBe('wait');
+    expect(actuator.calls.slice(calls)).toEqual([]);
+  });
+
+  it('waits, rather than pressing the map, when a spent heal left its dialog up', async () => {
+    // The 一键恢复 dialog is the heal's own screen. With no episode left to act on it (its deadline
+    // ran out), nothing handles `quick-heal`, so the stall clock's fallback pressed G into the dialog
+    // — the same class as the chest prompt, one screen further along.
+    const { world, host, actuator, clock } = makeWorld({
+      observation: quickHealView,
+      cfg: { stallStopSeconds: 2, escalateTimeoutMs: 25 },
+    });
+    await started(world, host);
+    const calls = actuator.calls.length;
+
+    clock.advance(600);
+    await world.tick();                    // the stall: the question, then its timeout
+
+    const stuck = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck');
+    expect(stuck).toHaveLength(1);
+    const meta = stuck[0]!.event.meta as { escalation: { fallback: string } };
+    expect(meta.escalation.fallback).toBe('wait');
+    expect(actuator.calls.slice(calls)).toEqual([]);
   });
 });

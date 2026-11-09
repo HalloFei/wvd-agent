@@ -299,13 +299,21 @@ const ARRIVAL_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
 ]);
 
 /**
- * The screens the route acts on by itself, and whose next move the map is not: the chest's four
- * screens, a battle, the battle's skill panel, the inn and its rest. Their fallback is a wait — the
- * route owns the screen and the stall clock is the bound; a blind press is not a recovery.
+ * The screens the route acts on by itself, and whose next move the map is not: the chest's four, the
+ * loot card, a battle and its skill panel, the inn and its rest, the message box the World taps, the
+ * harken floor menu and its rows, a party member's revive QTE, the heal's 一键恢复 dialog, and the
+ * two travel screens the travel owns. Their fallback is a wait — the route owns the screen and the
+ * stall clock is the bound; a blind press is not a recovery.
+ *
+ * `recoverStep` answers `done` for every one of them, so a screen missing here falls through to the
+ * map press: the list is the World's own dispatch read back, not a guess. Only `dungeon` (the 3-D
+ * walk view, where `G` *is* the map key) and `loading` (a fade nobody may press into) still reach
+ * it; `dungeonmap` exits by its own rule above, and `main-character-dead` waits before this set.
  */
 const ROUTE_OWNED_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
   'chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'drop-item-claim',
-  'combat', 'skill-panel', 'inn', 'inn-rest',
+  'combat', 'skill-panel', 'inn', 'inn-rest', 'message', 'harken-menu', 'revive-qte',
+  'quick-heal', 'worldmap', 'dungeon-select',
 ]);
 
 /**
@@ -315,8 +323,13 @@ const ROUTE_OWNED_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
  * are the loop's answer — a page by its own exit, one Esc on an unnamed screen, the town page's
  * party panel collapsed so the world map behind it is revealed. A `done` step is a screen the route
  * can act on, so the loop's own fallback stands: on the map the exit itself (contracts §6), on a
- * screen the route is already working a **wait**, and everywhere else the map — `F` is 移動至出口
- * only on the map, and 調査 in the 3D view (navigation §3d), so a blind `F` is not a recovery.
+ * screen the route is already working a **wait** (`ROUTE_OWNED_SCREENS`), and on the two screens
+ * left — the walk view and a load fade — the map, because `F` is 移動至出口 only on the map and 調査
+ * in the 3D view (navigation §3d), so a blind `F` is not a recovery.
+ *
+ * `unknown` is not one of the map's: `recoverStep` gives it one Esc. The second caller, `#execute`'s
+ * `exit` case, honours only a `recover` answer — it is asking for a step to press, not for a wait —
+ * so no screen in this set changes what it does.
  */
 function fallbackFor(observation: Observation): Intent {
   // On the main character's death there is nothing to press: the question is Coo's (operator rule
@@ -326,10 +339,11 @@ function fallbackFor(observation: Observation): Intent {
   const step = recoverStep(observation);
   if (step.kind !== 'done') return { kind: 'recover', step };
   if (observation.screen === 'dungeonmap') return { kind: 'exit' };
-  // A screen that is the route's own is the route's to finish: the chest's flow, a battle, the skill
-  // panel, the inn. `G` is the map key only from the 3-D walk view, so pressing it here is not a
-  // recovery — it is a command into a screen that has its own work (live 2026-11-09 08:38:53: the
-  // fallback pressed G on a chest prompt, which changed nothing, until the stall clock ended the run).
+  // A screen that is the route's own is the route's to finish: the chest's flow, a battle, the harken
+  // menu, the revive QTE, the heal's dialog, a travel screen. `G` is the map key only from the 3-D
+  // walk view, so pressing it here is not a recovery — it is a command into a screen that has its own
+  // work (live 2026-11-09 08:38:53: the fallback pressed G on a chest prompt, which changed nothing,
+  // until the stall clock ended the run).
   if (ROUTE_OWNED_SCREENS.has(observation.screen)) return { kind: 'wait', ms: 1_000 };
   return { kind: 'open-map' };
 }
@@ -1649,9 +1663,9 @@ export class WvdWorld implements World {
               + ` (stable ${this.#stableCount})`,
             );
           }
-          // A suspension means the **game** owns the frame (a battle, a QTE, a death): the episode
-          // keeps its step and this tick carries on into that screen's own dispatch. Every other wait
-          // is the heal's to sit out.
+          // A suspension means the **game** owns the frame — a battle, a QTE, a death, or the chest
+          // flow the route finishes: the episode keeps its step and this tick carries on into that
+          // screen's own dispatch. Every other wait is the heal's to sit out.
           if (decision.why !== 'suspended') return;
           break;
         }
