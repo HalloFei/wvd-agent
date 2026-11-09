@@ -27,8 +27,26 @@ export const WORLD_MAP_SIZE = { width: 1_360, height: 1_496 } as const;
 /** Where the game draws the map: a portrait strip between the black pillars. */
 export const MAP_STRIP = { x: 480, y: 0, width: 960, height: 1_080 } as const;
 
-/** The measured zoom ladder: max-out, then three steps in, 1.34x each. */
+/** The legacy path's zoom ladder: max-out, then three steps in, 1.34x each (superseded: see ZOOM_LADDER). */
 export const MAP_ZOOM = { steps: 3, stepScale: 1.34 } as const;
+
+/**
+ * The zoom ladder, **measured** on the recorded frames (2026-11-09).
+ *
+ * The label banners are fixed-size screen art, so the distance between two labels divided by their
+ * atlas distance IS the zoom factor: 0.95-1.09 on `max-out.jpg` (1.0), 1.48-1.55 on
+ * `level-in-1.jpg` (~1.52), 1.86-2.04 on `center-in-2.jpg` (~1.96), and `max-in.jpg` (labels
+ * culled) peaks at 2.4 under the registration localiser. `MAP_ZOOM.stepScale`'s 1.34 disagrees with
+ * every one of them; it stays only so the legacy path's arithmetic is unchanged (its projections
+ * are wrong at every level >= 1 — card t-mw9aqpy0-tfzxh7).
+ */
+export const ZOOM_LADDER: readonly number[] = [1, 1.52, 1.96, 2.4];
+
+/** The zoom factor of a level, clamped to the measured ladder. */
+export function zoomFactor(level: number): number {
+  const index = Math.max(0, Math.min(ZOOM_LADDER.length - 1, Math.round(level)));
+  return ZOOM_LADDER[index]!;
+}
 
 /** The legacy node art is drawn at this fraction of its native size at max zoom-out. */
 export const NODE_ICON_SCALE_AT_MAX_OUT = 0.45;

@@ -395,6 +395,9 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
           abort,
           log: (line) => world?.note(line),
           atlas: true,
+          // The pose source for the atlas travel: the banners (default) or the registration localiser
+          // (perception/map-localiser.ts). WVD_LOCALISER=registration switches it.
+          localiser: process.env.WVD_LOCALISER === 'registration' ? 'registration' : 'anchor',
           focus: () => focusGame(connect()),
           // The senses path is **withheld until it can see the icons** (2026-11-09 01:26: two live runs,
           // cropped or uncropped art, found no target and no landmark at level 0, while the atlas

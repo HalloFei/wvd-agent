@@ -34,6 +34,8 @@ import { FFXI_GCN } from '../src/perception/sites/ffxi-gcn.ts';
 import { TRAVEL_IDS, LOCATIONS } from '../src/perception/locations.ts';
 import { readMapDetailed } from '../src/perception/map.ts';
 import { travelTo, travelViaAtlas, zoomWorldMap, type WorldMapEnv } from '../src/actions/worldmap.ts';
+import { localiseView, worldMapAtlas } from '../src/perception/map-localiser.ts';
+import { MAP_STRIP, siteById } from '../src/perception/worldmap-atlas.ts';
 import { createTaskRunner } from '../src/tasks/runner.ts';
 import { parseTask } from '../src/tasks/schema.ts';
 
@@ -172,6 +174,8 @@ try {
     sleep: wait,
     log,
     atlas: true,
+    // The pose source for the atlas travel; WVD_LOCALISER=registration uses map-localiser.ts.
+    localiser: process.env.WVD_LOCALISER === 'registration' ? 'registration' : 'anchor',
     // The CLI defaults to the new navigator for testing; WVD_NAV=legacy switches it back.
     navigation: process.env.WVD_NAV === 'legacy' ? 'legacy' : 'senses',
     focus: () => focusGame(client),
@@ -252,6 +256,25 @@ try {
       const result = await travelTo(id, mapEnv());
       out({ ...result, command: 'travel', to: id });
       if (!result.ok) process.exitCode = 1;
+      break;
+    }
+    case 'localize': {
+      // Read-only probe: where does the registration localiser think the view is, and where does that
+      // put a site on screen? Prints both, so a live frame can be judged without sending any input.
+      const frame = await source.capture();
+      const image = await frame.toRgba();
+      const pose = localiseView(image, worldMapAtlas(), {});
+      const site = args[0] === undefined ? null : siteById(args[0]);
+      out({
+        ok: pose !== null,
+        command: 'localize',
+        pose,
+        predicted: pose === null || site === null ? null : {
+          x: Math.round(MAP_STRIP.x + pose.factor * (site.x - pose.origin.x)),
+          y: Math.round(pose.factor * (site.y - pose.origin.y)),
+        },
+      });
+      if (pose === null) process.exitCode = 1;
       break;
     }
     case 'atlas': {

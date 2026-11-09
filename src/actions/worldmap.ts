@@ -38,6 +38,7 @@ import {
   siteById,
   type WorldMapSite,
 } from '../perception/worldmap-atlas.ts';
+import { localiseView, worldMapAtlas, type LocaliserAtlas } from '../perception/map-localiser.ts';
 
 export interface WorldMapEnv {
   readonly actuator: Actuator;
@@ -66,6 +67,17 @@ export interface WorldMapEnv {
    * Default `legacy`: a navigator earns the default by completing travels, not by being newer.
    */
   readonly navigation?: 'legacy' | 'senses';
+  /**
+   * Which pose source the atlas travel uses (operator, 2026-11-09: the LKMapTools shape as another
+   * module, switchable, the old one kept).
+   *
+   * - `anchor` (default) — the banners, then the north-west pan clamp: the path that has completed
+   *   every travel so far.
+   * - `registration` — map-localiser.ts: the live strip placed in the stored atlas image by
+   *   cross-correlation, with the zoom level **measured** instead of assumed. No zoom clamp, no
+   *   banner dependence and no scale bank; the atlas pan/confirm/tap that follow are the same code.
+   */
+  readonly localiser?: 'anchor' | 'registration';
   /** The older spelling of `navigation: 'senses'`, for a caller that predates the switch. */
   readonly pointer?: boolean;
   /** Bring the game window back to the foreground (the travel re-takes it on a refused press). */
@@ -414,6 +426,8 @@ const ATLAS_ICON_SCALES = [0.40, 0.42, 0.44, 0.46, 0.48, 0.50] as const;
 const ATLAS_ICON_FLOOR = 0.75;
 /** An icon used as an *anchor* must score higher than one merely confirmed near a prediction. */
 const ATLAS_ICON_ANCHOR_FLOOR = 0.82;
+/** The registration floor: the recorded frames score 0.45-0.81 against the stitched atlas. */
+const REGISTRATION_FLOOR = 0.45;
 const ATLAS_ICON_ANCHOR_SCALES = [0.42, 0.45, 0.48] as const;
 /** Where the legacy art's label band starts, as a fraction of its height (locations.ts's rule). */
 const LEGACY_LABEL_BAND_TOP = 0.687;
@@ -436,7 +450,7 @@ export type AtlasTarget =
     };
 
 /** How a view of unknown position is placed before the pan. */
-export type AtlasLocator = 'anchor' | 'clamp' | 'anchor-then-clamp';
+export type AtlasLocator = 'anchor' | 'clamp' | 'anchor-then-clamp' | 'registration';
 
 /** What has to match at the projected point before a tap is sent. */
 export type AtlasConfirm = 'icon' | 'label' | 'either' | 'none';
@@ -492,12 +506,17 @@ export interface AtlasTravelOptions {
   readonly policy?: Partial<AtlasPolicy>;
   /** Return the measurements. */
   readonly trace?: boolean;
+  /**
+   * The registration atlas, when the caller hands one in (a test at reduced resolution, or a host
+   * that preloads it). Default: the committed atlas, built once per session.
+   */
+  readonly localiserAtlas?: LocaliserAtlas;
 }
 
 export interface AtlasTrace {
   readonly target: Point;
   readonly located?: {
-    readonly by: 'anchor' | 'clamp';
+    readonly by: 'anchor' | 'clamp' | 'registration';
     readonly anchor?: string;
     readonly offset: Point;
     readonly anchors?: number;
@@ -548,6 +567,30 @@ function offsetThatAims(point: Point, level: number): Point {
   return {
     x: clampNumber(Math.round(point.x - before.x), 0, WORLD_MAP_SIZE.width - MAP_STRIP.width),
     y: clampNumber(Math.round(point.y - before.y), 0, WORLD_MAP_SIZE.height - MAP_STRIP.height),
+  };
+}
+
+/**
+ * The offset that aims the point at the tap area when the pan happens **at that zoom level**.
+ * `offsetThatAims` clamps to [0, W - strip] because the legacy path pans at max zoom-out; a
+ * registration pan happens at the zoom it measured, where the reachable offsets span
+ * `-C(1 - 1/f) .. W - strip/f - C(1 - 1/f)`.
+ */
+function offsetThatAimsLevel(point: Point, level: number): Point {
+  const factor = Math.pow(MAP_ZOOM.stepScale, level);
+  const centre = { x: MAP_STRIP.width / 2, y: MAP_STRIP.height / 2 };
+  const before = {
+    x: centre.x + (ATLAS_AIM.x - centre.x) / factor,
+    y: centre.y + (ATLAS_AIM.y - centre.y) / factor,
+  };
+  const low = { x: -centre.x * (1 - 1 / factor), y: -centre.y * (1 - 1 / factor) };
+  const high = {
+    x: WORLD_MAP_SIZE.width - MAP_STRIP.width / factor - centre.x * (1 - 1 / factor),
+    y: WORLD_MAP_SIZE.height - MAP_STRIP.height / factor - centre.y * (1 - 1 / factor),
+  };
+  return {
+    x: clampNumber(Math.round(point.x - before.x), Math.min(low.x, high.x), Math.max(low.x, high.x)),
+    y: clampNumber(Math.round(point.y - before.y), Math.min(low.y, high.y), Math.max(low.y, high.y)),
   };
 }
 
@@ -892,34 +935,85 @@ export async function travelViaAtlas(
 
   const opened = await openWorldMap(env);
   if (!opened.ok) return finish(opened);
-  const clamped = await zoomToMaxOut(env);
-  if (!clamped.ok) return finish(clamped);
+  const byRegistration = (options.locate ?? 'anchor-then-clamp') === 'registration';
+  const registrationAtlas = byRegistration ? (options.localiserAtlas ?? worldMapAtlas()) : null;
 
-  // 1. Where is the view? One frame of banners is enough; the clamp is the fallback.
-  const first = await lookAtMap(env, policy, timing);
-  if (!first.ok) return finish(first.failure);
-  const located = locateView(first.image, options.anchor);
+  /**
+   * The registration pose in the atlas's own frame: `offset` is the max-zoom-out offset the pan
+   * loop and placementAt/offsetThatAims speak, and `level` re-expresses the measured factor on the
+   * atlas's own scale (0.45 * 1.34^level = 0.45 * factor) so the icon scale bank stays right.
+   */
+  const register = (image: RgbaImage, prior?: { offset: Point; level: number }) => {
+    if (registrationAtlas === null) return null;
+    const pose = localiseView(image, registrationAtlas, {
+      ...(prior === undefined ? {} : { prior, windowPx: 320 }),
+      minScore: REGISTRATION_FLOOR,
+    });
+    if (pose === null) return null;
+    const shift = {
+      x: (MAP_STRIP.width / 2) * (1 - 1 / pose.factor),
+      y: (MAP_STRIP.height / 2) * (1 - 1 / pose.factor),
+    };
+    return {
+      pose,
+      offset: { x: Math.round(pose.origin.x - shift.x), y: Math.round(pose.origin.y - shift.y) },
+      level: Math.min(MAP_ZOOM.steps + 0.25, Math.max(0, Math.log(pose.factor) / Math.log(MAP_ZOOM.stepScale))),
+    };
+  };
+
+  // 1. Where is the view? Registration measures the pose outright — no zoom clamp, no banners — and
+  //    the level it reports replaces chooseLevel's plan. The legacy locator reads the banners, with
+  //    the north-west pan clamp as its fallback, after clamping the zoom to max-out.
   let offset: Point;
+  let level: number;
   let locatedByClamp = false;
-  if (located !== null) {
-    offset = located.offset;
-    trace.located = { by: 'anchor', anchor: located.anchor, offset: located.offset, anchors: located.anchors, spreadPx: located.spreadPx };
-    env.log?.('wvd: atlas located by ' + located.anchor + ' at ' + located.offset.x + ',' + located.offset.y
-      + ' (' + located.anchors + ' anchors, spread ' + located.spreadPx + ' px)');
-  } else if ((options.locate ?? 'anchor-then-clamp') === 'anchor') {
-    return finish({ ok: false, reason: 'location-not-found', detail: 'no atlas label was in view' });
+  if (byRegistration) {
+    const first = await lookAtMap(env, policy, timing);
+    if (!first.ok) return finish(first.failure);
+    let registered = register(first.image);
+    if (registered === null) {
+      return finish({ ok: false, reason: 'location-not-found', detail: 'the atlas did not register (floor ' + REGISTRATION_FLOOR + ')' });
+    }
+    // A tap at max zoom-out is ignored for a node whose label is culled; one verified zoom in puts
+    // the node at a level where it takes the click, and the pose is re-measured rather than assumed.
+    if (registered.pose.level === 0) {
+      const zoomed = await zoomInOneStep(env, timing, env.log);
+      if (!zoomed.ok) return finish(zoomed);
+      const raised = await lookAtMap(env, policy, timing);
+      if (!raised.ok) return finish(raised.failure);
+      const again = register(raised.image, { offset: registered.offset, level: 1 });
+      if (again !== null) registered = again;
+    }
+    offset = registered.offset;
+    level = registered.level;
+    trace.located = { by: 'registration', offset };
+    env.log?.('wvd: registration located the view at ' + registered.pose.origin.x + ',' + registered.pose.origin.y
+      + ' (level ' + registered.pose.level + ', factor ' + registered.pose.factor.toFixed(2)
+      + ', score ' + registered.pose.score.toFixed(3) + ')');
   } else {
-    const corner = await clampToNorthWest(env, policy, timing, env.log);
-    if (!corner.ok) return finish(corner);
-    offset = { x: 0, y: 0 };
-    locatedByClamp = true;
-    trace.located = { by: 'clamp', offset };
+    const clamped = await zoomToMaxOut(env);
+    if (!clamped.ok) return finish(clamped);
+    const first = await lookAtMap(env, policy, timing);
+    if (!first.ok) return finish(first.failure);
+    const located = locateView(first.image, options.anchor);
+    if (located !== null) {
+      offset = located.offset;
+      trace.located = { by: 'anchor', anchor: located.anchor, offset: located.offset, anchors: located.anchors, spreadPx: located.spreadPx };
+      env.log?.('wvd: atlas located by ' + located.anchor + ' at ' + located.offset.x + ',' + located.offset.y
+        + ' (' + located.anchors + ' anchors, spread ' + located.spreadPx + ' px)');
+    } else if ((options.locate ?? 'anchor-then-clamp') === 'anchor') {
+      return finish({ ok: false, reason: 'location-not-found', detail: 'no atlas label was in view' });
+    } else {
+      const corner = await clampToNorthWest(env, policy, timing, env.log);
+      if (!corner.ok) return finish(corner);
+      offset = { x: 0, y: 0 };
+      locatedByClamp = true;
+      trace.located = { by: 'clamp', offset };
+    }
+    // 2. Plan: the highest level the placement can still put inside the tap area.
+    level = chooseLevel(resolved.point, zoomLimitFor(options.zoom));
   }
-
-  // 2. Plan: the highest level the placement can still put inside the tap area.
-  const limit = zoomLimitFor(options.zoom);
-  const level = chooseLevel(resolved.point, limit);
-  const desired = offsetThatAims(resolved.point, level);
+  const desired = byRegistration ? offsetThatAimsLevel(resolved.point, level) : offsetThatAims(resolved.point, level);
   const predicted = placementAt(resolved.point, desired, level);
   trace.placed = { offset: desired, level, predicted };
 
@@ -968,7 +1062,12 @@ export async function travelViaAtlas(
     trace.corrections += 1;
     const again = await lookAtMap(env, policy, timing);
     if (!again.ok) return finish(again.failure);
-    const relocated = locateView(again.image, options.anchor);
+    const relocated = byRegistration
+      ? (() => {
+        const next = register(again.image, { offset, level: Math.round(level) });
+        return next === null ? null : { offset: next.offset };
+      })()
+      : locateView(again.image, options.anchor);
     if (relocated === null && locatedByClamp) {
       // Nothing legible in the new view and the only fix already applied: dead-reckon the drag, and
       // let the confirmation refuse the tap if the estimate was wrong.
@@ -1008,7 +1107,7 @@ export async function travelViaAtlas(
   // The node may already be visible at the zoom the map opened at: confirm first, and zoom only when it
   // is not. (Operator, 2026-11-07: *if the target location is already visible, then there needs to be no
   // zoom in or out, just locate the target and tap.*)
-  let levelNow = 0;
+  let levelNow = byRegistration ? level : 0;
   let view = await lookAtMap(env, policy, timing);
   if (!view.ok) return finish(view.failure);
   let confirmed = confirmAt(view.image, levelNow, predicted, spec);
@@ -1187,9 +1286,14 @@ export async function travelTo(id: string, env: WorldMapEnv): Promise<TravelResu
     }
   }
   if (atlasSite !== null) {
-    const viaAtlas = await travelViaAtlas({ kind: 'site', id }, env);
+    const viaAtlas = await travelViaAtlas(
+      { kind: 'site', id },
+      env,
+      env.localiser === 'registration' ? { locate: 'registration' } : {},
+    );
     if (viaAtlas.ok) return { ok: true };
-    env.log?.('wvd: the atlas could not place ' + entry.label + ' (' + viaAtlas.reason + '); falling back to the template search');
+    env.log?.('wvd: the atlas could not place ' + entry.label + ' (' + viaAtlas.reason
+      + (viaAtlas.detail === undefined ? '' : ': ' + viaAtlas.detail) + '); falling back to the template search');
   }
 
   const current = await captureAndObserve(env);
