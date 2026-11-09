@@ -1669,9 +1669,16 @@ alone accounts for the correlation lost. A same-zoom atlas is still the better i
 as a requirement.
 
 So the crop **supports** rather than replaces the stored atlas: it is the first level-1 tile (and the
-source that names nine sites the table still lacks), the video-reconstruction branch's mosaic is a
-level-2 cover, and `overview-full.jpg` stays the max-out atlas. What an atlas must be is *consistent*
-with the probe's render and at least as sharp; per-zoom atlases are the cheap way to guarantee both.
+source that names nine sites the table still lacks), and `overview-full.jpg` stays the max-out atlas.
+What an atlas must be is *consistent* with the probe's render and at least as sharp; per-zoom atlases
+are the cheap way to guarantee both.
+
+The video reconstruction was attempted in parallel and **dropped** the same night (operator, 2026-11-10:
+"we drop the video branch, it is not successful"): the branch `atlas-build-from-video` (three commits,
+tip `56a12d8`) carried a 2807x2808 level-2 mosaic built from an 80 s recording, and its own spec recorded
+that "the terrain is complete, the registration is not yet exact". The lesson kept: a mosaic has to be
+warp-free and its level measured, which is the same requirement the stitch fails and the crops meet
+locally.
 
 **A second crop, at level 2 (2026-11-10, not yet committed).** The operator sent an 860x1014 crop of the
 same region one zoom in: its two shared banners measure **factor 2.006** (the ladder's 1.96, 2.3% off)
