@@ -3263,7 +3263,9 @@ describe('the orientation', () => {
 
     // The stall window is a quarter of the shipped stop (30 s), and this is the tick the owner would
     // have spent: the promotion runs **before** the pump, so the question is asked here instead of
-    // being swallowed — with the reversed ordering the run drifted to the orientation's 180 s bound.
+    // being swallowed. With the reversed ordering it was never asked: the owner spent the stalled tick
+    // and the session stopped on the shipped stall clock — the 180 s bound only became reachable when
+    // a test raised the stop.
     clock.advance((WVD_DEFAULTS.stallStopSeconds * 1000) / 4);
     await world.tick();
     expect(asked()).toBe(1);

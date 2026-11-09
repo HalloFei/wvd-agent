@@ -303,8 +303,9 @@ const LATTICE_SUPPORT_MIN = 6;
  *   once, calibrated at 2 px on the least-squares minimum. A lit band, a glow or the 3-D scene behind
  *   the panel are lit runs no 36-px grid explains: on those frames even the best grid sits at 2.9-7.9 px
  *   (measured 2026-11-09, whole `testdata/` corpus), and the frame costs confidence. The corpus's
- *   tightest margin is the two popup frames at **2.03** and **2.09 px**: they clear this constant by
- *   0.03 and 0.09 px, which is the edge the measurement recorded rather than a reason to re-tune it.
+ *   tightest margin is the two popup frames at **2.03** and **2.09 px**: they sit 0.03 and 0.09 px
+ *   **over** this 2 px threshold, so the penalty applies — the edge the measurement recorded rather
+ *   than a reason to re-tune it.
  * - *The fit* asks **"which grid is the map's"** — support first, then inlier refinement — and its
  *   quality is `LatticeFit.rms`, the residual over its inliers. That number is ≤ 2 px by definition
  *   (an inlier is within `LATTICE_SUPPORT_TOLERANCE` of its grid), so it can never be the penalty's

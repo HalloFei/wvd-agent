@@ -450,9 +450,10 @@ const CHEST_PROBE_WALK_MS = 20_000;
  * ships. The live failure is exactly that misreading — run 7 sat on the harken page until the stall
  * clock and the log's last word was a stop, which hid a missing caller behind a "stop condition".
  * 110 s is the shipped two-minute stop minus a ten-second margin — and it is a **hang's bound, not a
- * budget**: live run 10 measured a *working* exit at **~112 s** (the world-map panning to vnh
- * dominates it: four pans of ~7 s plus taps), so this bound fired on an exit that was doing its job
- * and was harmless only because the arrival landed the same second. The number and the mechanism (a
+ * budget**: live run 10's exit took **146 s** from its claim to the town (the world-map panning to
+ * vnh dominates it: four pans of ~7 s plus taps). The bound is checked only on a tick that reaches the
+ * pump point, and the travel is one blocking call, so it fired at 146 s - as the travel returned - not
+ * at the constant; harmless there by timing, not by design. The number and the mechanism (a
  * measured bound, or a silence-based one) are card `t-mw8k2hjp-3bh4ld`; until that is answered the
  * constant keeps its value.
  *
@@ -480,8 +481,9 @@ export const LEAVE_DEADLINE_MS = 110_000;
  * commanding, and this bound is what catches an episode that keeps commanding and never arrives. It
  * is above the shipped 120 s stall clock by design: the two clocks cover different failures, and this
  * one must never cut a real climb short. **Measured**, live run 10: a *working* re-entry from town
- * back to the farm floor took **~179 s** (world-map panning again), and this 180 s bound released it
- * one second later — harmless only because the arrival beat the release. The value, like the exit's,
+ * back to the farm floor took **183 s** (cycle 2) and **190 s** (cycle 1) - world-map panning again.
+ * Cycle 1 was released at 180 s *before* it arrived (09:02:21 against the arrival 09:03:19); what saved
+ * it was the map re-claim at 09:02:58, not a race won by the arrival. The value, like the exit's,
  * is card `t-mw8k2hjp-3bh4ld`; a release hands the loop back, and on `worldmap`/`dungeon-select`/
  * `loading` nothing re-claims it (see `LEAVE_DEADLINE_MS`).
  */
@@ -1926,7 +1928,9 @@ export class WvdWorld implements World {
     // stuck stage would never ask its question: it would ride out its own longer bound and stop on
     // the session clock instead, which is exactly the masking the arbiter exists to remove. The base
     // build pumped the orientation *after* this line for the same reason. So a stalled tick escalates
-    // first (the question, then its fallback) and the pump runs on every other tick.
+    // first (the question, then its fallback) and the pump runs on every other tick. A **scripted**
+    // stage is not rescued by this: every returning step marks progress (a pure wait too, see
+    // `#pumpScript`), so its stalls stay bounded by its step timeout and SCRIPT_DEADLINE_MS.
     if (verdict === 'ok' && stalledMs >= this.#stallEscalateMs()) verdict = 'escalate';
 
     // **The one pump point** (arbiter, 2026-11-09). A stage in progress is the loop's own work, and

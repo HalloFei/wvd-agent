@@ -414,6 +414,7 @@ accepted it in one tick (08:53:33 `chest-opening`) — the exact line that was b
 `tsc` clean; targeted 198/198; full suite 1006 passed / 1018 (12 skipped), 0 failed. The re-review
 verified the set's arithmetic itself and kept two nits — the removed duplicate test was the only
 assertion of `meta.escalation.fallback === 'open-map'` (behaviour still exercised), and
-`world.ts`'s loading-fade wording — both closed in the final comment pass with Task 4's Minors. The
-hand-maintained screen set is **pinned on the board**: a future `ScreenId` that `recoverStep` answers
+`world.ts`'s loading-fade wording — the first closed in the final comment pass with Task 4's Minors;
+the second needs a test, not a comment, and stays open. The hand-maintained screen set is **pinned on
+the board**: a future `ScreenId` that `recoverStep` answers
 `done` for would silently inherit the blind `G`.

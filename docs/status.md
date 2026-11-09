@@ -1584,7 +1584,8 @@ Three live runs then paid for the rest of the truth:
   owns it`, twice.
 
 **Owed and pinned (not hidden):** both stage deadlines fire on *working* stages, because the world-map
-panning makes an exit ~112 s and a re-entry ~179 s — card `t-mw8k2hjp-3bh4ld`; the fallback's route-owned
+panning makes an exit 146 s and a re-entry 183-190 s, and the blocking travel defers the check to the
+travel's return — card `t-mw8k2hjp-3bh4ld`; the fallback's route-owned
 set is a hand-maintained literal — card `t-mw8kpw5q-ianmlc`; a town-side frame read as `chest-opening`
 during the inn — card `t-mw8k2hk7-v3ypnh`; the site descriptor's labels now follow the visible titles
 (`fba4ff4`), and the step-by-step record is the SDD ledger under `.superpowers/sdd/2026-11-09-loop-ownership/`,
