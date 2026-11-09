@@ -1647,7 +1647,8 @@ Owed and pinned: the atlas stitch is now the weak link (0.59 at max-out, 0.45-0.
 lossless re-capture would raise every score — card `t-mw9aqpya-ogv9kf`; the registration path is
 selectable but not the default until a 3-5 cycle harness run proves it; and the legacy path still
 plans on the 1.34 ladder — card `t-mw9aqpy0-tfzxh7`.
-## The centre atlas crop, and why an atlas is per zoom (2026-11-10)
+
+## The centre atlas crop, and why an atlas must be consistent (2026-11-10)
 
 The operator recorded a 1000x1080 live crop of the world map's centre:
 `testdata/worldmap/2026-11-10-atlas-center/center.png` (sha256 f1a6db62...). It calibrates against
@@ -1656,15 +1657,26 @@ spacing measures the zoom: **factor 1.535** (the measured ladder's level 1), ori
 atlas pixels, the four labels agreeing within **10.3 px**. It covers 651x703 atlas px, 22% of the
 map.
 
-**It is a level-1 render, not a max-out one, and that decides its role.** Measured 2026-11-10: pasting
-it into `overview-full.jpg` (masked clear of the HUD and the vignette) lowers every recorded frame —
-max-out 0.813 to 0.575, level-in-2 0.787 to 0.720, max-in 0.764 to 0.681. The registration compares
-a whole strip against the stored image, so the probe and the atlas must be the *same render*; a
-sharper image at the wrong zoom loses more to the render difference than it gains in detail.
+**Why a rigid insert fails, and what that does not mean.** Measured 2026-11-10: pasting it into
+`overview-full.jpg` (masked clear of the HUD and the vignette) lowers every recorded frame — max-out
+0.813 to 0.575, level-in-2 0.787 to 0.720, max-in 0.764 to 0.681. The first reading of this — "the
+atlas is per zoom" — was wrong (operator, 2026-11-10): the zoom is *handled*, because the localiser
+resamples the probe by the hypothesis factor and a template or feature matcher is scale-invariant by
+construction. The measured cause is **consistency**: the 2026-11-01 stitch is locally warped — its own
+four labels disagree by **10.3 px** — so a rigid insert cannot align anywhere, and that misalignment
+alone accounts for the correlation lost. A same-zoom atlas is still the better instrument, but as a
+**resolution** optimisation (a level-2 probe resampled by 1.96 to meet a max-out atlas is blurred), not
+as a requirement.
 
-So the atlas is **per zoom level**, and the crop supports rather than replaces the stored one: it is
-the first level-1 tile (and the source that names nine sites the table still lacks), the
-video-reconstruction branch's mosaic is the level-2 cover, and `overview-full.jpg` stays the max-out
-atlas. Calibration: `scripts/calibrate-atlas-center.ts` (ffmpeg decode, banner matching via
+So the crop **supports** rather than replaces the stored atlas: it is the first level-1 tile (and the
+source that names nine sites the table still lacks), the video-reconstruction branch's mosaic is a
+level-2 cover, and `overview-full.jpg` stays the max-out atlas. What an atlas must be is *consistent*
+with the probe's render and at least as sharp; per-zoom atlases are the cheap way to guarantee both.
+
+**A second crop, at level 2 (2026-11-10, not yet committed).** The operator sent an 860x1014 crop of the
+same region one zoom in: its two shared banners measure **factor 2.006** (the ladder's 1.96, 2.3% off)
+with a 1.4 px perpendicular residual over 594 px (no rotation), origin **(453,279)**, covering 430x507
+atlas px. One full strip view at that zoom is 490x551 atlas px, so the crop is slightly smaller than a
+view: a tile for a cropped probe, not a standalone atlas. Calibration: `scripts/calibrate-atlas-center.ts` (ffmpeg decode, banner matching via
 `findTemplate`); pin: `tests/atlas-center-calibration.test.ts` (the asset's sha256, the transform
 against all four banners, and the coverage that says it is not a replacement).
