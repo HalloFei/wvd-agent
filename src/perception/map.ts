@@ -290,7 +290,11 @@ const PHASE_STEP = 0.1;
  */
 const LATTICE_SUPPORT_TOLERANCE = 2;
 const LATTICE_SUPPORT_MIN = 6;
-/** Confidence 1.0 needs the fitted 36-px grid's residual ≤ 2 px (research §9). */
+/**
+ * Confidence 1.0 needs the fitted 36-px grid's residual ≤ 2 px (research §9) — and the residual it
+ * reads is the **inlier** residual of the refined grid (`fitLattice`): the same 2 px, measured on the
+ * map's own lines instead of on every lit run the 3-D view behind the panel adds.
+ */
 const LATTICE_CLEAN_RMS = 2;
 /** A chevron further than this from a cell centre has no trustworthy click origin (research §8). */
 const CHEVRON_CELL_TOLERANCE = 6;
@@ -711,9 +715,10 @@ function parseImage(image: RgbaImage, options?: { readonly readout?: Point; read
 
   // 5. G6: the wall lattice ----------------------------------------------------------------
   // Both axes must be *present* (a fit over ≥8 detected lines); the quality test is the X axis's
-  // support — the FFXI glow that defeats a residual crosses the Y profile, not the X one.
-  const latticeX = fitLattice(panel.columns, LATTICE_X);
-  const latticeY = fitLattice(panel.rows, LATTICE_Y);
+  // support — the FFXI glow that defeats a residual crosses the Y profile, not the X one, which is
+  // also why the X axis selects by support and the Y axis by residual (see `fitLattice`).
+  const latticeX = fitLattice(panel.columns, LATTICE_X, 'support');
+  const latticeY = fitLattice(panel.rows, LATTICE_Y, 'residual');
   if (!latticeX || !latticeY) return veto('no-lattice');
   pass('lattice', Math.round(Math.max(latticeX.rms, latticeY.rms) * 100));
   if (latticeX.support < LATTICE_SUPPORT_MIN) return veto('lattice-support', latticeX.support);
@@ -1220,6 +1225,7 @@ function scanPanel(data: Uint8Array, width: number): Panel {
 interface LatticeFit {
   readonly pitch: number;
   readonly phase: number;
+  /** Residual over the grid's **inliers** after the refinement — what `LATTICE_CLEAN_RMS` reads. */
   readonly rms: number;
   /** Lines the fitted grid explains, within `LATTICE_SUPPORT_TOLERANCE` px. */
   readonly support: number;
@@ -1243,20 +1249,59 @@ function lineCentres(profile: Float64Array, origin: number): number[] {
   return centres;
 }
 
+/** A grid's fit over the centres `lineCentres` found: residual, support, and where the fixed point is. */
+interface LatticeMeasure {
+  /** Residual over **all** detected centres — the tie-break, and the only number that sees outliers. */
+  readonly rms: number;
+  /** Residual over the grid's inliers (the centres within `LATTICE_SUPPORT_TOLERANCE` of it). */
+  readonly inlierRms: number;
+  readonly support: number;
+}
+
+/**
+ * Which rule picks a profile's grid. Only the X axis is gated (G6's support floor), and on a
+ * translucent floor only the X profile carries the map's own lines: the harken's glow and the lit wall
+ * cross the **rows**, which is what the G6 note above records ("that axis cannot decide").
+ */
+type LatticeSelection = 'support' | 'residual';
+
 /**
  * The 36.0-px grid this profile admits, and how many of its lines the grid explains.
  *
- * The grid itself is still the one with the tightest residual: the phase validates the chevron's
- * own cell (the glyph cells are placed from the chevron, not from this phase), and a count cannot
- * resolve a phase better than 2 px. `support` is counted on that grid, and it is what G6's quality
- * test reads — so the geometry every other gate depends on is unchanged, while a lit band that
- * drags the residual no longer decides whether the map is a map.
+ * **The selection is by support, rms as the tie-break** — the intent the G6 note above states and the
+ * least-squares selection contradicted. Measured on the lit-wall frame of 2026-11-09
+ * (`testdata/screens/2026-11-09-map-lit-wall/map-1920.png`): of the **16** X lines `lineCentres`
+ * finds, the lowest-rms grid (pitch 36.00, phase 4.2, rms 5.60 px) explains **5** and refused that map
+ * at `lattice-support` (floor 6), while the grid that explains **11** of them (35.90 / 9.7 /
+ * 6.25 px) was never selected. The corpus keeps its read: of the 128 images under `testdata/`, the
+ * only reads that move are this frame and one other 第三区 frame refused at this same gate
+ * (`nav-2026-11-03-stairdoor-pill/pill-below-cell.jpg`); every committed map keeps its key, cell and
+ * icons, and seven frames' confidence moves because the residual penalty below stopped reading the
+ * background.
+ *
+ * **The Y axis keeps the least-squares selection**, because there support counts the glow: measured on
+ * `third-floor-glow.jpg` (2026-10-24), the support grid (pitch 36.50, phase 25.5, 5 of its 10 rows)
+ * puts the frame's true chevron **6.60 px** from a cell centre — over `CHEVRON_CELL_TOLERANCE`, so it
+ * would refuse a map that reads today — while the least-squares grid (36.50 / 29.75, 2 rows) puts it
+ * 2.35 px. On the lit-wall frame the least-squares Y grid is also the better one for the chevron
+ * (0.14 px against the support grid's 5.76). The Y phase exists for the chevron's cell; the X phase
+ * is both gated and validated there.
+ *
+ * The selected grid is then refined by least squares **over its inliers only** (centres within
+ * `LATTICE_SUPPORT_TOLERANCE` of it), so the phase the chevron's cell is validated against is the
+ * map's own and not the background's. Support is recounted on the refined grid, and `rms` is the
+ * residual over those inliers: a lit band is an outlier to a residual, and it no longer decides the
+ * selection, the phase or (see `LATTICE_CLEAN_RMS`) the confidence.
  */
-function fitLattice(profile: Float64Array, origin: number): LatticeFit | null {
+function fitLattice(
+  profile: Float64Array,
+  origin: number,
+  selection: LatticeSelection,
+): LatticeFit | null {
   const centres = lineCentres(profile, origin);
   if (centres.length < LATTICE_MIN_LINES) return null;
 
-  let best: LatticeFit | null = null;
+  let best: { pitch: number; phase: number; rms: number; support: number } | null = null;
   const pitchSteps = Math.round((PITCH_MAX - PITCH_MIN) / PITCH_STEP);
   for (let step = 0; step <= pitchSteps; step += 1) {
     const pitch = PITCH_MIN + step * PITCH_STEP;
@@ -1271,10 +1316,73 @@ function fitLattice(profile: Float64Array, origin: number): LatticeFit | null {
         if (Math.abs(residual) <= LATTICE_SUPPORT_TOLERANCE) support += 1;
       }
       const rms = Math.sqrt(sumSq / centres.length);
-      if (!best || rms < best.rms) best = { pitch, phase, rms, support };
+      if (best === null) {
+        best = { pitch, phase, rms, support };
+      } else if (
+        selection === 'residual'
+          ? rms < best.rms
+          : support > best.support || (support === best.support && rms < best.rms)
+      ) {
+        best = { pitch, phase, rms, support };
+      }
     }
   }
-  return best;
+
+  if (!best) return null;
+  const phase = inlierPhase(centres, best.pitch, best.phase);
+  const refined = measureLattice(centres, best.pitch, phase);
+  return { pitch: best.pitch, phase, rms: refined.inlierRms, support: refined.support };
+}
+
+/** `centres` on the grid (pitch, phase): residuals over all of them, and over the inliers alone. */
+function measureLattice(centres: readonly number[], pitch: number, phase: number): LatticeMeasure {
+  let sumSq = 0;
+  let inlierSumSq = 0;
+  let support = 0;
+  for (const centre of centres) {
+    const residual = centre - (phase + Math.round((centre - phase) / pitch) * pitch);
+    sumSq += residual * residual;
+    if (Math.abs(residual) <= LATTICE_SUPPORT_TOLERANCE) {
+      inlierSumSq += residual * residual;
+      support += 1;
+    }
+  }
+  return {
+    rms: Math.sqrt(sumSq / centres.length),
+    // A grid that explains nothing keeps the whole profile's residual: there is no inlier to be
+    // precise about, and the gate above refuses the X axis on `support` before this number is read.
+    inlierRms: support > 0 ? Math.sqrt(inlierSumSq / support) : Math.sqrt(sumSq / centres.length),
+    support,
+  };
+}
+
+/**
+ * The least-squares phase of `pitch` over the grid's inliers: each inlier at `centre` is cell
+ * `k = round((centre − phase) / pitch)`, so the phase that minimises their squared residuals is
+ * `mean(centre − k·pitch)`. The assignments are re-fixed around each new phase (three passes; the
+ * inlier set of a 0.1-px phase step is already stable, so the second pass is a no-op on every
+ * committed frame). The pitch stays the searched one: the glyph cells and the chevron's cell are
+ * placed from the phase, and 0.05 px of pitch is 0.7 px over the widest panel — below the 2 px the
+ * count resolves, while the 3-D background can move a phase by much more than that.
+ */
+function inlierPhase(centres: readonly number[], pitch: number, phase: number): number {
+  let current = phase;
+  for (let pass = 0; pass < 3; pass += 1) {
+    let sum = 0;
+    let count = 0;
+    for (const centre of centres) {
+      const cell = Math.round((centre - current) / pitch);
+      const residual = centre - (current + cell * pitch);
+      if (Math.abs(residual) > LATTICE_SUPPORT_TOLERANCE) continue;
+      sum += centre - cell * pitch;
+      count += 1;
+    }
+    if (count === 0) return current;
+    const next = sum / count;
+    if (next === current) return current;
+    current = next;
+  }
+  return current;
 }
 
 // ---------------------------------------------------------------------------------------------

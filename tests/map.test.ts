@@ -3,6 +3,7 @@ import jpeg from 'jpeg-js';
 import { describe, expect, it } from 'vitest';
 import type { Frame, MapIcon, MapState, RgbaImage } from '../src/contracts.ts';
 import { MapPerceiver, panelInk, readMap, readMapDetailed, tileOnScreen } from '../src/perception/map.ts';
+import { decodePng } from '../src/perception/ledger.ts';
 import { floorKeyDistance } from '../src/tasks/steps.ts';
 
 /**
@@ -244,6 +245,85 @@ describe('the 第二区-城内1F canvas (2026-11-08)', () => {
   });
 });
 
+/**
+ * The lit-wall map of 2026-11-09 (live run 8). The party reached 第三区-城内2F- (the plan's farm
+ * floor), opened the map, and the reader refused it — `readMapDetailed` →
+ * `{ ok: false, gate: 'lattice-support' }`.
+ * The loop then sat on an unnamed frame until the stall clock ended the session: 0 cycles, exit 2.
+ *
+ * The frame is lossless (PNG, the World's own snapshot), 1920×1080, and the first in the corpus whose
+ * lattice is dragged by a lit **structured** wall behind the translucent panel (window ledges and gold
+ * veins). Measured on it: panel ink **35 033 px**, **16** detected X lines, and
+ *
+ * | selection | pitch | phase | rms | support |
+ * | --- | --- | --- | --- | --- |
+ * | lowest rms (the code before Task 4) | 36.00 | 4.2 | 5.60 | **5** |
+ * | most support | 35.90 | 9.7 | 6.25 | **11** |
+ *
+ * The gate needs 6, so the rms-optimal grid refused a map the other grid explains 11 of its 16 lines
+ * with. The committed maps are unaffected because there the two grids coincide (each is recorded in a
+ * comment beside the frame it reads). The same session's other saved frame — the 3-D view with no map
+ * open — is kept beside it so that refusal is pinned on a committed frame, not on a scratch path.
+ */
+describe('the lit-wall map of 2026-11-09 (live run 8)', () => {
+  const LIT_WALL = new URL('../testdata/screens/2026-11-09-map-lit-wall/', import.meta.url);
+
+  async function pngFrame(name: string): Promise<Frame> {
+    const image = decodePng(await readFile(new URL(name, LIT_WALL)));
+    return { atMs: 1_000, width: image.width, height: image.height, toRgba: async () => image };
+  }
+
+  it('reads the floor through the wall lit behind the translucent panel', async () => {
+    const frame = await pngFrame('map-1920.png');
+
+    expect(await readMapDetailed(frame)).toMatchObject({ ok: true });
+    const map = await readMap(frame);
+    expect(map).not.toBeNull();
+    // The readout the operator saw on screen: X: 7 Y: 24.
+    expect(map!.player).toEqual({ x: 7, y: 24 });
+
+    // **Finding, recorded, not hidden.** The brief expected the task file's key
+    // `000000007f3ffe007ffeff00220bb600`. This frame's title bar visibly reads 第三区-城内2F- (the
+    // frame is beside this test) and its ink profile is the `0c0280…` family that every
+    // 第三区-城内2F- capture in the corpus reads — 2026-10-24 third-floor.jpg, 2026-10-25
+    // third-floor-harken.jpg (the same X: 7 Y: 24 cell, 1 bit away) and 2026-11-03 ffxi-map. The
+    // brief's key is the one the 第四区-城内2F深处- frames read (2026-11-07-map-refused, the 2026-10-24
+    // map.jpg, 2026-10-31 fourth-floor-live). The two are 32 bits apart, so once this task's lattice
+    // gate passes, `isExpectedFloor` (tolerance 16) still refuses the frame — the run's own log lines
+    // "off the task floor; the orientation is re-armed". Task 4 owns the lattice; the floor bookkeeping
+    // is reported, not changed here.
+    expect(map!.titleKey).toBe('0c0280000deff0000d7ffc0008c37000');
+    expect(floorKeyDistance(map!.titleKey, '000000007f3ffe007ffeff00220bb600')).toBe(32);
+
+    const of = (kind: MapIcon['kind']): string[] =>
+      map!.icons.filter((icon) => icon.kind === kind).map((icon) => cell(icon.at)).sort();
+    // The floor's own markers, at the cells the 2026-10-25 capture of it reads from the same party
+    // cell: the harken and the holes are fixed features on this floor, the chests are the session's
+    // spawn (this one draws 9,11 and 23,9 where that session spawned 25,8). The glyphs are placed
+    // from the chevron, so reading them proves the refined phase kept the chevron on its cell.
+    expect(of('harken')).toEqual(['6,24']);
+    expect(of('hole')).toEqual(['1,17', '20,8']);
+    // The stairs the loop was walking to when the run stalled: "the walk to 13,26 was not aimed".
+    expect(of('stair-door')).toEqual(['13,26']);
+  });
+
+  it('still refuses the 3-D view the same run saved, at the readout', async () => {
+    const frame = await pngFrame('three-d-1920.png');
+
+    expect(await readMap(frame)).toBeNull();
+    expect(await readMapDetailed(frame)).toEqual({ ok: false, gate: 'readout-labels' });
+  });
+
+  it('still refuses the chest QTE frame, at the readout', async () => {
+    const url = new URL('../testdata/chest/2026-10-24-live-qte/open-00.jpg', import.meta.url);
+    const decoded = jpeg.decode(await readFile(url), { useTArray: true, formatAsRGBA: true });
+    const image: RgbaImage = { data: new Uint8Array(decoded.data), width: decoded.width, height: decoded.height };
+    const frame: Frame = { atMs: 1_000, width: image.width, height: image.height, toRgba: async () => image };
+
+    expect(await readMap(frame)).toBeNull();
+    expect(await readMapDetailed(frame)).toEqual({ ok: false, gate: 'readout-labels' });
+  });
+});
 /**
  * The readout of 2026-11-08 (task t-mw6m7445-0f5vgk): the live 第四区-城内2F frame whose `X: 13 Y: 2`
  * the farm refused for 5.5 min, at `readout-runs`, with the map drawn plainly. The band here is that
