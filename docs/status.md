@@ -1647,3 +1647,24 @@ Owed and pinned: the atlas stitch is now the weak link (0.59 at max-out, 0.45-0.
 lossless re-capture would raise every score — card `t-mw9aqpya-ogv9kf`; the registration path is
 selectable but not the default until a 3-5 cycle harness run proves it; and the legacy path still
 plans on the 1.34 ladder — card `t-mw9aqpy0-tfzxh7`.
+## The centre atlas crop, and why an atlas is per zoom (2026-11-10)
+
+The operator recorded a 1000x1080 live crop of the world map's centre:
+`testdata/worldmap/2026-11-10-atlas-center/center.png` (sha256 f1a6db62...). It calibrates against
+the stored atlas from its four shared banners alone — they are fixed-size screen art, so their
+spacing measures the zoom: **factor 1.535** (the measured ladder's level 1), origin **(338,295)** in
+atlas pixels, the four labels agreeing within **10.3 px**. It covers 651x703 atlas px, 22% of the
+map.
+
+**It is a level-1 render, not a max-out one, and that decides its role.** Measured 2026-11-10: pasting
+it into `overview-full.jpg` (masked clear of the HUD and the vignette) lowers every recorded frame —
+max-out 0.813 to 0.575, level-in-2 0.787 to 0.720, max-in 0.764 to 0.681. The registration compares
+a whole strip against the stored image, so the probe and the atlas must be the *same render*; a
+sharper image at the wrong zoom loses more to the render difference than it gains in detail.
+
+So the atlas is **per zoom level**, and the crop supports rather than replaces the stored one: it is
+the first level-1 tile (and the source that names nine sites the table still lacks), the
+video-reconstruction branch's mosaic is the level-2 cover, and `overview-full.jpg` stays the max-out
+atlas. Calibration: `scripts/calibrate-atlas-center.ts` (ffmpeg decode, banner matching via
+`findTemplate`); pin: `tests/atlas-center-calibration.test.ts` (the asset's sha256, the transform
+against all four banners, and the coverage that says it is not a replacement).
