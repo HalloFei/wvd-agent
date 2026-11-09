@@ -307,8 +307,10 @@ const ARRIVAL_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
  *
  * `recoverStep` answers `done` for every one of them, so a screen missing here falls through to the
  * map press: the list is the World's own dispatch read back, not a guess. Only `dungeon` (the 3-D
- * walk view, where `G` *is* the map key) and `loading` (a fade nobody may press into) still reach
- * it; `dungeonmap` exits by its own rule above, and `main-character-dead` waits before this set.
+ * walk view, where `G` *is* the map key) and `loading` still reach it — and `loading` **does** take
+ * the `G`: on a fade there is no screen to act on, so the press is a wake-up on a frame nobody has
+ * named, not a decision about it. `dungeonmap` exits by its own rule above, and
+ * `main-character-dead` waits before this set.
  */
 const ROUTE_OWNED_SCREENS: ReadonlySet<ScreenId> = new Set<ScreenId>([
   'chest-prompt', 'chest-open', 'chest-qte', 'chest-opening', 'drop-item-claim',
@@ -447,8 +449,20 @@ const CHEST_PROBE_WALK_MS = 20_000;
  * release, so a bound at or above the stop would be dead at the configuration the package actually
  * ships. The live failure is exactly that misreading — run 7 sat on the harken page until the stall
  * clock and the log's last word was a stop, which hid a missing caller behind a "stop condition".
- * 110 s is the shipped two-minute stop minus a ten-second margin: the measured leave (F, the walk,
- * the harken, Dungeon Select, the travel) is under 40 s, so this is a hang's bound, not a budget.
+ * 110 s is the shipped two-minute stop minus a ten-second margin — and it is a **hang's bound, not a
+ * budget**: live run 10 measured a *working* exit at **~112 s** (the world-map panning to vnh
+ * dominates it: four pans of ~7 s plus taps), so this bound fired on an exit that was doing its job
+ * and was harmless only because the arrival landed the same second. The number and the mechanism (a
+ * measured bound, or a silence-based one) are card `t-mw8k2hjp-3bh4ld`; until that is answered the
+ * constant keeps its value.
+ *
+ * **What a release can achieve.** It hands the loop back to the route, and the route (or a World
+ * branch) re-claims the work only from a screen it acts on: `dungeon` (open the map), `dungeonmap`
+ * and `town` (the exit starts again) and `harken-menu` (the World's own harken branch). On
+ * `worldmap`, `dungeon-select` and `loading` the route only waits, so nothing re-claims the episode
+ * and the stall clock still ends the session — the release is a second chance, not a guarantee, and
+ * `tests/world.test.ts` pins exactly that sequence (release, then the shipped stop).
+ *
  * An operator who lowers `stallStopSeconds` below this deadline gets the stop instead of the
  * release — that is the documented trade, not a second number to keep in sync.
  *
@@ -463,10 +477,13 @@ export const LEAVE_DEADLINE_MS = 110_000;
 /**
  * The orientation's backstop, ms. A climb from another floor is minutes' work, and the orientation
  * marks progress when it commands (see `#orientTo`) — so the stall clock only fires when it stops
- * commanding, and this bound is what catches an episode that keeps commanding and never arrives
- * (three minutes of turns that never reach the farm floor). It is above the shipped 120 s stall
- * clock by design: the two clocks cover different failures, and this one must never cut a real
- * climb short.
+ * commanding, and this bound is what catches an episode that keeps commanding and never arrives. It
+ * is above the shipped 120 s stall clock by design: the two clocks cover different failures, and this
+ * one must never cut a real climb short. **Measured**, live run 10: a *working* re-entry from town
+ * back to the farm floor took **~179 s** (world-map panning again), and this 180 s bound released it
+ * one second later — harmless only because the arrival beat the release. The value, like the exit's,
+ * is card `t-mw8k2hjp-3bh4ld`; a release hands the loop back, and on `worldmap`/`dungeon-select`/
+ * `loading` nothing re-claims it (see `LEAVE_DEADLINE_MS`).
  */
 const ORIENT_DEADLINE_MS = 180_000;
 /**
@@ -1902,12 +1919,23 @@ export class WvdWorld implements World {
     ) {
       return;
     }
+    // The stall promotion sits **above** the pump point, deliberately (restored 2026-11-09, the
+    // whole-branch review's Important 1). An owner that spends the tick without commanding — the
+    // orientation waiting on an `unknown`, a `loading` fade or a map-icon frame, the leave waiting
+    // out a walk — would otherwise take every stalled tick before the promotion could see it, and a
+    // stuck stage would never ask its question: it would ride out its own longer bound and stop on
+    // the session clock instead, which is exactly the masking the arbiter exists to remove. The base
+    // build pumped the orientation *after* this line for the same reason. So a stalled tick escalates
+    // first (the question, then its fallback) and the pump runs on every other tick.
+    if (verdict === 'ok' && stalledMs >= this.#stallEscalateMs()) verdict = 'escalate';
+
     // **The one pump point** (arbiter, 2026-11-09). A stage in progress is the loop's own work, and
     // the screens it walks through are why the route has no intent for it: the Dungeon Select list,
-    // the harken menu, the town it arrives in, a load fade. It is pumped before the stall clock can
-    // turn the tick into a question — a town frame at 0.94 is not a stall, it is the stage's next
-    // `expect` (live 2026-11-06: the exit's town arrival escalated six times and the fallback's map
-    // presses opened the inn dialog, which no recogniser names).
+    // the harken menu, the town it arrives in, a load fade. A town frame at 0.94 is not a stall, it
+    // is the stage's next `expect` (live 2026-11-06: the exit's town arrival escalated six times and
+    // the fallback's map presses opened the inn dialog, which no recogniser names) — and the stage's
+    // own command marks progress (see `#orientTo`, `#leaveCommand`), so the promotion above never
+    // sees a working stage as stalled.
     //
     // It is the tick that drives the owner, not the intent that started it: the route has no intent
     // for the harken page (it says `wait` there), so an owner pumped from `run-script` sits undriven
@@ -1920,7 +1948,6 @@ export class WvdWorld implements World {
     if (verdict === 'ok' && !waiting && owner !== null && !WORLD_SCREENS.has(observation.screen)) {
       if (await this.#pumpOwner({ session, frame, observation, now })) return;
     }
-    if (verdict === 'ok' && stalledMs >= this.#stallEscalateMs()) verdict = 'escalate';
 
     // Operator rule 2026-11-03: ask the game before asking the model. An unnamed frame is often the
     // 3-D view with something over it — the menu legend draws a panel whose ink reads as a map title,
@@ -3449,8 +3476,13 @@ export class WvdWorld implements World {
       );
       return true;
     }
-    // The stage's own screens and presses are progress the loop could not see while it ran.
-    this.#lastProgressAtMs = now;
+    // The stage's own screens and presses are progress the loop could not see while it ran — and the
+    // mark is the clock **after** the script ran, not the tick's start: a whole exit can spend 49 s
+    // inside this one call (measured 2026-11-05), and a mark at the tick's start left the loop looking
+    // stalled by the script's own duration on the very next tick. The mark is also set on **partial**
+    // progress, where the base marked only a finished script: harmless (the cursor is kept), and it
+    // keeps a many-step stage's ticks alive.
+    this.#lastProgressAtMs = this.#now();
     if (result.complete === false) return true;      // partial progress: the stage has more steps
     this.#stages.release('stage');
     this.#staging = null;
@@ -3772,6 +3804,10 @@ export class WvdWorld implements World {
     // branch that declines to send — the `open-map`/`exit` already marked failed — marks nothing,
     // so the stall clock is free to escalate it exactly as on the farm path, and the run stops at
     // the shipped stall stop instead of drifting on to this stage's own bound.
+    // **Except in dry-run**: the `open-map`/`exit` and `stairs` marks sit above `#press`, whose
+    // dry-run guard returns without sending, so a dry-run orientation refreshes the stall clock on
+    // those two branches anyway. Parked deliberately: `dryRun` never sets `#failed`, and no test
+    // covers a dry-run orientation (SDD ledger, Task 1 re-review).
     this.#healSchedule.cancel();
     switch (command.kind) {
       case 'open-map':

@@ -293,7 +293,7 @@ describe('the lit-wall map of 2026-11-09 (live run 8)', () => {
     // `LATTICE_CLEAN_RMS`), while the least-squares grid the search evaluates before selecting is
     // **5.60 px** over all 16 detected X lines (7.40 px on the Y axis). The lit wall is lit runs no grid
     // explains, so the frame costs confidence — 0.80 — even though the map itself is clean.
-    if (detailed.ok) expect(detailed.confidence).toBe(0.8);
+    expect(detailed).toMatchObject({ ok: true, confidence: 0.8 });
     const map = await readMap(frame);
     expect(map).not.toBeNull();
     // The readout the operator saw on screen: X: 7 Y: 24.
@@ -362,6 +362,14 @@ describe('the second map the support selection recovers (2026-11-03 stair-door p
     expect(map!.titleKey).toBe('0c0280000c6ff0000c6ffc0008437000');
     expect(map!.player).toEqual({ x: 7, y: 24 });
     expect(map!.icons).toHaveLength(5);
+    // The floor's **fixed** markers, at the cells the 2026-10-25 capture of it reads from the same
+    // party cell — the same three the lit-wall case pins. The count alone would pass a one-cell phase
+    // shift that kept five glyphs, which is the failure this frame's recovery could hide.
+    const of = (kind: MapIcon['kind']): string[] =>
+      map!.icons.filter((icon) => icon.kind === kind).map((icon) => cell(icon.at)).sort();
+    expect(of('harken')).toEqual(['6,24']);
+    expect(of('hole')).toEqual(['1,17', '20,8']);
+    expect(of('stair-door')).toEqual(['13,26']);
   });
 });
 

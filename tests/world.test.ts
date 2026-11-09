@@ -3240,18 +3240,17 @@ describe('the orientation', () => {
     expect(actuator.calls).toEqual(GG);
   });
 
-  it('marks progress only when it commands: a declined G stalls instead of reaching its own deadline', async () => {
+  it('asks the question when a stalled owner declines to command, then pumps it again', async () => {
     // The pump rule (arbiter, 2026-11-09): an owner marks progress only when it commands. G is
     // refused on a static off-floor view, so the guard above the send declines to press it again —
-    // and a mark on that branch refreshed the stall clock every tick, carrying the run past the
-    // shipped 120 s stop to the orientation's own 180 s backstop. The two are separated by the
-    // observable: where the session ends, and whether the owner was ever released.
-    const { task } = goalTask();
-    const { world, host, actuator, clock } = makeWorld({
+    // and the stall promotion sits **above** the pump point (final review, Important 1), so the
+    // stalled owner cannot take the tick the question belongs to. Both properties are asserted here:
+    // the question is asked at the stall window, and the pump resumes on a tick that is not
+    // escalating (a changed map readout is progress, so the orientation commands again).
+    const { task, calls } = goalTask();
+    const { world, host, perceiver, actuator, clock } = makeWorld({
       observation: dungeonView,
       task,
-      // Insurance only: the pump spends the stalled ticks, so no question is expected; if one were
-      // asked, it must not wait out a real 90 s answer.
       cfg: { escalateTimeoutMs: 25 },
     });
     await started(world, host);
@@ -3259,21 +3258,28 @@ describe('the orientation', () => {
     actuator.result = { ok: false, reason: 'timeout', detail: 'the map did not open' };
     await world.tick();                              // G: refused, so `open-map` is marked failed
     expect(actuator.calls).toEqual(GG);
-    // Every later frame is the same view: the orientation still owns the loop and has nothing it
-    // will send. The stall clock is the only thing left that can end this run.
-    for (let index = 0; index < 24 && world.isRunning(); index += 1) {
-      clock.advance(5_000);
-      await world.tick();
-    }
-    // 24 ticks of 5 s is the shipped stop, 60 s short of the orientation's own backstop: a run that
-    // survives this is the defect, not a slow climb.
-    expect(world.isRunning()).toBe(false);
-    const stopped = host.pushed.filter((pushed) => pushed.event.type === 'wvd.stopped');
-    expect(stopped).toHaveLength(1);
-    expect(stopped[0]!.event.text).toContain(`nothing changed for ${WVD_DEFAULTS.stallStopSeconds} s`);
-    // The deadline never released the owner, and the declined command was never re-sent.
+    const asked = (): number => host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck').length;
+    expect(asked()).toBe(0);
+
+    // The stall window is a quarter of the shipped stop (30 s), and this is the tick the owner would
+    // have spent: the promotion runs **before** the pump, so the question is asked here instead of
+    // being swallowed — with the reversed ordering the run drifted to the orientation's 180 s bound.
+    clock.advance((WVD_DEFAULTS.stallStopSeconds * 1000) / 4);
+    await world.tick();
+    expect(asked()).toBe(1);
+    // The escalation's own recovery is the only press after the declined G: the owner still declines
+    // to re-send the command that changed nothing, and it is not released.
+    expect(actuator.calls).toEqual([...GG, ...GG]);
     expect(host.logRecords.some((line) => line.message.includes('held the loop'))).toBe(false);
-    expect(actuator.calls).toEqual(GG);
+
+    // The pump resumes afterwards: the map readout moving is progress (the promotion stays quiet on
+    // this tick), so the orientation's own command — the climb from the known stair floor — goes out.
+    perceiver.observation = mapWith(CLIMB);
+    clock.advance(800);
+    await world.tick();                              // the map's first frame: the pacer's transition
+    clock.advance(800);
+    await world.tick();
+    expect(calls).toEqual(['climb']);
   });
 
   it('travels: to the site from town or the map, to the zone from Dungeon Select', async () => {
@@ -3716,6 +3722,12 @@ describe('the exit goal', () => {
     expect(loop.host.logRecords.some((line) => line.message.includes('the orientation is re-armed'))).toBe(false);
     expect(loop.host.logRecords.some((line) => line.message.includes('the orientation takes over again'))).toBe(false);
     expect(loop.calls).not.toContain('climb');
+    // The refusal is the positive evidence, not the silence: the arbiter names the holder, and this
+    // is the line `docs/status.md` quotes from live run 10 (`the orientation asked for the loop while
+    // exit owns it`, twice). Absence of a re-arm alone would also pass if the site never ran.
+    expect(
+      loop.host.logRecords.some((line) => line.message.includes('the orientation asked for the loop while exit owns it')),
+    ).toBe(true);
     // The leave's own F is the only command sent after the walk arrived.
     expect(loop.actuator.calls).toEqual([
       `key ${CHEST_SCAN} 60`,
@@ -3747,15 +3759,25 @@ describe('the exit goal', () => {
     const released = (): string[] => loop.host.logRecords
       .filter((line) => line.level === 'warn' && line.message.includes('held the loop'))
       .map((line) => line.message);
+    const asked = (): number => loop.host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck').length;
     for (let index = 0; index < 30 && released().length === 0; index += 1) {
       loop.clock.advance(5_000);
       await loop.world.tick();
-      // While an owner holds the loop it is pumped every tick, and this frame allows no command:
-      // an owner that is merely waiting is not the route's, and it is not a stall either.
-      if (released().length === 0) expect(loop.actuator.calls, `tick ${index}`).toHaveLength(1);
+      // The owner itself commands nothing here (a load fade allows no leave). Every press after the
+      // E check is the escalation's own fallback, which presses G on a fade exactly as it did before
+      // the arbiter: the stall promotion sits above the pump point (final review, Important 1), so a
+      // silent owner is asked about at the stall window instead of taking every stalled tick.
+      if (released().length === 0) {
+        expect(
+          loop.actuator.calls.slice(1).every((call) => call === `key ${SCAN.G} 60`),
+          `tick ${index}`,
+        ).toBe(true);
+      }
     }
-    // One warning for one release, worded with the constant's own bound, and the session is still
-    // running: released, not stopped.
+    // The cascade the tick takes when an owner is silent: the question first (at the stall window),
+    // then the arbiter's own bound. One warning for one release, worded with the constant's bound,
+    // and the session is still running: released, not stopped.
+    expect(asked()).toBeGreaterThan(0);
     expect(released()).toEqual([`wvd: the exit held the loop for ${LEAVE_DEADLINE_MS / 1000} s; releasing it`]);
     expect(loop.world.isRunning()).toBe(true);
 
@@ -3786,6 +3808,124 @@ describe('the exit goal', () => {
       expect(loop.actuator.calls, `tick ${index}`).toHaveLength(before + index);
       expect(loop.actuator.calls.at(-1)).toBe(BACK_ROW);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The other two stage bounds (final review, item 2: only the exit's release had a case)
+// ---------------------------------------------------------------------------------------------
+
+describe('the stage bounds', () => {
+  const FARM = '000000007f3ffe007ffeff00220bb600';
+
+  /** The release warnings a host recorded, in order. */
+  const releases = (host: FakeHost): string[] => host.logRecords
+    .filter((line) => line.level === 'warn' && line.message.includes('held the loop'))
+    .map((line) => line.message);
+
+  /** The questions the loop asked. */
+  const asked = (host: FakeHost): number =>
+    host.pushed.filter((pushed) => pushed.event.type === 'wvd.stuck').length;
+
+  /** A goal task: the orientation owns the loop from the first tick, and no entry script runs. */
+  function goalOnly(): { task: SessionTask } {
+    const task: SessionTask = {
+      enter: async () => ({ ok: true, steps: 0, ms: 0 }),
+      runScript: async () => ({ ok: true, steps: 1, ms: 1 }),
+      abort: () => {},
+      orient: { goal: { site: 'ffxi-gcn', zone: 'ffxi-zone3' }, floor: FARM },
+    };
+    return { task };
+  }
+
+  it('releases the orientation at its own backstop, above the shipped stall stop', async () => {
+    // `ORIENT_DEADLINE_MS` (180 s) is **above** the shipped 120 s stall stop by design: it is the
+    // backstop for an episode that keeps commanding and never arrives, not a bound that beats the
+    // stop. The test therefore widens the stop to a value whose stall question (a quarter of it,
+    // 300 s) is above the bound — otherwise the question, not the release, is what the tick reaches.
+    const { task } = goalOnly();
+    const { world, host, actuator, clock } = makeWorld({
+      observation: { screen: 'loading', atMs: 100, confidence: 0.9 },
+      task,
+      cfg: { stallStopSeconds: 1_200 },
+    });
+    await started(world, host);
+    // Owned and silent: a load fade is the orientation's `wait` and the pump sends nothing.
+    expect(actuator.calls).toEqual([]);
+
+    for (let index = 0; index < 40 && releases(host).length === 0; index += 1) {
+      clock.advance(5_000);
+      await world.tick();
+      if (releases(host).length === 0) expect(actuator.calls, `tick ${index}`).toEqual([]);
+    }
+    expect(releases(host)).toEqual(['wvd: the orientation held the loop for 180 s; releasing it']);
+    // Released, not stopped: the bound is the arbiter's, the session lives on, and nothing is sent
+    // before or after it — no question was needed to reach the bound.
+    expect(asked(host)).toBe(0);
+    expect(world.isRunning()).toBe(true);
+    clock.advance(5_000);
+    await world.tick();
+    expect(actuator.calls).toEqual([]);
+    expect(world.isRunning()).toBe(true);
+  });
+
+  it('releases a scripted stage at its own backstop, and the session lives on', async () => {
+    // A stage that keeps making progress — one step a tick, `complete: false` — is exactly what
+    // `SCRIPT_DEADLINE_MS` is the backstop for: every step marks progress, so the stall clock never
+    // fires and without the bound the stage could hold the loop for ever. Its cursor is the step;
+    // this bound sits behind the cursor.
+    const steps: string[] = [];
+    const task: SessionTask = {
+      enter: async () => ({ ok: true, steps: 0, ms: 0 }),
+      runScript: async (name) => {
+        steps.push(name);
+        return { ok: true, steps: 1, ms: 1, complete: false };
+      },
+      abort: () => {},
+      // The orientation descriptor makes the session a goal task: no entry script runs, so the
+      // first tick is the route's (an entry's hand-off would spend it waiting out the walk).
+      orient: { goal: { site: 'ffxi-gcn', zone: 'ffxi-zone3' }, floor: FARM },
+    };
+    const definition: TaskDefinition = {
+      id: 'ffxi-4f',
+      label: '[Chest] FFXI 4F',
+      floor: { titleKey: FARM },
+      exit: { timeoutMs: 1_000, steps: [{ op: 'tap' as const, at: [1, 2] as const }] },
+    };
+    const farm: Observation = {
+      screen: 'dungeonmap',
+      atMs: 100,
+      confidence: 0.9,
+      map: { floorTitle: 'B1F', titleKey: FARM, player: { x: 19, y: 21 }, origin: { x: 960, y: 540 }, icons: [] },
+    };
+    const { world, host, actuator, clock } = makeWorld({
+      observation: farm,
+      task,
+      policy: createTaskPolicy(() => definition, routePolicy),
+      cfg: { cycles: 2 },
+    });
+    await started(world, host);
+
+    await world.tick();                              // the route says exit: the stage takes the loop
+    expect(steps).toEqual(['exit']);
+    for (let index = 0; index < 70 && releases(host).length === 0; index += 1) {
+      clock.advance(5_000);
+      await world.tick();
+      // Every step is progress: the question is never asked while the stage keeps taking steps.
+      expect(asked(host), `tick ${index}`).toBe(0);
+    }
+    expect(releases(host)).toEqual(['wvd: the scripted stage held the loop for 300 s; releasing it']);
+    expect(world.isRunning()).toBe(true);
+    // The stage sends no command to the game itself, before or after the release.
+    expect(actuator.calls).toEqual([]);
+
+    // The bound is per episode, not a ban: the next tick's route re-claims the stage and the
+    // cursor-driven work continues.
+    const before = steps.length;
+    clock.advance(5_000);
+    await world.tick();
+    expect(steps.length).toBeGreaterThan(before);
+    expect(world.isRunning()).toBe(true);
   });
 });
 
