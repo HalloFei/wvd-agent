@@ -291,9 +291,21 @@ const PHASE_STEP = 0.1;
 const LATTICE_SUPPORT_TOLERANCE = 2;
 const LATTICE_SUPPORT_MIN = 6;
 /**
- * Confidence 1.0 needs the fitted 36-px grid's residual ≤ 2 px (research §9) — and the residual it
- * reads is the **inlier** residual of the refined grid (`fitLattice`): the same 2 px, measured on the
- * map's own lines instead of on every lit run the 3-D view behind the panel adds.
+ * Confidence 1.0 needs the grid the fit **chose** to explain **every detected line** with a ≤ 2 px
+ * residual (research §9). The input is therefore the **population** residual of the refined grid
+ * (`LatticeFit.populationRms`): the same 2 px, measured over all the centres `lineCentres` found —
+ * the map's own lines *and* the lit runs a wall, a glow or the 3-D view behind the translucent panel
+ * adds.
+ *
+ * The **inlier** residual (`LatticeFit.rms`) cannot be the input: an inlier is within
+ * `LATTICE_SUPPORT_TOLERANCE` (2 px) by definition, so `rms > 2` would be unreachable and the
+ * constant would lose the meaning it was measured with. Measured 2026-11-09 on
+ * `testdata/screens/2026-11-09-map-lit-wall/map-1920.png`: the refined X grid is **1.12 px** over its
+ * **10** inliers and **6.52 px** over all **16** detected lines, so the lit wall costs confidence
+ * (0.85 → 0.80) instead of earning it. A grid chosen for support is not the population-rms minimum —
+ * it never is — so on a clean map the population residual sits within a few tenths of this constant
+ * where the least-squares minimum sat well below it; that is the cost of the honest input, and it is
+ * why the constant is 2 px of *population* residual and not 2 px of inlier residual.
  */
 const LATTICE_CLEAN_RMS = 2;
 /** A chevron further than this from a cell centre has no trustworthy click origin (research §8). */
@@ -756,7 +768,11 @@ function parseImage(image: RgbaImage, options?: { readonly readout?: Point; read
   // `MetricResult`s yet — the next commit turns each into one, so a single number carries them all.
   let confidence = 1;
   if (Math.min(...readout.margins) < DIGIT_CONFIDENT_MARGIN) confidence = 0.85;
-  if (Math.max(latticeX.rms, latticeY.rms) > LATTICE_CLEAN_RMS) confidence = Math.min(confidence, 0.8);
+  // The penalty's input is the **population** residual, never the inlier one: the fit's own inliers are
+  // ≤ 2 px by definition, so an inlier residual could never trip this constant (see its comment).
+  if (Math.max(latticeX.populationRms, latticeY.populationRms) > LATTICE_CLEAN_RMS) {
+    confidence = Math.min(confidence, 0.8);
+  }
   if (Math.max(chevron.residualX, chevron.residualY) > 1) confidence = Math.min(confidence, 0.9);
   if (title.minNcc < 0.9) confidence = Math.min(confidence, 0.85);
   // An unnamed (non-Latin) title is a weaker gate than three matched glyphs, never a stronger one.
@@ -1225,8 +1241,18 @@ function scanPanel(data: Uint8Array, width: number): Panel {
 interface LatticeFit {
   readonly pitch: number;
   readonly phase: number;
-  /** Residual over the grid's **inliers** after the refinement — what `LATTICE_CLEAN_RMS` reads. */
+  /**
+   * Residual over the grid's **inliers** after the refinement — the fit's own quality. It is *not*
+   * what `LATTICE_CLEAN_RMS` reads: every inlier is within `LATTICE_SUPPORT_TOLERANCE` by
+   * definition, so this number can never exceed that tolerance.
+   */
   readonly rms: number;
+  /**
+   * Residual over **every detected centre** against the refined grid — see `populationRms` at the
+   * return of `fitLattice`. This is what `LATTICE_CLEAN_RMS` reads, because the constant's
+   * meaning is "the grid explains every line the frame draws".
+   */
+  readonly populationRms: number;
   /** Lines the fitted grid explains, within `LATTICE_SUPPORT_TOLERANCE` px. */
   readonly support: number;
 }
@@ -1251,7 +1277,10 @@ function lineCentres(profile: Float64Array, origin: number): number[] {
 
 /** A grid's fit over the centres `lineCentres` found: residual, support, and where the fixed point is. */
 interface LatticeMeasure {
-  /** Residual over **all** detected centres — the tie-break, and the only number that sees outliers. */
+  /**
+   * Residual over **all** detected centres — the selection's tie-break, the confidence penalty's input
+   * (`LATTICE_CLEAN_RMS`), and the only number that sees outliers.
+   */
   readonly rms: number;
   /** Residual over the grid's inliers (the centres within `LATTICE_SUPPORT_TOLERANCE` of it). */
   readonly inlierRms: number;
@@ -1290,8 +1319,10 @@ type LatticeSelection = 'support' | 'residual';
  * The selected grid is then refined by least squares **over its inliers only** (centres within
  * `LATTICE_SUPPORT_TOLERANCE` of it), so the phase the chevron's cell is validated against is the
  * map's own and not the background's. Support is recounted on the refined grid, and `rms` is the
- * residual over those inliers: a lit band is an outlier to a residual, and it no longer decides the
- * selection, the phase or (see `LATTICE_CLEAN_RMS`) the confidence.
+ * residual over those inliers — the fit's own quality. A lit band is an outlier to a residual, so it
+ * no longer decides the selection or the phase; it still costs confidence, through the *population*
+ * residual of the refined grid (`populationRms`, see `LATTICE_CLEAN_RMS`), because the constant's
+ * measured meaning is "the chosen grid explains every detected line", not "its inliers are tight".
  */
 function fitLattice(
   profile: Float64Array,
@@ -1331,7 +1362,13 @@ function fitLattice(
   if (!best) return null;
   const phase = inlierPhase(centres, best.pitch, best.phase);
   const refined = measureLattice(centres, best.pitch, phase);
-  return { pitch: best.pitch, phase, rms: refined.inlierRms, support: refined.support };
+  return {
+    pitch: best.pitch,
+    phase,
+    rms: refined.inlierRms,
+    populationRms: refined.rms,
+    support: refined.support,
+  };
 }
 
 /** `centres` on the grid (pitch, phase): residuals over all of them, and over the inliers alone. */

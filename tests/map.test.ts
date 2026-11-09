@@ -263,20 +263,36 @@ describe('the 第二区-城内1F canvas (2026-11-08)', () => {
  * The gate needs 6, so the rms-optimal grid refused a map the other grid explains 11 of its 16 lines
  * with. The committed maps are unaffected because there the two grids coincide (each is recorded in a
  * comment beside the frame it reads). The same session's other saved frame — the 3-D view with no map
- * open — is kept beside it so that refusal is pinned on a committed frame, not on a scratch path.
+ * open — is kept beside it so that refusal is pinned on a committed frame, not on a scratch path; it
+ * is a **JPEG** because its only role is "a 3-D view must not read as a map" and no lattice measurement
+ * depends on its pixels (310 KB against the lossless frame's 3.3 MB). The map frame stays PNG: its
+ * pixel measure is the whole point.
  */
 describe('the lit-wall map of 2026-11-09 (live run 8)', () => {
   const LIT_WALL = new URL('../testdata/screens/2026-11-09-map-lit-wall/', import.meta.url);
 
-  async function pngFrame(name: string): Promise<Frame> {
-    const image = decodePng(await readFile(new URL(name, LIT_WALL)));
+  /** The map frame is lossless PNG; its 3-D companion is a JPEG (no measurement depends on it). */
+  async function frameOf(name: string): Promise<Frame> {
+    const bytes = await readFile(new URL(name, LIT_WALL));
+    if (name.endsWith('.png')) {
+      const image = decodePng(bytes);
+      return { atMs: 1_000, width: image.width, height: image.height, toRgba: async () => image };
+    }
+    const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+    const image: RgbaImage = { data: new Uint8Array(decoded.data), width: decoded.width, height: decoded.height };
     return { atMs: 1_000, width: image.width, height: image.height, toRgba: async () => image };
   }
 
   it('reads the floor through the wall lit behind the translucent panel', async () => {
-    const frame = await pngFrame('map-1920.png');
+    const frame = await frameOf('map-1920.png');
 
-    expect(await readMapDetailed(frame)).toMatchObject({ ok: true });
+    const detailed = await readMapDetailed(frame);
+    expect(detailed).toMatchObject({ ok: true });
+    // **The residual penalty's input is the population residual, not the inlier one.** The refined grid
+    // is 1.12 px over its 10 inliers (a number ≤ the 2 px tolerance by construction, so it can never
+    // trip `LATTICE_CLEAN_RMS`) and **6.52 px** over all 16 detected X lines, so the lit wall behind the
+    // panel does cost confidence: 0.80, not the 0.85 an inlier residual would leave.
+    if (detailed.ok) expect(detailed.confidence).toBe(0.8);
     const map = await readMap(frame);
     expect(map).not.toBeNull();
     // The readout the operator saw on screen: X: 7 Y: 24.
@@ -308,7 +324,7 @@ describe('the lit-wall map of 2026-11-09 (live run 8)', () => {
   });
 
   it('still refuses the 3-D view the same run saved, at the readout', async () => {
-    const frame = await pngFrame('three-d-1920.png');
+    const frame = await frameOf('three-d-1920.jpg');
 
     expect(await readMap(frame)).toBeNull();
     expect(await readMapDetailed(frame)).toEqual({ ok: false, gate: 'readout-labels' });
@@ -324,6 +340,30 @@ describe('the lit-wall map of 2026-11-09 (live run 8)', () => {
     expect(await readMapDetailed(frame)).toEqual({ ok: false, gate: 'readout-labels' });
   });
 });
+
+/**
+ * The **second** frame the support selection recovers (2026-11-03, the stair-door pill). The
+ * rms-optimal selection refused it at `lattice-support` exactly as it refused the lit-wall frame
+ * above; it reads now, measured: title key `0c0280000c6ff0000c6ffc0008437000` (the 第三区-城内2F-
+ * family), party cell X: 7 Y: 24, **5** icons. It is pinned here beside the lit-wall case as the
+ * evidence that the lit wall was not a one-frame accident. Nothing else pinned this frame's map read
+ * (`tests/automove.test.ts` uses it as a scene), which is why the recovery went unrecorded in Task 4.
+ */
+describe('the second map the support selection recovers (2026-11-03 stair-door pill)', () => {
+  it('reads the 第三区 floor from a capture the rms-optimal grid refused', async () => {
+    const url = new URL('../testdata/nav-2026-11-03-stairdoor-pill/pill-below-cell.jpg', import.meta.url);
+    const decoded = jpeg.decode(await readFile(url), { useTArray: true, formatAsRGBA: true });
+    const image: RgbaImage = { data: new Uint8Array(decoded.data), width: decoded.width, height: decoded.height };
+    const frame: Frame = { atMs: 1_000, width: image.width, height: image.height, toRgba: async () => image };
+
+    const map = await readMap(frame);
+    expect(map).not.toBeNull();
+    expect(map!.titleKey).toBe('0c0280000c6ff0000c6ffc0008437000');
+    expect(map!.player).toEqual({ x: 7, y: 24 });
+    expect(map!.icons).toHaveLength(5);
+  });
+});
+
 /**
  * The readout of 2026-11-08 (task t-mw6m7445-0f5vgk): the live 第四区-城内2F frame whose `X: 13 Y: 2`
  * the farm refused for 5.5 min, at `readout-runs`, with the map drawn plainly. The band here is that
