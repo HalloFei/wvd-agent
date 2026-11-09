@@ -1,6 +1,8 @@
 # The loop's stages: one arbiter, one owner
 
-**Status:** executing, 2026-11-09.
+**Status:** complete, 2026-11-09. Task 1, Task 2, Task 4 and Task 5 landed and reviewed; the live
+three-cycle acceptance passed (run 10, 3 of 3 cycles, exit 0); the final whole-branch review's fix
+wave closed the parked Minors.
 **Board:** t-mw8dwvan-wm01ce (one arbiter), t-mw8dwvax-9zqrk4 (the exit's two owners),
 t-mw8dps1b-ak1nlq (the harken deadlock — this plan's reproduction).
 **Spec Task 1 writes:** `docs/specs/2026-11-09-stage-ownership-design.md`.
@@ -298,8 +300,10 @@ Task 1 and Task 2 land reviewed; the full suite is green; then the Lead runs the
 ## Task 4 — the map's lattice survives a lit wall
 
 **Card:** the live run's blocker (pinned at dispatch).
-**Evidence:** live run 8 (`.tmp/runs/2026-11-09-3-cycles-8`). The party travelled to the farm floor
-(第三区-城内2F-, the task's own floor), opened the map, and the map reader refused the frame:
+**Evidence:** live run 8 (`.tmp/runs/2026-11-09-3-cycles-8`). The party opened the map on the
+**entry** floor (第三区-城内2F-) — its title key is `0c0280…`, **32 bits** from the task's farm key
+`0000007f…`, so it is *not* the farm's 第四区 floor and the brief that said so was wrong — and the map
+reader refused the frame:
 `readMapDetailed` → `{ ok: false, gate: 'lattice-support' }`. The saved escalation frame is
 `.tmp/runs/2026-11-09-3-cycles-8/frames/001-wvd-stuck.png` (1920×1080, lossless). The loop then sat on
 an unnamed frame until the stall clock ended the session: **0 cycles, exit 2**.
@@ -348,9 +352,11 @@ unaffected because there the rms-best and support-best grids coincide.
 ### Acceptance — TDD
 
 - **RED first:** `readMap` on `testdata/screens/2026-11-09-map-lit-wall/map-1920.png` returns
-  `null` today (`readMapDetailed` → `lattice-support`). The test asserts it returns a map with
-  `titleKey === '000000007f3ffe007ffeff00220bb600'` (the task's farm floor), `player {x:7,y:24}`, and at
-  least one icon. Capture the RED output.
+  `null` today (`readMapDetailed` → `lattice-support`). The test asserts it returns a map with the key
+  the frame **actually reads** — `titleKey === '0c0280000deff0000d7ffc0008c37000'` (the 第三区-城内2F-
+  family; the measured key wins over this plan's premise, which named the farm's floor), `player
+  {x:7,y:24}`, at least one icon, and `floorKeyDistance` 32 from `000000007f3ffe007ffeff00220bb600`.
+  Capture the RED output.
 - The committed fixtures keep their recorded reads (key / player / icon count):
   `2026-11-03-ffxi-map` → `0c0280000d6ff0000d7ffc0008c37000` / 13,25 / 7;
   `2026-11-07-map-refused` → `000000007f3ffe007ffeff00220bb600` / 16,4 / 7;
@@ -367,3 +373,47 @@ unaffected because there the rms-best and support-best grids coincide.
 
 The before/after table, the RED and GREEN output, the confidence effect on the four maps, and any
 fixture whose read changed (a changed read is a finding, not a test update).
+
+---
+
+## Task 5 — the heal yields to the chest flow, and the fallback waits on a screen the route owns
+
+**Commits:** `913735d` (the lane) and `db16e1f` (its review fix round). **Rulings:** the heal freeze
+covers **behaviour**, not only the step files; the escalation's fallback **waits** on every screen the
+route acts on.
+
+### The evidence — live run 9 (0 cycles)
+
+Run 9 (`.tmp/runs/2026-11-09-3-cycles-9`) farmed three chests, fought two battles and healed once,
+then: at 08:36:50 the heal episode started on a settled farm view; at 08:37:31 a `chest-prompt`
+appeared beside the party; the episode's `suspended` fact knew only combat, the chest QTE, the revive
+QTE and death, so it kept waiting **and owned the tick** — the 打开 prompt was never accepted for 90 s
+and the episode ended at 08:38:21 with 'the heal failed (deadline)'. Then the second defect: the
+escalation's fallback (`fallbackFor`) was `open-map` for every screen the route can act on, so on the
+stuck chest-prompt it pressed `G` five times ('open-map changed nothing') until the stall clock stopped
+the session at 08:40:21.
+
+### What changed
+
+1. **The heal yields to the chest flow** (`913735d`): `#healFacts`'s `suspended` fact now also covers
+   `chest-prompt`, `chest-open`, `chest-opening` and `drop-item-claim`. This is a fact the World
+   builds, not a heal **step** — the frozen step machines are untouched, and the new world test opens a
+   chest while the episode owns the tick and sees it resume afterwards.
+2. **The fallback waits, never presses G, on a screen the route owns**: `ROUTE_OWNED_SCREENS` is the
+   World's own dispatch read back (`recoverStep` answers `done` for each of them). After the review's
+   two Important findings, `db16e1f` completed the set — `message`, `harken-menu`, `revive-qte`,
+   `quick-heal`, `worldmap`, `dungeon-select` joined the chest/battle/inn screens — so
+   `fallbackFor` reaches `open-map` only for `dungeon` and `loading`. The heal case is pinned after
+   the card, resuming at sparkle, with the episode's start-count as the load-bearing assertion (a
+   dropped step cannot pass it).
+
+### The outcome
+
+The live acceptance proved the yield in practice: run 10 opened **on** run 9's stopped chest-prompt and
+accepted it in one tick (08:53:33 `chest-opening`) — the exact line that was blocked for 90 s.
+`tsc` clean; targeted 198/198; full suite 1006 passed / 1018 (12 skipped), 0 failed. The re-review
+verified the set's arithmetic itself and kept two nits — the removed duplicate test was the only
+assertion of `meta.escalation.fallback === 'open-map'` (behaviour still exercised), and
+`world.ts`'s loading-fade wording — both closed in the final comment pass with Task 4's Minors. The
+hand-maintained screen set is **pinned on the board**: a future `ScreenId` that `recoverStep` answers
+`done` for would silently inherit the blind `G`.

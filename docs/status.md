@@ -1539,9 +1539,9 @@ agreeing map frames) and the site descriptor's swapped floor labels are pinned o
 ## How the work is tracked
 
 - `docs/status.md` (this file) — the committed record.
-- The SDD ledger, `wvd-agent/.worktrees/world-v1/.superpowers/sdd/2026-10-24-wvd-world-v1/progress.md`
-  — working state, rulings, deferred minors, and the pre-flight scan. Git-ignored: it is scratch, and
-  the rulings that matter are written into the specs instead.
+- The SDD ledger, `wvd-agent/.superpowers/sdd/2026-11-09-loop-ownership/progress.md` — working
+  state, rulings, deferred minors, and the pre-flight scan. Git-ignored: it is scratch, and the
+  rulings that matter are written into the specs instead.
 - The task board — the user-visible list of what is open.
 ## The loop's stages have an arbiter, and three live cycles completed (2026-11-09)
 

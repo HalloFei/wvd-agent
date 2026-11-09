@@ -63,7 +63,16 @@ export interface LeaveContext {
   readonly floor: string | null;
 }
 
-/** Which floor this key is, judged against the site's own list. */
+/**
+ * Which floor this key is, judged against the site's own list.
+ *
+ * **Reachability trap, not fixed:** this compares 32-hex floor keys, while the World feeds
+ * `context.floor` from `MapState.floorTitle` — the *Latin* token, which is `''` on the colliery
+ * floors. So once a map has been read the kind is `'unknown'`, the harken page's "the farm floor
+ * may never take 归还" branch is unreachable, and the leave taps the matched 归还 row (which is the
+ * way out: it returns to Dungeon Select, and the leave travels from there). Making `''` mean "farm"
+ * would make the exit back out of the page and loop for ever. Pinned on the board.
+ */
 function floorKind(key: string, context: LeaveContext): 'farm' | 'known' | 'unknown' {
   if (isExpectedFloor(context.farmFloor, key)) return 'farm';
   return context.knownFloors.some((floor) => isExpectedFloor(floor, key)) ? 'known' : 'unknown';

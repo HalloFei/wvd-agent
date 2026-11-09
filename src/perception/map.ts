@@ -302,15 +302,19 @@ const LATTICE_SUPPORT_MIN = 6;
  * - *The penalty* asks **"how legible is this frame at best"** — a property of the frame, measured
  *   once, calibrated at 2 px on the least-squares minimum. A lit band, a glow or the 3-D scene behind
  *   the panel are lit runs no 36-px grid explains: on those frames even the best grid sits at 2.9-7.9 px
- *   (measured 2026-11-09, whole `testdata/` corpus), and the frame costs confidence.
+ *   (measured 2026-11-09, whole `testdata/` corpus), and the frame costs confidence. The corpus's
+ *   tightest margin is the two popup frames at **2.03** and **2.09 px**: they clear this constant by
+ *   0.03 and 0.09 px, which is the edge the measurement recorded rather than a reason to re-tune it.
  * - *The fit* asks **"which grid is the map's"** — support first, then inlier refinement — and its
  *   quality is `LatticeFit.rms`, the residual over its inliers. That number is ≤ 2 px by definition
  *   (an inlier is within `LATTICE_SUPPORT_TOLERANCE` of its grid), so it can never be the penalty's
  *   input; and the *selected* grid's population residual cannot either: a grid chosen for support is
- *   never the least-squares minimum, so on a clean map it lands at 2.01-2.33 px — right on this
- *   constant — and would charge eight clean maps (0.85 → 0.80) for a selection the search was told to
- *   make. Feeding that number here is what `85c7eee` did, and this constant stopped meaning what it
- *   measured.
+ *   **not necessarily** the least-squares minimum (on `2026-11-03-ffxi-map` the two coincide; on most
+ *   FFXI canvases they do not), and its inlier refinement moves the phase again — so on a clean map
+ *   that residual lands at 2.01-2.33 px, right on this constant, and would charge eight clean maps
+ *   (0.85 → 0.80) for a selection the search was told to make. Feeding that number here is what
+ *   `85c7eee` did: it measured exactly the 2.01-2.33 px band, and this constant stopped meaning what
+ *   it measured.
  *
  * Measured on `testdata/screens/2026-11-09-map-lit-wall/map-1920.png`: the best grid is **5.60 px**
  * over its **16** detected X lines (**7.40 px** on Y) while the selected grid is **1.12 px** over its
@@ -1261,8 +1265,9 @@ interface LatticeFit {
    * The canvas's **best-case** residual: the minimum rms over **every candidate grid the search
    * evaluates** (each pitch × phase step), over **every detected centre** — the least-squares-optimal
    * grid. This is what `LATTICE_CLEAN_RMS` reads, and it is deliberately *not* the selected grid's
-   * residual: a grid selected for support (or refined on its inliers) is never the least-squares
-   * minimum, and the penalty asks "how legible is this frame at best", not "which grid is the map's".
+   * residual: a grid selected for support — and then refined on its inliers — is not necessarily the
+   * least-squares minimum, and the penalty asks "how legible is this frame at best", not "which grid
+   * is the map's".
    */
   readonly populationRms: number;
   /** Lines the fitted grid explains, within `LATTICE_SUPPORT_TOLERANCE` px. */
@@ -1309,11 +1314,15 @@ type LatticeSelection = 'support' | 'residual';
  * (`testdata/screens/2026-11-09-map-lit-wall/map-1920.png`): of the **16** X lines `lineCentres`
  * finds, the lowest-rms grid (pitch 36.00, phase 4.2, rms 5.60 px) explains **5** and refused that map
  * at `lattice-support` (floor 6), while the grid that explains **11** of them (35.90 / 9.7 /
- * 6.25 px) was never selected. The corpus keeps its read: of the 128 images under `testdata/`, the
- * only reads that move are this frame and one other 第三区 frame refused at this same gate
- * (`nav-2026-11-03-stairdoor-pill/pill-below-cell.jpg`); every committed map keeps its key, cell and
- * icons. Confidence is unaffected by this selection: the penalty reads the canvas's best-case grid,
- * which the search evaluates before it selects anything (see `LATTICE_CLEAN_RMS`).
+ * 6.25 px) was never selected. The corpus keeps its read: the round-2 sweep read **139 tracked
+ * frames** under `testdata/` (a reviewer counted 175 image files on the tree; a tracked frame is one
+ * the sweep reads), and the only reads that move are this frame and one other 第三区 frame refused at
+ * this same gate (`nav-2026-11-03-stairdoor-pill/pill-below-cell.jpg`); every committed map keeps its
+ * key, cell and icons. **The residual penalty is unaffected by this selection**: it reads the canvas's
+ * best-case grid, which the search evaluates before it selects anything (see `LATTICE_CLEAN_RMS`).
+ * The **chevron** penalty can move, because it validates against the refined X phase:
+ * `nav-1024-0213/map.png` went 1.00 → 0.90 when that phase left its chevron 3.41 px from a cell
+ * centre.
  *
  * **The Y axis keeps the least-squares selection**, because there support counts the glow: measured on
  * `third-floor-glow.jpg` (2026-10-24), the support grid (pitch 36.50, phase 25.5, 5 of its 10 rows)
@@ -1332,10 +1341,10 @@ type LatticeSelection = 'support' | 'residual';
  * minimum rms over **every candidate it evaluated** (`populationRms`), which is the canvas's
  * best-case grid — the least-squares optimum, the number `LATTICE_CLEAN_RMS` was calibrated on. The
  * penalty asks "how legible is this frame at best" (a property of the frame: a lit band, a glow or the
- * 3-D view behind the panel are lit runs no 36-px grid explains, so the best grid still sits at 4-8 px
- * there); the fit asks "which grid is the map's". Reading the selected grid's residual in the penalty
- * charged a clean map for a selection the search was told to make — a support-selected grid is never
- * the least-squares minimum — so the two inputs are kept apart deliberately.
+ * 3-D view behind the panel are lit runs no 36-px grid explains, so the best grid still sits at
+ * 2.9-7.9 px there); the fit asks "which grid is the map's". Reading the selected grid's residual in
+ * the penalty charged a clean map for a selection the search was told to make — a support-selected
+ * grid is not necessarily the least-squares minimum — so the two inputs are kept apart deliberately.
  */
 function fitLattice(
   profile: Float64Array,
@@ -1348,8 +1357,8 @@ function fitLattice(
   let best: { pitch: number; phase: number; rms: number; support: number } | null = null;
   // The canvas's **best-case** residual: the least-squares minimum over every candidate this search
   // evaluates. It is the penalty's input (`LATTICE_CLEAN_RMS`) and it is *not* the selected grid's
-  // residual — a grid chosen for support never is the minimum — because the penalty asks about the
-  // frame, not about which grid the map turned out to have.
+  // residual — a grid chosen for support is not necessarily the minimum — because the penalty asks
+  // about the frame, not about which grid the map turned out to have.
   let minRms = Number.POSITIVE_INFINITY;
   const pitchSteps = Math.round((PITCH_MAX - PITCH_MIN) / PITCH_STEP);
   for (let step = 0; step <= pitchSteps; step += 1) {

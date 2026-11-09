@@ -11,9 +11,11 @@ of them, and each missing one is a *class* of defect, not a single bug:
 1. **Liveness** — an owner is driven **every tick** it owns. A flag that says "I own this" is a
    promise that someone calls it; nothing in the code kept that promise.
 2. **Exclusivity** — **one** owner at a time. The orientation and the leave both drove the exit path.
-3. **Bounds** — an owner is released by **its own clock**, before the shipped `stallStopSeconds`
-   stall clock (120 s; run 7's harness ran 150 s, which is history, not the default). The stall
-   clock ends the session and would mask a design hole as a "stop condition".
+3. **Bounds** — an owner is released by **its own clock**. Only the exit's sits below the shipped
+   `stallStopSeconds` stall clock (120 s; run 7's harness ran 150 s, which is history, not the
+   default): the orientation's (180 s) and a scripted stage's (300 s) are backstops **above** it,
+   because their work is minutes long. The stall clock ends the session and would mask a design hole
+   as a "stop condition".
 
 ## 2. The live reproduction
 
@@ -66,7 +68,10 @@ loop's own screen branches, before the route. Order: `exit` → `#pumpLeave`, `s
 `#pumpScript`, `orient` → `#pumpOrient`.
 
 - It runs only when `verdict === 'ok' && !waiting`: an in-flight command owns the interface, and a
-  stop/escalation is the classifier's.
+  stop/escalation is the classifier's — including the **stall promotion**, which is computed *above*
+  the pump point (a quarter of the stall stop, 30 s at the defaults). A stalled owner must not
+  suppress the question by spending the tick it stalled on: that ordering is the base build's, and
+  the final review restored it.
 - It skips `WORLD_SCREENS` (a battle, a chest, the loot card, a page, the inn, a message): those are
   the loop's own, and the route finishes them — an owner must never starve the battle panel the way
   the orientation once did (2026-11-07 22:13).
@@ -91,8 +96,8 @@ loop's own screen branches, before the route. Order: `exit` → `#pumpLeave`, `s
 
 | Owner | Bound | Why |
 |---|---|---|
-| `exit` | `LEAVE_DEADLINE_MS = 110_000` | **Below the shipped `stallStopSeconds` (120 s) with a 10 s margin**, on purpose: the release runs *after* the stall check in the tick, so a bound at or above the stop never fires at the default. A stuck exit is released, not turned into a session stop. The measured leave is under 40 s, so this is a hang's bound, not a budget. |
-| `orient` | `ORIENT_DEADLINE_MS = 180_000` | A climb from another floor is minutes' work. The orientation marks progress when it commands, so the stall clock only fires when it stops commanding; this bound is the backstop for an episode that keeps commanding and never arrives. |
+| `exit` | `LEAVE_DEADLINE_MS = 110_000` | **Below the shipped `stallStopSeconds` (120 s) with a 10 s margin**, on purpose: the release runs *after* the stall check in the tick, so a bound at or above the stop never fires at the default. A stuck exit is released, not turned into a session stop. It is a hang's bound, not a budget: run 10 measured a **working** exit at **~112 s** (the world-map panning dominates it), so this bound fired on a working exit. The value and the mechanism are card `t-mw8k2hjp-3bh4ld`. |
+| `orient` | `ORIENT_DEADLINE_MS = 180_000` | A climb from another floor is minutes' work. The orientation marks progress when it commands, so the stall clock only fires when it stops commanding; this bound is the backstop for an episode that keeps commanding and never arrives. Run 10 measured a **working** re-entry at **~179 s** (world-map panning again), released one second later — also card `t-mw8k2hjp-3bh4ld`. |
 | `stage` | `SCRIPT_DEADLINE_MS = 300_000` | A scripted stage walks the whole exit (harken, Dungeon Select, world map), one step a tick; its cursor is the step and this is the bound behind the cursor. The measured exit script took 48.7 s (2026-11-05) and a stage yields to battles and chests. |
 
 The deadline is measured against the **shipped** `stallStopSeconds` (120 s), not against a live run
@@ -102,6 +107,12 @@ with a 10 s margin. An operator who lowers `stallStopSeconds` below the deadline
 instead of the release: that is the documented trade. `tests/world.test.ts` pins the relationship
 (`LEAVE_DEADLINE_MS < WVD_DEFAULTS.stallStopSeconds * 1000`, a property rather than a second magic
 number) and the release itself at the shipped default.
+
+**What a release can achieve.** It hands the loop back to the route, and the route (or a World
+branch) re-claims the work only from a screen it acts on — `dungeon`, `dungeonmap`, `town`, and the
+harken page the World's own branch owns. On `worldmap`, `dungeon-select` and `loading` nothing
+re-claims it, so the stall clock still ends the session; `tests/world.test.ts` pins that sequence
+(the release, then the shipped stop). A release is a second chance, not a guarantee.
 
 The bound is applied on the tick that **reaches the pump point**. `#releaseOverdueStage` sits below
 the loop's own early returns — the settle window, a stop, death, the revive QTE, a ui-menu, the rest
@@ -134,6 +145,8 @@ re-use after release). `tests/world.test.ts` (`the exit goal`) pins the four loo
 the harken deadlock taps the matched 归还 within five ticks and never stops; an off-floor map while
 the exit owns logs no orientation re-arm and sends no orientation command; the deadline releases the
 exit with one warning before the shipped stall clock; and the owner is pumped once per tick (one
-matched tap per tick on a page that stays). `the orientation` adds the mark's placement: a command
+matched tap per tick on a page that stays). `the stage bounds` pins the other two releases — the
+orientation's and a scripted stage's: owned, no command, one warning, and the session still running
+afterwards. `the orientation` adds the mark's placement: a command
 the owner declines to send marks no progress, so the run ends on the stall clock at the shipped stop
 and not on the owner's own 180 s bound.
