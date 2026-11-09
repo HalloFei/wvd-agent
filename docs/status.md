@@ -1612,4 +1612,38 @@ five-cycle night run needs it fixed, because five cycles need five travels and t
 leg that fails when the atlas misses.
 
 The travel's blocking shape and the atlas miss are card `t-mw8na6h4-425t94`; the first travel and the
-first re-entry both worked, so the atlas miss is state-dependent, not a constant.
+first re-entry both worked, so the atlas miss is state-dependent, not a constant.## The world map, localised by registration (2026-11-09)
+
+The atlas travel had three blind steps: a banner search that needs a banner in view (else eight
+verifications-free clamp drags), a zoom clamp that reads a swallowed press as 'already at max-out',
+and a zoom ladder of 1.34 per step that the game does not use. `map-localiser.ts` measures the pose
+instead: the live strip is placed in the stored atlas image by normalised cross-correlation on a
+pyramid (16 down to 2 atlas px per cell), the zoom level is a hypothesis scored from the same fit, and
+the winning factor is refined by +-4%. The model is `screen = factor * (atlas - origin)`; no centre
+term, no banner required. Design: `docs/specs/2026-11-09-registration-localiser-design.md`.
+
+The ladder is a **measurement**, and the measurement is visible in the frames: the label banners are
+fixed-size screen art, so two banners' screen distance over their atlas distance is the zoom factor —
+1.0 on `max-out.jpg`, 1.48-1.55 on `level-in-1.jpg`, 1.86-2.04 on `center-in-2.jpg`, 2.4 on `max-in`.
+`ZOOM_LADDER = [1, 1.52, 1.96, 2.4]` records that; `MAP_ZOOM.stepScale`'s 1.34 stays only so the
+legacy path's arithmetic is unchanged. The old confirmation always matched the node icon at 0.69 —
+0.45 x 1.5 — which is that ladder, read from the wrong place.
+
+Proven: a frame rendered from the atlas recovers its origin exactly at all four levels (0.988-1.000);
+the recorded frames read at level 0 / 2 / 3 (0.81 / 0.76 / 0.74); and the live game, twice —
+`ffxi-gcn` located 230,0 at 0.591, re-read level 1 / factor 1.49 (0.452), tapped at 957,278 (icon
+0.987 @ 0.67); `vnh` located 230,0, panned 71,0 (gain 1.52), the zoomed frame did not register so the
+pose carried forward, tapped 1052,341 (icon 0.981 @ 0.68). Both taps matched the icon at 0.45 x the
+live factor.
+
+Two live failures shaped the motion plan, both kept as measurements: a travel that started at max
+zoom-in had its pan read as a click and opened the inn (the registration read the level correctly —
+level 3, factor 2.35 — it was the *pan* that could not happen there), so the registration now clamps
+the zoom out first, re-reading the level after every press; and the stitched atlas matches a zoomed
+frame only at 0.45-0.49, so a failed re-read after the zoom-in carries the pose forward and the
+confirmation is the check.
+
+Owed and pinned: the atlas stitch is now the weak link (0.59 at max-out, 0.45-0.49 at zoom) and a
+lossless re-capture would raise every score — card `t-mw9aqpya-ogv9kf`; the registration path is
+selectable but not the default until a 3-5 cycle harness run proves it; and the legacy path still
+plans on the 1.34 ladder — card `t-mw9aqpy0-tfzxh7`.
