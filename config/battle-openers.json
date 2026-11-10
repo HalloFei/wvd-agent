@@ -1,0 +1,12 @@
+{
+  "_comment": [
+    "The battle opener list (contracts §11). One entry per party member; it is credited only when",
+    "that member is the one whose command phase is up (the ACTIVE card's name).",
+    "  name:   the member exactly as the game draws it, e.g. 爱丽丝",
+    "  slot:   左上 | 右上 | 左下 | 右下   (the pre-assigned quick slot the cast uses)",
+    "  target: enemy | party-front        (the side the skill resolves over)",
+    "Load it with WVD_BATTLE_OPENERS=default, or =<path> for another file; unset/off loads none.",
+    "Ships empty: the cast is off until the battle's action order is measured (card t-mw9jlglv-5pivpl)."
+  ],
+  "members": []
+}

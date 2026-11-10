@@ -23,7 +23,8 @@ import {
   type Point,
 } from './contracts.ts';
 import { automoveToChest, automoveToExit, automoveToTile, openMap } from './actions/automove.ts';
-import { BATTLE_OPENERS, tapOpenerConfirm, tapOpenerSlot } from './actions/battle.ts';
+import { tapOpenerConfirm, tapOpenerSlot } from './actions/battle.ts';
+import { loadBattleOpeners } from './config/battle-openers.ts';
 import { locateSkillPanelConfirm } from './perception/battle-panel.ts';
 import { acceptChestPrompt, cancelQte, dismissLoot, pressBattleAuto, pressBattleSpeed, reenterChest, tapLoot } from './actions/chest.ts';
 import { restAtInn } from './actions/inn.ts';
@@ -76,6 +77,15 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
 
   /** The package root: `tasks/` sits beside `src/`, and a relative `taskFile` resolves from here. */
   const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
+
+  // The operator's battle opener list, read from its own config file (operator rule 2026-11-10):
+  // `WVD_BATTLE_OPENERS=default` loads `config/battle-openers.json`, any other value is a path, and
+  // unset/`off` loads none. A refused config is printed once and the World runs with no cast: a typo
+  // must not send a skill nobody configured, and it must not stop the farm either.
+  const battleOpeners = loadBattleOpeners(process.env.WVD_BATTLE_OPENERS);
+  if (!battleOpeners.ok) {
+    console.warn(`wvd: the battle opener config was refused (${battleOpeners.reason}); no opener is loaded`);
+  }
 
   /**
    * The frame channel's fixed layout: the game's client area at 1920×1080 (contracts §0.5, §8). The
@@ -288,12 +298,14 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     return taskRunner === undefined ? { ok: true, session } : { ok: true, session, task: taskRunner };
   };
 
-  // The QTE recorder (operator rule 2026-11-05): on when the operator asks, one JSONL per deployment
-  // under .tmp/record/. It records the bar the chest path times — readings, plan, press timing and
-  // the carry time from the park — and changes nothing about the timing itself.
-  const qteRecord = process.env.WVD_RECORD_QTE === '1'
-    ? createQteFileRecorder(`.tmp/record/qte-${new Date().toISOString().replace(/[:.]/g, '-')}`)
-    : undefined;
+  // The QTE recorder (operator rule 2026-11-05, revised 2026-11-10): **on by default**, because a bar
+  // is only recorded on the run that happens to remember the switch — and run 9 lost both of its bars
+  // that way. One JSONL per deployment under .tmp/record/ (readings, plan, press timing, the carry
+  // from the park); it changes nothing about the timing itself. `WVD_RECORD_QTE=0` turns it off, and
+  // `=1` still means on (the old switch keeps working).
+  const qteRecord = process.env.WVD_RECORD_QTE === '0'
+    ? undefined
+    : createQteFileRecorder(`.tmp/record/qte-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   world = new WvdWorld({
     cfg,
     timezone,
@@ -413,7 +425,7 @@ export function createWvdWorld(composition: WvdComposition): WvdWorld {
     // roster the operator filled in. A frame that does not say which card is up answers null, the
     // filter takes that as a miss, and the battle falls through to auto.
     battle: {
-      openers: BATTLE_OPENERS,
+      openers: battleOpeners.ok ? battleOpeners.openers : [],
       reader: { readActiveMember: async (frame) => activePartyMember(await frame.toRgba()) },
       // The cast's resolving press is **located**, not assumed (operator, 2026-11-07): the skill panel's
       // 確定 is found on the frame the cast is on, and a frame without the panel answers null — nothing

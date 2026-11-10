@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionResult, Actuator, BattleOpener, Point } from '../src/contracts.ts';
 import {
-  BATTLE_OPENERS, BATTLE_SLOTS, OPENER_SETTLE_MS, castBattleOpener, memberKey, openerFor,
+  BATTLE_SLOTS, OPENER_SETTLE_MS, castBattleOpener, memberKey, openerFor,
   tapOpenerConfirm, tapOpenerSlot,
 } from '../src/actions/battle.ts';
 
@@ -40,12 +40,6 @@ const OPENERS: readonly BattleOpener[] = [alice];
 const PANEL_CONFIRM: Point = { x: 1_053, y: 1_006 };
 
 describe('the battle opener filter', () => {
-  it('ships no opener while the battle action order is unmeasured', () => {
-    // Disabled 2026-11-10 (run 9): the fastest member is not the configured opener, and the cast's
-    // confirm never resolved. The sequence is still wired; an empty list is "no cast is ever owed".
-    expect(BATTLE_OPENERS).toEqual([]);
-  });
-
   it('finds the entry for a listed name, and null for anything else', () => {
     expect(openerFor('爱丽丝', OPENERS)).toEqual(alice);
     expect(openerFor('本杰明', OPENERS)).toBeNull();

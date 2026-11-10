@@ -37,19 +37,11 @@ export const BATTLE_SLOTS: Readonly<Record<'左上' | '右上' | '左下' | '右
  */
 
 /**
- * The operator's configuration: a list of members with their opener.
- *
- * **Empty since 2026-11-10 — the opener is off until the battle's action order is measured.** Run 9
- * (docs/status.md, `437af0a`) cast 爱丽丝's 左下 opener at a turn her row had not reached: the
- * fastest member is not the configured opener, so the command phase the cast needs did not open
- * where the cast was sent, and the confirm it spawned never resolved inside a frame the loop could
- * name (card `t-mw9jlglv-5pivpl`). The sequence is unchanged and correct for an empty list: no 自動
- * off, no slot, no confirm — the battle just plays itself (battle-sequence.ts, step 2).
- *
- * Restore the entry, pointed at whoever the party's fastest member is, when the order is measured;
- * nothing else needs to change.
+ * The operator's opener list is **configuration, not code** (operator rule 2026-11-10): it lives in
+ * `config/battle-openers.json` and is read by `src/config/battle-openers.ts`, so the party is data
+ * (the legacy autoscript keeps it as a script setting for the same reason). This module only knows
+ * what a `BattleOpener` *is* (contracts §11) and how to press it.
  */
-export const BATTLE_OPENERS: readonly BattleOpener[] = [];
 
 /**
  * The traditional spellings of the roster's own characters (`src/perception/party.ts`): the game
