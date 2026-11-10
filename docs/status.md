@@ -1727,12 +1727,18 @@ night, and it puts the order of work in view: the chest QTE and the heal page be
 Five operator questions, answered from the run's own log (`.tmp/runs/2026-11-10-9-cycles/console.log`, 231
 lines), the six stuck stills and the code. Nothing was re-run to answer them.
 
-**1. The opener is off.** `BATTLE_OPENERS` is empty from today (`src/actions/battle.ts`). Run 9 cast
-爱丽丝's 左下 opener at a turn whose command phase her row had not reached - the fastest member is not the
-configured opener - so the cast was sent into a phase that never opened, its 確定 stayed owed, and the
-frame went unnamed (0.20) for 418 ticks. With the list empty the battle sequence is untouched and casts
-nothing (no 自動 off, no slot, no confirm; `policy/battle-sequence.ts` step 2) and the battle plays
-itself. Re-enable by naming the member the measured order actually puts first; card `t-mw9jlglv-5pivpl`.
+**1. The opener is off, and its list is a file.** Which member opens a battle is configuration, not
+code (operator rule 2026-11-10): it lives in `config/battle-openers.json`, read by
+`src/config/battle-openers.ts`, and `src/actions/battle.ts` no longer carries a member's name — the
+legacy autoscript keeps the same setting as data. The switch is `WVD_BATTLE_OPENERS`: `default` loads
+the shipped file, any other value is a path, unset/`off` loads none (the default). It ships empty
+because run 9 cast 爱丽丝's 左下 opener at a turn whose command phase her row had not reached - the fastest
+member is not the configured opener - so the cast was sent into a phase that never opened, its 確定
+stayed owed, and the frame went unnamed (0.20) for 418 ticks. With no entry the battle sequence is
+untouched and casts nothing (no 自動 off, no slot, no confirm; `policy/battle-sequence.ts` step 2). A
+file the operator asked for and the reader cannot use is a refusal (path + reason, printed once) and the
+World runs with no cast, never with a half-loaded list. Re-enable by naming the member the measured
+order puts first; card `t-mw9jlglv-5pivpl`.
 
 **2. The QTE was never recorded.** `WVD_RECORD_QTE` was off (no `.tmp/record/` exists), so the bar has no
 JSONL and no video - only the log's press lines and 14 refusals. What they say: the first bar
@@ -1740,9 +1746,16 @@ JSONL and no video - only the log's press lines and 14 refusals. What they say: 
 gate - planned with delay 98.8 ms, landed `settled=true`, tau 0.0608 s) and four `resolved`; the second
 (01:27:29-01:28:04) took ten `resolved` and tripped the six-pass guard twice. `resolved` is the 解除
 button reading **dimmed** (`actions/qte.ts`, `if (!reading.enabled) return ... 'resolved'`): the loop
-decided every pass was already answered, pressed nothing, and re-entered a bar that was still up. The next
-chest QTE should run with `WVD_RECORD_QTE=1` so the bar is on tape (`testdata/chest/2026-10-31-loot/`
-shows the format).
+decided every pass was already answered, pressed nothing, and re-entered a bar that was still up. **The
+recorder is on by default from today** (`WVD_RECORD_QTE=0` disables; the old `=1` still means on), so
+the next chest's bar is on tape whether or not anyone remembers the switch —
+`testdata/chest/2026-10-31-loot/qte-run.jsonl` is the shape.
+
+The guard that finished the bar is `QTE_MAX_TRIES_PER_BAR = 6` (`world.ts:419`): `#qteTries` counts
+calls to `#timeQte` — one per tick while the chest-qte screen is up — and at six the World stops timing
+and hands the bar to the stall clock. A bar that resolves takes one pass, so the cap is right; but a
+`resolved` refusal spends a pass too, so six *refusals* exhaust it without a single real press. That is
+how run 9's second bar died: ten refusals, two guard trips, one press by luck at 01:28:04.
 
 **3. The heal.** The sequence worked twice (01:25:50-01:26:40 and 01:30:43-01:31:38, four verified steps
 each), so the failure is around it, and it is arithmetic:
@@ -1761,11 +1774,27 @@ each), so the failure is around it, and it is arithmetic:
 The debt re-armed once (`maxAttempts` 2) and the third attempt paid it - which is why the run ended
 healed and on Dungeon Select rather than stranded mid-heal.
 
-**4. Chest finding is one frame's word.** The budget (`world.ts:2152`) and the route's target list
-(`policy/route.ts`) are both `observation.map.icons.filter(kind === 'chest')` of the *current* frame -
-`#chestsRemaining` is a level, never a ledger, and `INITIAL_CHEST_BUDGET` is 1. On the same open map the
-parties read: a chest at 20,4 (01:27:07, the move was sent), then no chest 1.5 s later (01:27:09, budget
-0, the route said exit), then - on the read the run kept - 3 chests (`chestsLeft: 3` in the final status).
+**4. Chest finding is one frame's word, and the frame can be wrong.** A chest is a 23x22 white line-art
+glyph (`CHEST_TEMPLATE`) matched by NCC >= 0.90 at **cell centres on a lattice anchored at the party
+chevron** (`findIcons`: `TILE_PX` steps from the chevron, inside a fixed 460..1710 / 140..920 region,
+after a "20 lit px" prefilter), and each match becomes `chest@cell` through the readout origin. Two
+consequences, both measured today:
+
+- **The same reader, two frames.** On the run's last map
+  (`.tmp/runs/2026-11-10-9-cycles/frames/003-wvd-stuck.jpeg`) it returns **six teleports and not one
+  template icon**; on the committed FFXI fixture (`testdata/screens/2026-11-03-ffxi-map/map-1920.jpg`) it
+  returns two chests plus a stair-door and a harken. Teleport and hazard are **colour blobs** (orchid
+  ring, red blob) and never touch the lattice, so they survive exactly the failure that removes every
+  chest. The title key drifted on the same frame too: `600004007f3ffe007ffefe0002032200` against the
+  site's `000000007f3ffe007ffeff00220bb600` for 第四区-城内2F深处 — about 15 bits of 128, past the 9-bit
+  tolerance `isExpectedFloor` allows, so such a frame can also be refused as "not the farm floor" (and
+  the E check would skip itself, since it gates on that test).
+- **Nothing votes across frames.** `#chestsRemaining` (`world.ts:2152`), `MapRead.chests` (the status
+  `chestsLeft`) and the E probe's `chestsShown` all ride one frame's matches, and a frame that misses
+  is indistinguishable from an empty floor. On the same open map the parties read a chest at 20,4
+  (01:27:07, the move was sent), no chest 1.5 s later (01:27:09, budget 0, the route said exit), and 3
+  chests on the read the run ended with (`chestsLeft: 3`).
+
 The E check is the fallback that works: one press (移動至寶箱) reached the chest the tap could not, and the
 farm continued. But its "found" is not fed back into the budget, and it is asked once per floor visit
 (`#chestProbeDone`), so it cannot find the next chest either.
@@ -1779,6 +1808,15 @@ escalation's fallback presses F -> out. Once the exit stage is claimed, nothing 
 cancel it: a chest the exit's own map read shows is not a reason to stop leaving. That is the same
 single-frame budget, one level up.
 
-The order of work the run now points at: the QTE's dimmed-button read, the heal's deadline (count only
-frames it can act on, and do not start into another stage's claim), and a per-floor chest ledger fed by
-both the map read and the E walk - then the opener back, on the fastest member.
+The order of work the run now points at: the QTE's dimmed-button read and its pass accounting, the
+heal's deadline (count only frames it can act on, and do not start into another stage's claim), and the
+chest observation - then the opener back, on the fastest member.
+
+**The rule the chest work inherits (operator, 2026-11-10).** An action is chosen from the current
+observation, and when the observation changes the action changes - **no derived number may outlive the
+frame that produced it.** The loop already tries to do that (the route re-decides every tick, the leave
+has no cursor), and run 9 broke it in three places: the exit stage keeps the order it claimed, so a chest
+read on its own map cannot cancel it; the chest budget survives the map frame that set it, so the 3D view
+acts on a number no frame supports; and the E walk's answer never updates the estimate it just disproved.
+The fix is not a ledger or a history - it is a trustworthy per-frame read and an owner that yields the
+moment the frame contradicts its order.
