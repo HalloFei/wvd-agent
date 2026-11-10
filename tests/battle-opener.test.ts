@@ -34,29 +34,33 @@ const sleep = async (): Promise<void> => {};
  * damage spell, so the skill resolves over the enemy side.
  */
 const alice: BattleOpener = { name: '爱丽丝', slot: '左下', target: 'enemy' };
+/** What the filter is tested against. The shipped list is empty (opener disabled 2026-11-10). */
+const OPENERS: readonly BattleOpener[] = [alice];
 /** The panel's 確定 as the locator would answer it on the live 1920 client, 2026-11-07. */
 const PANEL_CONFIRM: Point = { x: 1_053, y: 1_006 };
 
 describe('the battle opener filter', () => {
-  it('is a list with 爱丽丝 and nobody else', () => {
-    expect(BATTLE_OPENERS).toEqual([alice]);
+  it('ships no opener while the battle action order is unmeasured', () => {
+    // Disabled 2026-11-10 (run 9): the fastest member is not the configured opener, and the cast's
+    // confirm never resolved. The sequence is still wired; an empty list is "no cast is ever owed".
+    expect(BATTLE_OPENERS).toEqual([]);
   });
 
   it('finds the entry for a listed name, and null for anything else', () => {
-    expect(openerFor('爱丽丝', BATTLE_OPENERS)).toEqual(alice);
-    expect(openerFor('本杰明', BATTLE_OPENERS)).toBeNull();
+    expect(openerFor('爱丽丝', OPENERS)).toEqual(alice);
+    expect(openerFor('本杰明', OPENERS)).toBeNull();
     // A reader that cannot tell is a miss, never an error.
-    expect(openerFor(null, BATTLE_OPENERS)).toBeNull();
+    expect(openerFor(null, OPENERS)).toBeNull();
   });
 
   it('folds the traditional spelling the operator may type onto the roster name', () => {
     // The panel draws 爱丽丝 and the operator's own notes sometimes write 愛麗絲.
     expect(memberKey('愛麗絲')).toBe('爱丽丝');
     expect(memberKey(' 爱丽丝 ')).toBe('爱丽丝');
-    expect(openerFor('愛麗絲', BATTLE_OPENERS)).toEqual(alice);
+    expect(openerFor('愛麗絲', OPENERS)).toEqual(alice);
     expect(openerFor('愛麗絲', [{ ...alice, name: '愛麗絲' }])).toEqual({ ...alice, name: '愛麗絲' });
     // Folding does not make two different members equal.
-    expect(openerFor('艾莉赛', BATTLE_OPENERS)).toBeNull();
+    expect(openerFor('艾莉赛', OPENERS)).toBeNull();
   });
 
   it('reads the slot and target from the entry, not from the member type', () => {

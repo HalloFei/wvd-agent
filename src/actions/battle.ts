@@ -36,10 +36,20 @@ export const BATTLE_SLOTS: Readonly<Record<'左上' | '右上' | '左下' | '右
  * twice and nothing resolved (live 2026-11-07 22:00 and 22:13, 48 s and 45 s on the panel).
  */
 
-/** The operator's configuration: a list of members with their opener. */
-export const BATTLE_OPENERS: readonly BattleOpener[] = [
-  { name: '爱丽丝', slot: '左下', target: 'enemy' },
-];
+/**
+ * The operator's configuration: a list of members with their opener.
+ *
+ * **Empty since 2026-11-10 — the opener is off until the battle's action order is measured.** Run 9
+ * (docs/status.md, `437af0a`) cast 爱丽丝's 左下 opener at a turn her row had not reached: the
+ * fastest member is not the configured opener, so the command phase the cast needs did not open
+ * where the cast was sent, and the confirm it spawned never resolved inside a frame the loop could
+ * name (card `t-mw9jlglv-5pivpl`). The sequence is unchanged and correct for an empty list: no 自動
+ * off, no slot, no confirm — the battle just plays itself (battle-sequence.ts, step 2).
+ *
+ * Restore the entry, pointed at whoever the party's fastest member is, when the order is measured;
+ * nothing else needs to change.
+ */
+export const BATTLE_OPENERS: readonly BattleOpener[] = [];
 
 /**
  * The traditional spellings of the roster's own characters (`src/perception/party.ts`): the game
