@@ -19,7 +19,16 @@
  * value carrying the path and the reason; the composition root prints it once and runs with no cast.
  */
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { BattleOpener, BattleSlot, BattleTarget } from '../contracts.ts';
+
+/**
+ * The package root, from this module's own URL: a relative path in the config is the operator's path
+ * inside the package, so it must resolve the same whatever directory the process was started from (the
+ * harness runs from the package root, the linked extension does not).
+ */
+const PACKAGE_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 /** The file `WVD_BATTLE_OPENERS=default` loads, relative to the package root. */
 export const BATTLE_OPENER_FILE = 'config/battle-openers.json';
@@ -89,11 +98,12 @@ export function parseBattleOpeners(
 
 /**
  * Load what the switch names. `read` is injected so the switch and the parser are testable without a
- * file; the default reads from the current directory, which is the package root the harness runs from.
+ * file; the default reads from the package root, so `config/battle-openers.json` means the same file
+ * whatever the process's cwd is.
  */
 export function loadBattleOpeners(
   envValue: string | undefined,
-  read: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+  read: (path: string) => string = (path) => readFileSync(resolve(PACKAGE_ROOT, path), 'utf8'),
 ): OpenersLoad {
   const source = openersSource(envValue);
   if (source.kind === 'off') return { ok: true, source, openers: [] };
