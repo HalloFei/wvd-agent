@@ -1705,8 +1705,10 @@ What stopped the farm is downstream of navigation:
   escalation fired. One Esc cleared it and the screen was combat (01:24:18) - the confirm never resolved.
 - **01:25:23-01:27:52, the chest QTE.** "the chest QTE was not pressed: resolved" fourteen times, then
   "**the chest QTE has had 6 passes on one bar; leaving it to the stall clock**" - card `t-mw8lgbg4-qma2qd`.
-- **01:26:10, the heal.** character-page -> quick-heal -> character-page; at 01:26:45 the loop stuck on
-  `dungeon` (0.91) for 455 ticks. The heal left the party on a page the loop could not close.
+- **01:26:10, the heal.** character-page -> quick-heal -> character-page; it **completed** at 01:26:40
+  (four verified steps). The 455-tick stall at 01:26:45 is the other half of the problem: no part of a heal
+  changes a progress fact, so its minutes count against the loop, and the escalation's fallback opened the
+  map. (Corrected 2026-11-10: the earlier line here said the heal left a page open - it did not.)
 - **01:27:08, an unreachable chest.** "the chest at 20,4 cannot be walked to (the selection raised no
   自動移動 element); trying once more" - card `t-mw8lgbgo-xdblbn`.
 - **01:32-01:34, the cascade.** The exit ran while the farm was still owed chests; "the exit held the loop
@@ -1719,3 +1721,64 @@ heal page) each spend 20 s on an unanswerable question and hand the loop a scree
 exit then acts on that state. Nothing here is a new defect - the QTE, the unreachable chest and the
 harken/归还 walk-out were all pinned - but this is the first run where they compound into a zero-cycle
 night, and it puts the order of work in view: the chest QTE and the heal page before any more nav work.
+
+## Run 9 answered, question by question: the opener off, the heal's clock, the chest budget (2026-11-10)
+
+Five operator questions, answered from the run's own log (`.tmp/runs/2026-11-10-9-cycles/console.log`, 231
+lines), the six stuck stills and the code. Nothing was re-run to answer them.
+
+**1. The opener is off.** `BATTLE_OPENERS` is empty from today (`src/actions/battle.ts`). Run 9 cast
+爱丽丝's 左下 opener at a turn whose command phase her row had not reached - the fastest member is not the
+configured opener - so the cast was sent into a phase that never opened, its 確定 stayed owed, and the
+frame went unnamed (0.20) for 418 ticks. With the list empty the battle sequence is untouched and casts
+nothing (no 自動 off, no slot, no confirm; `policy/battle-sequence.ts` step 2) and the battle plays
+itself. Re-enable by naming the member the measured order actually puts first; card `t-mw9jlglv-5pivpl`.
+
+**2. The QTE was never recorded.** `WVD_RECORD_QTE` was off (no `.tmp/record/` exists), so the bar has no
+JSONL and no video - only the log's press lines and 14 refusals. What they say: the first bar
+(01:25:23-01:25:31) took two presses (790.0 px/s, a probe; then -749.4 px/s - 1 px/s under the 750 probe
+gate - planned with delay 98.8 ms, landed `settled=true`, tau 0.0608 s) and four `resolved`; the second
+(01:27:29-01:28:04) took ten `resolved` and tripped the six-pass guard twice. `resolved` is the 解除
+button reading **dimmed** (`actions/qte.ts`, `if (!reading.enabled) return ... 'resolved'`): the loop
+decided every pass was already answered, pressed nothing, and re-entered a bar that was still up. The next
+chest QTE should run with `WVD_RECORD_QTE=1` so the bar is on tape (`testdata/chest/2026-10-31-loot/`
+shows the format).
+
+**3. The heal.** The sequence worked twice (01:25:50-01:26:40 and 01:30:43-01:31:38, four verified steps
+each), so the failure is around it, and it is arithmetic:
+
+- the first attempt tapped its card at 01:25:54 and the chest's own `chest-opening` took the next frame;
+  the episode suspended correctly, the tap did not land;
+- the second attempt (01:28:27) **started while the exit owned the loop**. The leave opened the map at
+  01:28:30 (`leaving: opening the map to read this floor`); the card step needs a settled 3D view, nothing
+  ever closes the map for a heal, and the map stayed open until 01:30:24. The step waited 90 s and the
+  episode died on `deadline` (01:29:57) - not on a missing page. Its clock counts time it cannot act on;
+  the battle sequence already excludes blank frames from its own clock (`#visible`), the heal does not;
+- the stall that fired at 01:26:45 (455 ticks, 5 s after `healed the party`) shows the other half: no part
+  of the heal changes a progress fact (position, floor, chest count), so its minutes accumulate against
+  the loop.
+
+The debt re-armed once (`maxAttempts` 2) and the third attempt paid it - which is why the run ended
+healed and on Dungeon Select rather than stranded mid-heal.
+
+**4. Chest finding is one frame's word.** The budget (`world.ts:2152`) and the route's target list
+(`policy/route.ts`) are both `observation.map.icons.filter(kind === 'chest')` of the *current* frame -
+`#chestsRemaining` is a level, never a ledger, and `INITIAL_CHEST_BUDGET` is 1. On the same open map the
+parties read: a chest at 20,4 (01:27:07, the move was sent), then no chest 1.5 s later (01:27:09, budget
+0, the route said exit), then - on the read the run kept - 3 chests (`chestsLeft: 3` in the final status).
+The E check is the fallback that works: one press (移動至寶箱) reached the chest the tap could not, and the
+farm continued. But its "found" is not fed back into the budget, and it is asked once per floor visit
+(`#chestProbeDone`), so it cannot find the next chest either.
+
+**5. "The exit ran while chests were still owed."** What that line meant: the exit walked the party out
+with `chestsLeft: 3`, i.e. the last map read the loop kept still showed three chests. The chain: a frame
+read no chest -> budget 0 -> the route's `dungeon` branch says `exit` -> the arbiter's exit stage claims
+the loop -> the E check finds one chest, but the budget stays 0, so the next `dungeon` frame claims the
+exit again (01:28:22) -> the exit opens the map and holds the loop 110 s (starving the heal) -> the
+escalation's fallback presses F -> out. Once the exit stage is claimed, nothing on the farm side can
+cancel it: a chest the exit's own map read shows is not a reason to stop leaving. That is the same
+single-frame budget, one level up.
+
+The order of work the run now points at: the QTE's dimmed-button read, the heal's deadline (count only
+frames it can act on, and do not start into another stage's claim), and a per-floor chest ledger fed by
+both the map read and the E walk - then the opener back, on the fastest member.
